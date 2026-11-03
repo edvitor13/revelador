@@ -60,7 +60,10 @@ assert j.botao_exportar.objectName() == "Primary" and not j.botao_exportar.isEna
 j.acao_exportar.setEnabled(True)
 assert j.botao_exportar.isEnabled()
 chamadas = []
-j.acao_exportar.triggered.connect(lambda: chamadas.append(1))
+class Falso:
+    def exec(self):
+        chamadas.append(1)
+j.criar_dialogo_exportacao = lambda: Falso()          # nada de diálogo modal em teste
 j.botao_exportar.click()
 assert chamadas == [1]
 # os atalhos continuam valendo sem barra de menus: as ações estão na janela

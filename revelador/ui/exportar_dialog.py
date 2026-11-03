@@ -12,13 +12,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtGui import QColor
 from PySide6.QtCore import QCoreApplication, QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                                QListWidget, QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import exportar, precos, system
 from ..i18n import N_, _
-from . import prefs
+from . import prefs, tema
 from .estado import Estado
 from .precos_dialog import tabela_precos
 
@@ -121,7 +122,11 @@ class ExportarDialog(QDialog):
         self.plano: exportar.Plano | None = None
 
         raiz = QVBoxLayout(self)
+        raiz.setContentsMargins(22, 20, 22, 18)
+        raiz.setSpacing(12)
         form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(10)
         s = prefs.settings()
         pasta = str(s.value(CHAVE_PASTA, "", str) or "")
         if not pasta or not Path(pasta).is_dir():
@@ -238,6 +243,7 @@ class ExportarDialog(QDialog):
         self.lista_avisos.clear()
         for aviso in exportar.conferir(self.estado.trabalho, self.estado.info):
             self.lista_avisos.addItem(aviso.texto)
+            self.lista_avisos.item(self.lista_avisos.count() - 1).setForeground(QColor(tema.AVISO))
         self.lista_avisos.setVisible(self.lista_avisos.count() > 0)
         if plano and plano.itens:
             nomes = [d.relative_to(plano.pasta.parent).as_posix() for i in plano.itens for d in i.destinos]
@@ -315,6 +321,7 @@ class ExportarDialog(QDialog):
         self.lista_erros.clear()
         for _item, msg in resultado.erros:
             self.lista_erros.addItem(msg)
+            self.lista_erros.item(self.lista_erros.count() - 1).setForeground(QColor(tema.PERIGO))
         self.lista_erros.setVisible(self.lista_erros.count() > 0)
 
     def abrir_pasta(self) -> None:

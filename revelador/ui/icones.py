@@ -192,6 +192,23 @@ def desenhar(nome: str, p: QPainter, c: QColor) -> None:
         caminho.arcTo(QRectF(5, 5, 14, 14), 120, 290)
         p.drawPath(caminho)
         _poli(p, [(5.2, 4.8), (8.2, 7.9), (4.4, 9.6)])
+    elif nome == "copiar":
+        _pen(p, c)
+        p.drawRoundedRect(QRectF(8.5, 8.5, 11, 11), 2.2, 2.2)
+        _poli(p, [(15.5, 8.5), (15.5, 6.5), (13.5, 4.5), (6.7, 4.5), (4.5, 6.7), (4.5, 13.5), (6.5, 15.5), (8.5, 15.5)])
+    elif nome == "colar":
+        _pen(p, c)
+        p.drawRoundedRect(QRectF(5, 5.5, 14, 15), 2.4, 2.4)
+        p.drawRoundedRect(QRectF(9, 3.5, 6, 4), 1.4, 1.4)
+        p.drawLine(QPointF(8.5, 12.5), QPointF(15.5, 12.5))
+        p.drawLine(QPointF(8.5, 16), QPointF(13.5, 16))
+    elif nome == "comparar":
+        # Antes/depois: uma foto dividida ao meio.
+        _pen(p, c)
+        p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 2.4, 2.4)
+        p.drawLine(QPointF(12, 5), QPointF(12, 19))
+        _cheio(p, c)
+        _poli(p, [(12, 5), (20.5, 5), (20.5, 19), (12, 19)], fechar=True)
     elif nome == "foto":
         _pen(p, c)
         p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 2.4, 2.4)
@@ -204,7 +221,7 @@ def desenhar(nome: str, p: QPainter, c: QColor) -> None:
 NOMES = (
     "importar", "pasta", "exportar", "salvar", "abrir", "configuracoes", "check", "mais", "fechar", "lixeira",
     "girar_esquerda", "girar_direita", "endireitar", "zoom_mais", "zoom_menos", "rosto", "recorte", "grade",
-    "filtro", "dinheiro", "info", "aviso", "chevron", "reset", "foto",
+    "filtro", "dinheiro", "info", "aviso", "chevron", "reset", "foto", "copiar", "colar", "comparar",
 )
 
 

@@ -23,12 +23,14 @@ from . import icones, tema
 
 
 def botao_plano(icone: str, dica: str = "", texto: str = "", marcavel: bool = False, tamanho: int = 18,
-                cor: str = tema.TEXTO, cor_marcado: str | None = None) -> QToolButton:
+                cor: str = tema.TEXTO, cor_marcado: str | None = None, plano: bool = True) -> QToolButton:
     """Botão ``Flat`` com o ícone `icone` (de ``icones.py``) e, se `texto`, o texto ao lado.
 
-    Com `marcavel`, o ícone muda para `cor_marcado` (se dado) quando o botão está marcado."""
+    Com `marcavel`, o ícone muda para `cor_marcado` (se dado) quando o botão está marcado. Com ``plano=False`` o
+    botão mantém a borda (botão comum)."""
     b = QToolButton()
-    b.setObjectName("Flat")
+    if plano:
+        b.setObjectName("Flat")
     if cor_marcado:
         b.setIcon(icones.icone_dois_estados(icone, cor, cor_marcado, tamanho))
     else:

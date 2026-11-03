@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self._ligar_editor()
         self._ligar_exportacao()
         self._ligar_atualizacao()
+        self._ligar_ajustes()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -397,6 +398,14 @@ class MainWindow(QMainWindow):
         self.acao_verificar_atualizacoes.triggered.connect(self.verificador.verificar_manual)
         if not os.environ.get("REVELADOR_SEM_REDE"):   # testes e capturas de tela: nenhuma consulta à rede
             QTimer.singleShot(ATRASO_ATUALIZACAO_MS, self.verificador.verificar_ao_abrir)
+
+    # ------------------------------------------------------------ ajustes de luz e cor (#7)
+    def _ligar_ajustes(self) -> None:
+        """Cartões Luz, Cor e Detalhe na coluna do painel lateral, abaixo das impressões, antes do espaçador."""
+        from .painel_ajustes import PainelAjustes
+
+        self.painel_ajustes = PainelAjustes(self.estado, self.grade.fotos_escolhidas)
+        self.coluna_painel.insertWidget(self.coluna_painel.count() - 1, self.painel_ajustes)
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:

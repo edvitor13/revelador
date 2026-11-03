@@ -255,8 +255,9 @@ QTabBar::tab {{ background: transparent; padding: 8px 16px; color: {APAGADO}; bo
 QTabBar::tab:hover {{ color: {TEXTO}; }}
 QTabBar::tab:selected {{ color: {TEXTO}; border-bottom: 2px solid {DESTAQUE}; }}
 
-QListView, QListWidget {{ background: {BG}; border: none; outline: 0; }}
-QListView::item, QListWidget::item {{ border-radius: {RAIO}px; }}
+QListView {{ background: {BG}; border: none; outline: 0; }}
+QListWidget {{ background: {PAINEL}; border: 1px solid {BORDA}; border-radius: {RAIO}px; outline: 0; padding: 4px; }}
+QListView::item, QListWidget::item {{ border-radius: 6px; padding: 2px 4px; }}
 QListView::item:hover {{ background: {PAINEL2}; }}
 QListView::item:selected {{ background: {SELECAO}; color: {TEXTO}; }}
 QListView:focus {{ border: none; }}

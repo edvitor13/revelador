@@ -5,7 +5,8 @@ Gera, em SAIDA (padrão ``saida/``):
 - ``janela.png``: a janela principal em 1440x900, com fotos de teste importadas, quatro delas marcadas para
   revelar (uma com dois tamanhos) e a foto do rosto no editor (a menos de ``--sem-fotos``);
 - ``janela_estreita.png``: a mesma janela em 1000x700; ``janela_resultado.png``: o editor no modo "Resultado";
-  ``janela_vazia.png``: sem fotos; ``resumo.png``, ``precos.png`` e ``personalizado.png``: os diálogos do pedido;
+  ``janela_vazia.png``: sem fotos; ``janela_ajustes.png``: o painel rolado até os ajustes (a foto atual tem exposição, contraste, saturação e temperatura
+  alterados); ``resumo.png``, ``precos.png``, ``personalizado.png`` e ``exportar.png``: os diálogos do pedido;
   ``menu_projeto.png`` e ``menu_engrenagem.png``: os menus da barra superior;
 - ``catalogo.png``: uma folha com os componentes do tema (botões, seletor, chave, sliders, cartões, campos, tabela,
   lista, ícones e cores de estado).
@@ -168,10 +169,16 @@ def capturar_janelas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int
             janela.estado.selecionar(foto)
         janela.estado.definir_atual(novas[1])
         janela.painel_impressoes.adicionar_impressao("13x18")
+        alvo.ajustes = {"exposicao": 25.0, "contraste": 12.0, "saturacao": 35.0, "temperatura": -15.0}   # foto ajustada
+        janela.estado.alterar(alvo)
         janela.estado.definir_atual(alvo)
         _esperar_ate(app, lambda: janela.editor.proxy is not None and alvo.id in janela.estado.info)
         esperar_workers(app)
     gravar(janela, "janela.png")
+    barra = janela.rolagem_painel.verticalScrollBar()
+    barra.setValue(barra.maximum())
+    gravar(janela, "janela_ajustes.png")
+    barra.setValue(0)
     janela.resize(1000, 700)
     app.processEvents()
     gravar(janela, "janela_estreita.png")
@@ -192,6 +199,13 @@ def capturar_janelas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int
     gravar(precos, "precos.png")
     from revelador.ui.painel_impressoes import PersonalizadoDialog
 
+    from revelador.ui.exportar_dialog import ExportarDialog
+
+    exportar = ExportarDialog(janela.estado, janela)
+    exportar.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    exportar.show()
+    gravar(exportar, "exportar.png")
+    exportar.hide()
     personalizado = PersonalizadoDialog(100.0, 150.0, 350, janela)
     personalizado.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     personalizado.show()

@@ -11,6 +11,7 @@ Sinais:
 - ``foto_mudou(id)``: algo de uma foto mudou (seleção, impressões, recorte, ajustes, rostos, metadados).
 - ``pedido_mudou()``: algo que muda o orçamento ou a exportação (seleção, tamanhos, cópias, preços).
 - ``modificado_mudou(bool)``: o trabalho passou a ter (ou deixou de ter) alterações não salvas.
+- ``comparando_mudou(bool)``: antes/depois (``comparando``): enquanto verdadeiro, o editor mostra a foto sem ajustes.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ class Estado(QObject):
     foto_mudou = Signal(str)
     pedido_mudou = Signal()
     modificado_mudou = Signal(bool)
+    comparando_mudou = Signal(bool)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -49,6 +51,7 @@ class Estado(QObject):
         self.miniaturas: dict[str, Path] = {}  # JPEG de miniatura no cache, por id de foto (preenchido em segundo plano)
         self.erros: dict[str, str] = {}        # mensagem amigável das fotos que não abriram, por id de foto
         self._modificado = False
+        self.comparando = False               # antes/depois: mostrar a foto sem ajustes (não vai para o arquivo)
 
     # ------------------------------------------------------------ consulta
     @property
@@ -189,6 +192,12 @@ class Estado(QObject):
         if pedido:
             self.pedido_mudou.emit()
         self.marcar_modificado()
+
+    def definir_comparando(self, sim: bool) -> None:
+        """Liga/desliga o antes/depois (o editor mostra a foto sem ajustes, com o mesmo recorte)."""
+        if sim != self.comparando:
+            self.comparando = sim
+            self.comparando_mudou.emit(sim)
 
     def marcar_modificado(self, sim: bool = True) -> None:
         if sim != self._modificado:
