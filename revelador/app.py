@@ -1,7 +1,8 @@
 """Ponto de entrada da interface do Revelador.
 
 Instala o registro de erros, aplica o tema (``ui/tema.py``) e abre a janela principal (``ui/main_window.py``); as fotos passadas
-na linha de comando ficam em ``janela.arquivos_iniciais`` para a importação. ``--diagnostico ARQUIVO.json``
+na linha de comando ficam em ``janela.arquivos_iniciais`` para a importação; sem nada nela, abre a tela de
+boas-vindas (``ui/boas_vindas.py``). ``--diagnostico ARQUIVO.json``
 confere as dependências nativas e sai sem abrir janela
 (usado pelo CI no executável empacotado; veja ``diagnostico.py``).
 """
@@ -91,5 +92,6 @@ def main(argv: list[str] | None = None) -> int:
     if trabalhos:
         janela.projeto_ui.abrir(Path(trabalhos[0]))   # o primeiro .revelador; fotos e pastas entram depois
     _ligar_aviso_de_erro(janela)
+    janela.boas_vindas.ao_abrir()   # tela de boas-vindas (só sem arquivos na linha de comando) e novidades
     janela.show()
     return app.exec()

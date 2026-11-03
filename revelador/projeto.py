@@ -20,6 +20,7 @@ from revelador import __version__
 from revelador.i18n import _
 
 TAMANHO_PADRAO = "10x15"
+COR_PASTA_PADRAO = "azul"       # primeira cor da paleta de pastas (``ui/tema.CORES_PASTA``); reserva ao ler
 DPI_PADRAO = 300
 MARGEM_CORTE_MM_PADRAO = 2.0
 
@@ -173,26 +174,91 @@ def _papel_de(v: object, avisos: list[str]) -> tuple[float, float] | None:
     return None
 
 
-def _impressao_de(d: object, padrao_tamanho: str, tamanhos_validos: set[str] | None, avisos: list[str]) -> Impressao:
-    d = d if isinstance(d, dict) else {}
-    tamanho = d.get("tamanho", padrao_tamanho)
-    if not isinstance(tamanho, str) or (
-            tamanhos_validos is not None and tamanho != TAMANHO_PERSONALIZADO and tamanho not in tamanhos_validos):
+def _tamanho_de(v: object, padrao_tamanho: str, tamanhos_validos: set[str] | None, avisos: list[str]) -> str:
+    if not isinstance(v, str) or (
+            tamanhos_validos is not None and v != TAMANHO_PERSONALIZADO and v not in tamanhos_validos):
         avisos.append(_("Tamanho de revelação desconhecido; usei o padrão."))
-        tamanho = padrao_tamanho
-    preco = d.get("preco_centavos")
-    if preco is not None and (isinstance(preco, bool) or not isinstance(preco, int) or preco < 0):
+        return padrao_tamanho
+    return v
+
+
+def _preco_de(v: object, avisos: list[str]) -> int | None:
+    if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 0):
         avisos.append(_("Preço inválido; ignorei."))
-        preco = None
+        return None
+    return v
+
+
+def _impressao_de(d: object, padrao_tamanho: str, tamanhos_validos: set[str] | None, avisos: list[str],
+                  pastas: dict[str, Pasta] | None = None) -> Impressao:
+    """Impressão validada. Com ``pasta`` conhecida, o tamanho (e o papel/preço do personalizado) é o da pasta."""
+    d = d if isinstance(d, dict) else {}
+    tamanho = _tamanho_de(d.get("tamanho", padrao_tamanho), padrao_tamanho, tamanhos_validos, avisos)
+    preco = _preco_de(d.get("preco_centavos"), avisos)
+    papel = _papel_de(d.get("papel_mm"), avisos)
+    pasta_id = d.get("pasta")
+    if pasta_id is not None:
+        pasta = (pastas or {}).get(pasta_id) if isinstance(pasta_id, str) else None
+        if pasta is None:
+            avisos.append(_("Uma impressão apontava para uma pasta de tamanho que não existe; ficou avulsa."))
+            pasta_id = None
+        else:   # o tamanho de uma impressão de pasta é sempre o da pasta
+            tamanho, papel, preco = pasta.tamanho, pasta.papel_mm, pasta.preco_centavos
     return Impressao(
         tamanho=tamanho,
         copias=_inteiro(d.get("copias"), 1, COPIAS_MIN, COPIAS_MAX, "copias", avisos),
         orientacao=_escolha(d.get("orientacao"), ORIENTACOES, "auto", "orientacao", avisos),
         modo=_escolha(d.get("modo"), MODOS, "preencher", "modo", avisos),
         recorte=_recorte_de(d.get("recorte"), avisos),
-        papel_mm=_papel_de(d.get("papel_mm"), avisos),
+        papel_mm=papel,
         preco_centavos=preco,
+        pasta=pasta_id,
     )
+
+
+def _pastas_de(v: object, padrao_tamanho: str, tamanhos_validos: set[str] | None,
+               avisos: list[str]) -> list[Pasta]:
+    """Pastas de tamanho validadas, na ordem do arquivo. Id ausente ou repetido ganha um novo (``p1``, ``p2``...).
+
+    Pasta sem nome vira "Pasta"; cor que não é texto vira ``COR_PASTA_PADRAO`` (a chave em si é conferida pela
+    interface, que mostra a primeira cor da paleta para uma chave desconhecida); tamanho desconhecido vira o padrão.
+    Num id repetido, as impressões que apontam para ele ficam com a PRIMEIRA pasta desse id.
+    """
+    pastas: list[Pasta] = []
+    usados: set[str] = set()
+    for n, d in enumerate(v if isinstance(v, list) else []):
+        if not isinstance(d, dict):
+            avisos.append(_("Uma pasta de tamanho inválida foi ignorada."))
+            continue
+        pid = d.get("id")
+        if not isinstance(pid, str) or not pid or pid in usados:
+            avisos.append(_("Pasta de tamanho sem id ou com id repetido; dei um novo."))
+            k = n + 1
+            while f"p{k}" in usados or any(isinstance(x, dict) and x.get("id") == f"p{k}" for x in v):
+                k += 1
+            pid = f"p{k}"
+        usados.add(pid)
+        nome = d.get("nome")
+        if not isinstance(nome, str) or not nome.strip():
+            avisos.append(_("Pasta de tamanho sem nome; usei “Pasta”."))
+            nome = _("Pasta")
+        cor = d.get("cor")
+        if not isinstance(cor, str) or not cor:
+            avisos.append(_("Cor de pasta inválida; usei a primeira da paleta."))
+            cor = COR_PASTA_PADRAO
+        tamanho = _tamanho_de(d.get("tamanho", padrao_tamanho), padrao_tamanho, tamanhos_validos, avisos)
+        personalizado = tamanho == TAMANHO_PERSONALIZADO
+        papel = _papel_de(d.get("papel_mm"), avisos) if personalizado else None
+        if personalizado and papel is None:
+            avisos.append(_("Pasta personalizada sem medida do papel; usei o padrão."))
+            tamanho, personalizado = padrao_tamanho, False
+        pastas.append(Pasta(
+            id=pid, nome=nome.strip(), cor=cor, tamanho=tamanho,
+            copias=_inteiro(d.get("copias"), 1, COPIAS_MIN, COPIAS_MAX, "copias", avisos),
+            papel_mm=papel,
+            preco_centavos=_preco_de(d.get("preco_centavos"), avisos) if personalizado else None,
+        ))
+    return pastas
 
 
 def _rosto_de(d: object) -> Rosto | None:
@@ -262,6 +328,8 @@ def de_dict(dados: object, base: Path | None, tamanhos_validos: set[str] | list[
         margem_corte_mm=float(_numero(pad.get("margem_corte_mm"), MARGEM_CORTE_MM_PADRAO, 0.0, 20.0,
                                       "margem_corte_mm", avisos)),
     )
+    trabalho.pastas = _pastas_de(dados.get("pastas"), tam_pad, validos, avisos)
+    por_id = {p.id: p for p in trabalho.pastas}
     fotos = dados.get("fotos")
     for i, fd in enumerate(fotos if isinstance(fotos, list) else []):
         if not isinstance(fd, dict):
@@ -282,9 +350,24 @@ def de_dict(dados: object, base: Path | None, tamanhos_validos: set[str] | list[
             selecionada=fd.get("selecionada") is True,
             ajustes=_ajustes_de(fd.get("ajustes"), limitar_ajustes, avisos),
             rostos=rostos,
-            impressoes=[_impressao_de(x, tam_pad, validos, avisos) for x in imps] if isinstance(imps, list) else [],
+            impressoes=_impressoes_da_foto(imps, tam_pad, validos, avisos, por_id),
         ))
     return trabalho, list(dict.fromkeys(avisos))
+
+
+def _impressoes_da_foto(imps: object, tam_pad: str, validos: set[str] | None, avisos: list[str],
+                        pastas: dict[str, Pasta]) -> list[Impressao]:
+    """Impressões de uma foto; a segunda impressão da MESMA pasta na mesma foto vira avulsa (uma por pasta)."""
+    lista = [_impressao_de(x, tam_pad, validos, avisos, pastas) for x in imps] if isinstance(imps, list) else []
+    vistas: set[str] = set()
+    for imp in lista:
+        if imp.pasta is not None:
+            if imp.pasta in vistas:
+                avisos.append(_("Uma foto estava duas vezes na mesma pasta de tamanho; a segunda ficou avulsa."))
+                imp.pasta = None
+            else:
+                vistas.add(imp.pasta)
+    return lista
 
 
 def _rosto_para_dict(r: Rosto) -> dict:
@@ -312,6 +395,19 @@ def _impressao_para_dict(i: Impressao) -> dict:
         d["papel_mm"] = list(i.papel_mm)
     if i.preco_centavos is not None:
         d["preco_centavos"] = i.preco_centavos
+    if i.pasta is not None:
+        d["pasta"] = i.pasta
+    return d
+
+
+def _pasta_para_dict(p: Pasta) -> dict:
+    d: dict = {"id": p.id, "nome": p.nome, "cor": p.cor, "tamanho": p.tamanho}
+    if p.copias != 1:
+        d["copias"] = p.copias
+    if p.papel_mm is not None:
+        d["papel_mm"] = list(p.papel_mm)
+    if p.preco_centavos is not None:
+        d["preco_centavos"] = p.preco_centavos
     return d
 
 
@@ -340,14 +436,17 @@ def para_dict(trabalho: Trabalho, base: Path | None) -> dict:
         if f.impressoes:
             d["impressoes"] = [_impressao_para_dict(i) for i in f.impressoes]
         fotos.append(d)
-    return {
+    saida: dict = {
         "app": "Revelador",
         "formato": FORMATO,
         "versao_app": __version__,
         "padrao": {"tamanho": trabalho.tamanho_padrao, "dpi": trabalho.dpi,
                    "margem_corte_mm": trabalho.margem_corte_mm},
-        "fotos": fotos,
     }
+    if trabalho.pastas:   # campo novo (#32): só gravado quando há pastas de tamanho
+        saida["pastas"] = [_pasta_para_dict(p) for p in trabalho.pastas]
+    saida["fotos"] = fotos
+    return saida
 
 
 def gravar_texto_seguro(caminho: Path, texto: str) -> None:

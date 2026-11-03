@@ -7,8 +7,14 @@ interface só pelo ``Estado``. Avisos, a oferta de recuperação e o "Procurar�
 ``escolher_arquivo_abrir``, ``escolher_arquivo_salvar`` e ``escolher_pasta_busca`` (os testes os substituem).
 
 Recuperação: com o trabalho modificado, a cada ``INTERVALO_RECUPERACAO_MS`` grava uma cópia em
-``%LOCALAPPDATA%\\Revelador\\recuperacao`` (``projeto.salvar_recuperacao``); salvar, trocar de trabalho ou fechar
-apaga essas cópias. Depois de uma falha, a próxima abertura oferece restaurar.
+``%LOCALAPPDATA%\\Revelador\\recuperacao`` (``projeto.salvar_recuperacao``); salvar (inclusive o salvamento
+automático), trocar de trabalho ou fechar apaga essas cópias. Depois de uma falha, a próxima abertura oferece
+restaurar. Com o salvamento automático (``ui/autosalvar.py``, #34) ela fica só como rede de segurança para o que
+mudou depois da última gravação.
+
+Salvamento automático: a janela põe o ``AutoSalvar`` em ``autosalvar``. Ligado, trocar de trabalho ou fechar com
+alterações grava sem perguntar (se a gravação falhar, a pergunta volta); "Salvar" num arquivo automático pergunta
+onde salvar e "Salvar como…" apaga o arquivo automático antigo. ``salvo(Path)`` sai a cada "Salvar"/"Salvar como…".
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
                                QVBoxLayout, QWidget)
 
@@ -28,6 +34,7 @@ from .. import ajustes, projeto
 from ..i18n import _
 from ..projeto import ErroFormato, Foto, Trabalho
 from ..tamanhos import TAMANHOS
+from . import autosalvar as auto
 from . import prefs, tema
 from .estado import Estado
 
@@ -144,6 +151,8 @@ class PilhaFaixas(QWidget):
 class ProjetoUi(QObject):
     """Cuida do ciclo de vida do trabalho (novo, abrir, salvar, fechar) para a ``MainWindow``."""
 
+    salvo = Signal(object)   # Path gravado por "Salvar"/"Salvar como…" (o automático tem o sinal dele)
+
     def __init__(self, janela: QMainWindow, estado: Estado, importacao, faixas: PilhaFaixas) -> None:
         super().__init__(janela)
         self.janela = janela
@@ -153,6 +162,7 @@ class ProjetoUi(QObject):
         self.titulo_padrao = janela.windowTitle()
         self.nome_sugerido: str | None = None            # nome de um trabalho restaurado, para o "Salvar como"
         self._recuperacoes: set[Path] = set()            # arquivos de recuperação gravados nesta sessão
+        self.autosalvar = None                           # ``AutoSalvar`` (#34), posto pela janela
 
         a = janela
         a.acao_novo.triggered.connect(self.novo)
@@ -202,7 +212,10 @@ class ProjetoUi(QObject):
     def escolher_arquivo_salvar(self) -> Path | None:
         s = prefs.settings()
         atual = self.estado.trabalho.caminho
-        if atual is not None:
+        if atual is not None and auto.e_automatico(atual):   # nome automático: começa na última pasta da pessoa
+            pasta = str(s.value("projeto/ultima_pasta", "", str)) or str(atual.parent)
+            inicio = str(Path(pasta) / atual.name)
+        elif atual is not None:
             inicio = str(atual)
         else:
             pasta = str(s.value("projeto/ultima_pasta", "", str)) or str(Path.home())
@@ -230,8 +243,13 @@ class ProjetoUi(QObject):
 
     # ------------------------------------------------------------ perguntar e fechar
     def confirmar_descartar(self) -> bool:
-        """Sem alterações, ``True``. Com alterações pergunta; ``True`` = pode seguir (salvou ou descartou)."""
+        """Sem alterações, ``True``. Com alterações pergunta; ``True`` = pode seguir (salvou ou descartou).
+
+        Com o salvamento automático ligado, grava sem perguntar; só se a gravação falhar a pergunta aparece.
+        """
         if not self.estado.modificado:
+            return True
+        if self.autosalvar is not None and self.autosalvar.ligado and self.autosalvar.salvar_agora(sincrono=True):
             return True
         resposta = self.perguntar_salvar()
         if resposta == SALVAR:
@@ -272,11 +290,11 @@ class ProjetoUi(QObject):
                                              limitar_ajustes=ajustes.sanitizar)
         except ErroFormato as e:
             self._erro(str(e))
-            self._esquecer_recente(caminho)
+            self.esquecer_recente(caminho)
             return False
         except OSError:
             self._erro(_("Não consegui abrir “{nome}”. O arquivo ainda existe?").format(nome=caminho.name))
-            self._esquecer_recente(caminho)
+            self.esquecer_recente(caminho)
             return False
         for foto in trabalho.fotos:   # "pasta/../fotos/a.jpg" (caminho relativo resolvido) vira o caminho limpo
             foto.caminho = Path(os.path.normpath(foto.caminho))
@@ -292,18 +310,31 @@ class ProjetoUi(QObject):
         return True
 
     def salvar(self) -> bool:
-        """Salva no arquivo do trabalho (pergunta onde, se ainda não tem). ``True`` se gravou."""
-        if self.estado.trabalho.caminho is None:
+        """Salva no arquivo do trabalho (pergunta onde, se ainda não tem ou se o arquivo é automático)."""
+        caminho = self.estado.trabalho.caminho
+        if caminho is None or auto.e_automatico(caminho):
             return self.salvar_como()
-        return self._gravar(self.estado.trabalho.caminho)
+        return self._gravar(caminho)
 
     def salvar_como(self) -> bool:
+        """Pergunta onde salvar e grava. Se o trabalho estava num arquivo automático, ele é apagado (foi movido)."""
+        antigo = self.estado.trabalho.caminho
         destino = self.escolher_arquivo_salvar()
         if destino is None:
             return False
-        return self._gravar(com_extensao(destino))
+        destino = com_extensao(destino)
+        if not self._gravar(destino):
+            return False
+        if antigo is not None and auto.e_automatico(antigo):
+            if os.path.normcase(str(Path(antigo).absolute())) == os.path.normcase(str(Path(destino).absolute())):
+                auto.esquecer_automatico(antigo)       # a pessoa adotou o próprio arquivo automático
+            elif auto.apagar_automatico(antigo):
+                self.esquecer_recente(antigo)
+        return True
 
     def _gravar(self, destino: Path) -> bool:
+        if self.autosalvar is not None:
+            self.autosalvar.esperar()   # nunca duas gravações ao mesmo tempo no mesmo arquivo
         try:
             projeto.salvar(self.estado.trabalho, destino)
         except OSError as e:
@@ -316,6 +347,7 @@ class ProjetoUi(QObject):
         self.adicionar_recente(destino)
         self._lembrar_pasta(destino)
         self.atualizar_titulo()
+        self.salvo.emit(Path(destino))
         return True
 
     def _trocar_trabalho(self, trabalho: Trabalho, avisos: list[str] | None = None) -> None:
@@ -407,7 +439,7 @@ class ProjetoUi(QObject):
         self._gravar_recentes(([novo] + resto)[:MAX_RECENTES])
         self.reconstruir_menu()
 
-    def _esquecer_recente(self, caminho: Path) -> None:
+    def esquecer_recente(self, caminho: Path) -> None:
         chave = os.path.normcase(str(Path(caminho).absolute()))
         self._gravar_recentes([str(p) for p in self.recentes() if os.path.normcase(str(p)) != chave])
         self.reconstruir_menu()

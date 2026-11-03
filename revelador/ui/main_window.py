@@ -82,6 +82,10 @@ class MainWindow(QMainWindow):
         self._ligar_atualizacao()
         self._ligar_ajustes()
         self._ligar_projeto()
+        self._ligar_desfazer()
+        self._ligar_menu_grade()
+        self._ligar_autosalvar()
+        self._ligar_boas_vindas()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -455,6 +459,84 @@ class MainWindow(QMainWindow):
         self.projeto_ui = ProjetoUi(self, self.estado, self.importacao, self.faixas)
         self.projeto_ui.oferecer_recuperacao()
 
+    # ------------------------------------------------------------ desfazer/refazer (#5)
+    def _ligar_desfazer(self) -> None:
+        """Ctrl+Z / Ctrl+Y pela pilha do ``Estado``: habilitadas por ``canUndo``/``canRedo``, texto "Desfazer {o quê}".
+
+        Os gestos do editor (arrastar no visor, slider de endireitar) começam ao apertar e terminam ao soltar o mouse:
+        tudo no meio vira um passo só.
+        """
+        from .desfazer import ligar_gestos
+
+        pilha = self.estado.pilha
+        self.acao_desfazer.triggered.connect(self.estado.desfazer)
+        self.acao_refazer.triggered.connect(self.estado.refazer)
+        pilha.canUndoChanged.connect(self.acao_desfazer.setEnabled)
+        pilha.canRedoChanged.connect(self.acao_refazer.setEnabled)
+        pilha.undoTextChanged.connect(self._texto_desfazer)
+        pilha.redoTextChanged.connect(self._texto_refazer)
+        self.acao_desfazer.setEnabled(pilha.canUndo())
+        self.acao_refazer.setEnabled(pilha.canRedo())
+        self._texto_desfazer(pilha.undoText())
+        self._texto_refazer(pilha.redoText())
+        self._filtro_gesto = ligar_gestos(self.estado, self.editor.tela, self.editor.slider_angulo.trilho)
+        self.editor.slider_angulo.soltou.connect(self.estado.fim_gesto)
+
+    def _texto_desfazer(self, texto: str) -> None:
+        self.acao_desfazer.setText(_("Desfazer {acao}").format(acao=texto) if texto else _("Desfazer"))
+
+    def _texto_refazer(self, texto: str) -> None:
+        self.acao_refazer.setText(_("Refazer {acao}").format(acao=texto) if texto else _("Refazer"))
+
+    # ------------------------------------------------------------ menu de contexto da grade (#5, #9)
+    def _ligar_menu_grade(self) -> None:
+        """O "Procurar…" do menu de contexto da grade usa a mesma busca da faixa de fotos não encontradas."""
+        self.grade.procurar_pedido.connect(lambda: self.projeto_ui.procurar_faltando())
+
+    # ------------------------------------------------------------ salvamento automático e configurações (#34)
+    def _ligar_autosalvar(self) -> None:
+        """Salvamento automático (``ui/autosalvar.py``), o indicador na barra de status e "Configurações…".
+
+        Para dar ao trabalho novo o nome da primeira pasta importada, ``importar`` passa a avisar o ``AutoSalvar``
+        antes de importar (a importação em si não muda).
+        """
+        from .autosalvar import AutoSalvar
+
+        self.autosalvar = AutoSalvar(self, self.estado, self.projeto_ui, self.faixas)
+        self.projeto_ui.autosalvar = self.autosalvar
+        self.statusBar().addPermanentWidget(self.autosalvar.indicador)
+        importar_original = self.importar
+
+        def importar(caminhos) -> list:
+            self.autosalvar.notar_importacao(caminhos)
+            return importar_original(caminhos)
+
+        self.importar = importar
+        self.acao_configuracoes.triggered.connect(lambda _c=False: self.abrir_configuracoes())
+        self.acao_configuracoes.setEnabled(True)
+
+    def criar_dialogo_configuracoes(self):
+        """Diálogo de Configurações já ligado: ao salvar, o salvamento automático relê as preferências."""
+        from .configuracoes import ConfiguracoesDialog
+
+        dialogo = ConfiguracoesDialog(self)
+        dialogo.aplicado.connect(self.autosalvar.aplicar_preferencias)
+        return dialogo
+
+    def abrir_configuracoes(self) -> None:
+        self.criar_dialogo_configuracoes().exec()
+
+    # ------------------------------------------------------------ tela de boas-vindas (#35)
+    def _ligar_boas_vindas(self) -> None:
+        """Tela de boas-vindas (``ui/boas_vindas.py``): engrenagem → "Tela de boas-vindas" (``acao_boas_vindas``).
+
+        Ao abrir o app, ``app.main`` chama ``boas_vindas.ao_abrir()`` depois de tratar a linha de comando (a tela só
+        aparece sem arquivos nela). Precisa de ``projeto_ui``, ``faixas``, ``verificador`` e ``divisor``.
+        """
+        from .boas_vindas import BoasVindas
+
+        self.boas_vindas = BoasVindas(self)
+
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
         s = prefs.settings()
@@ -501,7 +583,9 @@ class MainWindow(QMainWindow):
         self.divisor.setSizes(tamanhos)
 
     def closeEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        # Chega aqui só se o fechamento foi aceito (``ProjetoUi`` já salvou ou perguntou).
         self.salvar_estado()
+        self.autosalvar.encerrar()   # para o temporizador e espera uma gravação em curso
         super().closeEvent(evento)
 
     # ------------------------------------------------------------ Ajuda

@@ -110,6 +110,7 @@ def test_titulo_com_bolinha_e_pergunta_de_salvar():
     rodar("""
 j = janela_com_fotos(2)
 ui, est = j.projeto_ui, j.estado
+j.autosalvar.timer.stop()          # salvamento automático desligado: a pergunta de salvar volta (#34)
 assert j.windowTitle().startswith("• ") and "Sem título — Revelador" in j.windowTitle()
 respostas = []
 ui.perguntar_salvar = lambda: respostas.pop(0)

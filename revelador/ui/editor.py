@@ -495,12 +495,22 @@ class Editor(QWidget):
 
     # ------------------------------------------------------------ gestos (públicos)
     def _aplicar(self, foto: Foto, imp: Impressao, novo: Recorte) -> bool:
-        """Grava o recorte como manual e avisa. Sem mudança real, não faz nada (e não vira manual)."""
+        """Grava o recorte como manual e avisa. Sem mudança real, não faz nada (e não vira manual).
+
+        Desfazer: arrastar, rolar o zoom e o slider de endireitar juntam as chamadas seguidas num passo só (até
+        soltar o mouse ou parar de mexer); o giro de 90° é sempre um passo próprio.
+        """
         a = imp.recorte
         if (novo.cx, novo.cy, novo.zoom, novo.angulo, novo.giro) == (a.cx, a.cy, a.zoom, a.angulo, a.giro):
             return False
+        if novo.giro != a.giro:
+            juntar = None
+        elif (novo.cx, novo.cy, novo.zoom) == (a.cx, a.cy, a.zoom):
+            juntar = f"endireitar:{self.estado.indice_impressao}"
+        else:
+            juntar = f"recorte:{self.estado.indice_impressao}"
         imp.recorte = replace(novo, origem="manual")
-        self.estado.alterar(foto)
+        self.estado.alterar(foto, juntar=juntar)
         return True
 
     def _limitado(self, imp: Impressao, recorte: Recorte) -> Recorte:

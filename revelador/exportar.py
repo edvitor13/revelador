@@ -4,10 +4,11 @@ Fluxo
 -----
 1. ``conferir(trabalho, infos)``: avisos antes de exportar (resolução baixa, original que sumiu ou mudou, foto
    selecionada sem impressão).
-2. ``planejar(trabalho, destino, modo_copias, ...)``: o ``Plano``, sem tocar no disco: pasta ``Revelação AAAA-MM-DD``
-   (nunca uma pasta que já existe: sufixo `` (2)``...), uma subpasta por tamanho e um ``Item`` por impressão de foto
-   selecionada, com os caminhos finais já sem colisão. O plano guarda CÓPIAS do modelo, então pode ser executado em
-   outra thread enquanto a interface continua viva.
+2. ``planejar(trabalho, destino, modo_copias, ..., organizar=...)``: o ``Plano``, sem tocar no disco: pasta
+   ``Revelação AAAA-MM-DD`` (nunca uma pasta que já existe: sufixo `` (2)``...), uma subpasta por tamanho (ou, com
+   ``organizar="pasta"``, uma por pasta de tamanho, #32, e as impressões avulsas por tamanho) e um ``Item`` por
+   impressão de foto selecionada, com os caminhos finais já sem colisão. O plano guarda CÓPIAS do modelo, então
+   pode ser executado em outra thread enquanto a interface continua viva.
 3. ``exportar_item(item, dpi)``: ``carregar_fonte(original)`` → ``renderizar`` nos px exatos do papel →
    ``para_uint8`` → JPEG baseline, qualidade 95, 4:4:4, perfil sRGB, dpi e EXIF mínimo (só a data original), gravado
    em ``.tmp`` na mesma pasta e trocado com ``os.replace``. O original nunca é aberto para escrita.
@@ -42,10 +43,16 @@ MODO_NOME = "nome"
 MODO_REPETIR = "repetir"
 MODOS = (MODO_PASTAS, MODO_NOME, MODO_REPETIR)
 
+ORGANIZAR_TAMANHO = "tamanho"   # uma subpasta por tamanho (padrão)
+ORGANIZAR_PASTA = "pasta"       # uma subpasta por pasta de tamanho (#32); avulsas continuam por tamanho
+ORGANIZACOES = (ORGANIZAR_TAMANHO, ORGANIZAR_PASTA)
+
 QUALIDADE_JPEG = 95
 MAX_PARALELO = 4
 NOME_PEDIDO = "pedido.txt"
 _PROIBIDOS = '<>:"/\\|?*'
+_RESERVADOS = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
+MAX_NOME_SUBPASTA = 80
 _TAG_EXIF_IFD = 0x8769
 _TAG_DATA_ORIGINAL = 0x9003
 
@@ -62,6 +69,8 @@ class Item:
     tamanho_nome: str            # nome da subpasta ("10x15")
     copias: int
     destinos: list[Path]
+    grupo: str = ""              # nome da subpasta de primeiro nível (o tamanho, ou a pasta de tamanho)
+    pasta: str | None = None     # id da pasta de tamanho da impressão (None = avulsa)
 
 
 @dataclass
@@ -73,6 +82,7 @@ class Plano:
     data: date
     trabalho: Trabalho           # cópia, para o orçamento do pedido.txt
     tabela_precos: dict[str, int] = field(default_factory=dict)
+    organizar: str = ORGANIZAR_TAMANHO
 
     @property
     def arquivos(self) -> int:
@@ -125,6 +135,15 @@ def nome_tamanho(impressao: Impressao) -> str:
     return _limpo(_(tamanhos.obter(impressao.tamanho).nome))
 
 
+def nome_subpasta(nome: str) -> str:
+    """Nome de pasta válido no Windows: sem caracteres proibidos, sem ponto/espaço no fim, sem nome reservado
+    (``CON``, ``COM1``...) e com no máximo ``MAX_NOME_SUBPASTA`` caracteres."""
+    nome = _limpo(" ".join(str(nome).split())[:MAX_NOME_SUBPASTA])
+    if nome.split(".")[0].strip().upper() in _RESERVADOS:
+        nome = f"{nome}_"
+    return nome
+
+
 def texto_copias(n: int) -> str:
     return _("{n} cópia").format(n=n) if n == 1 else _("{n} cópias").format(n=n)
 
@@ -160,40 +179,82 @@ class _Reserva:
             n += 1
 
 
+def _grupos(trabalho: Trabalho, brutos: list[tuple[Foto, Impressao]], organizar: str) -> list[str]:
+    """Nome da subpasta de primeiro nível de cada impressão (mesma ordem de ``brutos``).
+
+    Por tamanho: ``nome_tamanho``. Por pasta: a pasta de tamanho da impressão vira uma subpasta com o nome dela
+    (``nome_subpasta``), e a impressão avulsa (ou de pasta que não existe mais) fica na subpasta do tamanho. Os nomes
+    são únicos sem diferenciar maiúsculas: as pastas de tamanho escolhem primeiro (na ordem de ``trabalho.pastas``),
+    depois os tamanhos das avulsas; um nome repetido ganha `` (2)``, `` (3)``...
+    """
+    if organizar == ORGANIZAR_TAMANHO:
+        return [nome_tamanho(imp) for _foto, imp in brutos]
+    pastas = {p.id: p for p in trabalho.pastas}
+    usadas = {imp.pasta for _foto, imp in brutos if imp.pasta in pastas}
+    usados: set[str] = set()
+    nomes: dict[tuple[str, str], str] = {}
+
+    def reservar(chave: tuple[str, str], nome: str) -> None:
+        candidato, n = nome, 2
+        while candidato.casefold() in usados:
+            candidato = f"{nome} ({n})"
+            n += 1
+        usados.add(candidato.casefold())
+        nomes[chave] = candidato
+
+    for p in trabalho.pastas:
+        if p.id in usadas:
+            reservar(("pasta", p.id), nome_subpasta(p.nome))
+    chaves = [("pasta", imp.pasta) if imp.pasta in pastas else ("tamanho", nome_tamanho(imp)) for _foto, imp in brutos]
+    for chave in dict.fromkeys(chaves):
+        if chave not in nomes:
+            reservar(chave, chave[1])
+    return [nomes[c] for c in chaves]
+
+
 def planejar(trabalho: Trabalho, destino: str | os.PathLike, modo_copias: str = MODO_PASTAS, dpi: int | None = None,
-             tabela_precos: Mapping[str, int] | None = None, hoje: date | None = None) -> Plano:
-    """O que será gravado, sem tocar no disco. Um item por impressão de foto selecionada (ordem do trabalho)."""
+             tabela_precos: Mapping[str, int] | None = None, hoje: date | None = None,
+             organizar: str = ORGANIZAR_TAMANHO) -> Plano:
+    """O que será gravado, sem tocar no disco. Um item por impressão de foto selecionada (ordem do trabalho).
+
+    ``organizar``: ``"tamanho"`` (uma subpasta por tamanho) ou ``"pasta"`` (uma por pasta de tamanho; as impressões
+    avulsas continuam por tamanho). Dentro de cada subpasta, o mesmo esquema de cópias (``modo_copias``).
+    """
     if modo_copias not in MODOS:
         raise ValueError(f"modo de cópias desconhecido: {modo_copias!r} (use {MODOS})")
+    if organizar not in ORGANIZACOES:
+        raise ValueError(f"organização desconhecida: {organizar!r} (use {ORGANIZACOES})")
     dia = hoje or date.today()
     dpi = int(dpi or trabalho.dpi)
     pasta = pasta_livre(Path(destino), nome_pasta(dia))
     congelado = copy.deepcopy(trabalho)
 
     brutos = [(foto, imp) for foto in congelado.selecionadas() for imp in foto.impressoes]
-    # modo "pastas": sem subpasta de quantidade nos tamanhos em que todas as impressões são de 1 cópia
+    grupos = _grupos(congelado, brutos, organizar)
+    ids_pastas = {p.id for p in congelado.pastas}
+    # modo "pastas": sem subpasta de quantidade nas subpastas em que todas as impressões são de 1 cópia
     so_uma: dict[str, bool] = {}
-    for _foto, imp in brutos:
-        pasta_tam = nome_tamanho(imp)
-        so_uma[pasta_tam] = so_uma.get(pasta_tam, True) and imp.copias == 1
+    for (_foto, imp), grupo in zip(brutos, grupos):
+        so_uma[grupo] = so_uma.get(grupo, True) and imp.copias == 1
 
     reserva = _Reserva()
     itens: list[Item] = []
-    for foto, imp in brutos:
+    for (foto, imp), grupo in zip(brutos, grupos):
         tam = nome_tamanho(imp)
-        base = pasta / tam
+        base = pasta / grupo
         copias = max(1, int(imp.copias))
         stem = _limpo(foto.caminho.stem)
         if modo_copias == MODO_PASTAS:
-            if not so_uma[tam]:
+            if not so_uma[grupo]:
                 base = base / texto_copias(copias)
             destinos = [reserva.reservar(base, stem)]
         elif modo_copias == MODO_NOME:
             destinos = [reserva.reservar(base, f"{stem} ({texto_copias(copias)})")]
         else:
             destinos = [reserva.reservar(base, stem) for _i in range(copias)]
-        itens.append(Item(foto, imp, precos.chave_preco(imp), tam, copias, destinos))
-    return Plano(pasta, itens, modo_copias, dpi, dia, congelado, dict(tabela_precos or {}))
+        itens.append(Item(foto, imp, precos.chave_preco(imp), tam, copias, destinos, grupo,
+                          imp.pasta if imp.pasta in ids_pastas else None))
+    return Plano(pasta, itens, modo_copias, dpi, dia, congelado, dict(tabela_precos or {}), organizar)
 
 
 # ------------------------------------------------------------------------------------------- conferência
@@ -336,6 +397,7 @@ def texto_pedido(plano: Plano, resultado: Resultado | None = None) -> str:
         else:
             txt += " — " + _("sem preço")
         linhas.append(txt)
+    linhas += _linhas_pastas(plano, feitos)
     linhas.append("")
     if any(ln.unitario is not None for ln in orc.linhas):
         rotulo = _("Total estimado") if orc.completo else _("Total estimado PARCIAL (há tamanhos sem preço)")
@@ -355,6 +417,22 @@ def texto_pedido(plano: Plano, resultado: Resultado | None = None) -> str:
             rel = d.relative_to(plano.pasta).as_posix()
             linhas.append(f"{rel}  ({texto_copias(item.copias)})")
     return "\n".join(linhas) + "\n"
+
+
+def _linhas_pastas(plano: Plano, feitos: list[Item]) -> list[str]:
+    """Organizado por pasta: que subpasta é de que tamanho (o laboratório não adivinha pelo nome "Família")."""
+    if plano.organizar != ORGANIZAR_PASTA:
+        return []
+    linhas: list[str] = []
+    for p in plano.trabalho.pastas:
+        dela = [i for i in feitos if i.pasta == p.id]
+        if dela:
+            linhas.append(_("{pasta}/ — {tamanho}: {fotos} foto(s), {copias} cópia(s)").format(
+                pasta=dela[0].grupo, tamanho=dela[0].tamanho_nome, fotos=len({i.foto.id for i in dela}),
+                copias=sum(i.copias for i in dela)))
+    if not linhas:
+        return []
+    return ["", _("Pastas")] + linhas
 
 
 # ------------------------------------------------------------------------------------------------ execução

@@ -318,6 +318,7 @@ def pronto(j):
 
 
 j = MainWindow(); j.show()
+j.autosalvar.timer.stop()          # salvamento automático desligado: a pergunta de salvar volta (#34)
 foto_a = gerar_foto("a.png", 320, 240)
 foto_b = gerar_foto("b.png", 300, 200)
 foto_c = gerar_foto("c.png", 200, 300)
