@@ -54,3 +54,9 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 - Atualização automática: aviso com as novidades, "Instalar e reiniciar" ou "Pular esta versão"; a consulta é feita ao
   abrir, no máximo uma vez por dia, e pode ser desligada (#10).
 - Ferramentas de desenvolvimento: `tools/captura_tela.py` (capturas da interface) e `tools/medir_ajustes.py`.
+- Grade com o tamanho das miniaturas ajustável (controle "Miniaturas" no rodapé ou Ctrl + roda do mouse, de 80 a
+  320 px, lembrado); em miniaturas pequenas o nome some e o chip mostra só as cópias. A grade abre com pelo menos
+  duas colunas, inclusive para quem tinha a largura menor da primeira versão (#31).
+- Orientação e cópias mais diretas: seletor Retrato | Paisagem que já mostra a orientação escolhida pela forma da foto
+  (com "auto" e "Voltar ao automático"), botão "Girar papel" no painel e no editor (atalho `O`), botões − e + nas
+  cópias, atalhos `+` e `−` e clique no chip da grade para somar uma cópia (Shift+clique tira uma) (#33).

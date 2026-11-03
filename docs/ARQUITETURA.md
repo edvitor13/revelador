@@ -417,25 +417,48 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
 - **Grade** (`ui/grade.py`, `QListView` em modo ícone + modelo e delegate próprios, miniaturas sob demanda do
   cache em disco): cartão por foto com marca de seleção (clique na marca ou Espaço), etiqueta de tamanho(s) e
   cópias, aviso de resolução baixa e de erro; Delete tira do trabalho (nunca do disco). Seleção múltipla
-  (`fotos_escolhidas`) vale para Espaço, Delete e para colar ajustes.
+  (`fotos_escolhidas`) vale para Espaço, Delete e para colar ajustes. Clicar no chip "10x15 ×2" soma uma cópia
+  àquela impressão e Shift+clique tira uma (limites 1 e 999); a foto clicada vira a atual e a impressão, a do editor.
+  - **Tamanho das miniaturas** (#31): controle "Miniaturas" no rodapé da grade e Ctrl + roda do mouse sobre ela, de
+    80 a 320 px em passos de 10 (`MINIATURA_MINIMA`, `MINIATURA_MAXIMA`, `PASSO_MINIATURA`), padrão 150
+    (`MINIATURA_PADRAO`), lembrado em `grade/miniatura`. Célula, marca, chips e nome acompanham o tamanho; abaixo de
+    120 px (`LADO_COMPACTO`) o nome some e os chips mostram só a contagem de cópias. Mudar o tamanho não relê as
+    fotos: a miniatura vem sempre do cache de 320 px (`miniaturas.py`).
+  - **Duas colunas no mínimo**: a largura mínima da área da grade é a de duas colunas no tamanho escolhido
+    (`grade.largura_duas_colunas`), recalculada quando o tamanho muda (`Grade.tamanho_mudou`); ao abrir, uma largura
+    de divisória salva menor que isso (como os 260 px da primeira versão) é corrigida e o editor cede o que falta
+    (`MainWindow._corrigir_largura_grade`).
 - **Editor** (`ui/editor.py`, widget próprio): seletor **Moldura | Resultado**. Moldura: a foto inteira com a
   moldura do papel na proporção exata, fora do papel escurecido, margem de corte tracejada, opção de mostrar os
   rostos; arrastar move o recorte, a roda dá zoom, tudo passa por `enquadramento.reencaixar`. Resultado: a prévia
-  pela receita. Rodapé (`Rodape`) com a informação do tamanho e da resolução, ícones de girar 90°, zoom −/+,
-  rostos, "Enquadrar pelos rostos" e o slider de endireitar. Impressão em modo *caber* mostra sempre o resultado.
+  pela receita. Rodapé (`Rodape`) com a informação do tamanho e da resolução, ícones de girar 90°, **Girar papel**
+  (retrato ↔ paisagem, `O`), zoom −/+, rostos, "Enquadrar pelos rostos" e o slider de endireitar. Impressão em modo *caber* mostra sempre o resultado.
 - **Painel lateral**: coluna rolável de **cartões** (`Card`): **Impressões** (`ui/painel_impressoes.py`: tamanhos
   com cópias, orientação, modo preencher/caber, "+ Adicionar tamanho", remover, tamanho personalizado), **Luz**,
   **Cor** e **Detalhe** (`ui/painel_ajustes.py`, gerados de `ajustes.PARAMS`/`GRUPOS`; duplo clique no controle volta
   ao padrão, o botão do cartão restaura o grupo) e botões de comparar, copiar, colar e restaurar todos.
+  - **Orientação explícita** (#33): no lugar de um combo com "Automática", um `Segmented` **Retrato | Paisagem**. Com
+    `orientacao = "auto"`, vem marcada a opção resolvida pela forma da foto (`tamanhos.orientacao_efetiva` sobre a
+    imagem já girada), com o indicador discreto "auto" (dica: "escolhida pela forma da foto"); clicar numa opção fixa
+    a orientação e **Voltar ao automático** devolve `"auto"`. O modelo continua com `"auto"`, `"retrato"` ou
+    `"paisagem"`: só a apresentação mudou. **Girar papel** (no cartão, no rodapé do editor e pelo atalho `O`) troca
+    retrato ↔ paisagem fixando a escolha; o recorte automático é refeito e o manual é reencaixado na nova proporção,
+    mantendo a `origem`.
+  - **Cópias rápidas** (#33): botões − e + bem visíveis ao lado da quantidade ("× n"), os atalhos `+` (ou `=`) e `−`
+    na impressão atual e o clique no chip da grade; limites 1 e 999 (`LIMITE_COPIAS`). Custo, chip e resumo
+    atualizam na hora (`estado.alterar(foto, pedido=True)`).
 - **Atalhos** (os que existem hoje): Ctrl+I importar fotos · Ctrl+Shift+I importar pasta · Ctrl+E exportar · Ctrl+N
   novo · Ctrl+O abrir · Ctrl+S salvar · Ctrl+Shift+S salvar como · Ctrl+Q sair · Espaço marca/desmarca ·
-  Delete remove da grade · R / Shift+R gira 90° (horário / anti-horário) · A recorte automático (pelos rostos) ·
-  Ctrl++ / Ctrl+− zoom · **segurar `\`** mostra o antes/depois · Ctrl+Shift+C / Ctrl+Shift+V copiar/colar ajustes.
+  Delete remove da grade · R / Shift+R gira 90° (horário / anti-horário) · O gira o papel (retrato ↔ paisagem) ·
+  A recorte automático (pelos rostos) · `+` / `−` uma cópia a mais / a menos na impressão atual · Ctrl++ / Ctrl+−
+  zoom · Ctrl + roda do mouse sobre a grade muda o tamanho das miniaturas · **segurar `\`** mostra o antes/depois ·
+  Ctrl+Shift+C / Ctrl+Shift+V copiar/colar ajustes.
   Desfazer/refazer e ←/→ entre fotos **no editor** ainda não existem (as setas navegam na grade).
 - **Arrastar e soltar** fotos e pastas na janela importa (recursivo, só formatos suportados).
 - **Preferências** (`ui/prefs.settings()`): `QSettings` no registro (`HKCU\Software\Revelador\Revelador`) ou, com
   `REVELADOR_SETTINGS_DIR`, num `.ini`. Guarda geometria e divisórias da janela, últimas pastas, tamanho padrão, dpi,
-  modo de cópias, preços, `projeto/recentes` e as chaves `atualizacao/*` (seção 11).
+  modo de cópias, preços, o tamanho das miniaturas (`grade/miniatura`), `projeto/recentes` e as chaves
+  `atualizacao/*` (seção 11).
 - **Erros**: `crashlog.py` instala `sys.excepthook` e `threading.excepthook`, grava em
   `%LOCALAPPDATA%\Revelador\logs\erro-<data>.txt` (até 20 arquivos de 256 KB cada) e mostra uma mensagem curta
   com "Abrir registro".
