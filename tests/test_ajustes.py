@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
 import pytest
 
+import ajustes_referencia as referencia
 from revelador import ajustes
 from revelador.ajustes import PARAMS, POR_CHAVE, aplicar, e_neutro, sanitizar
 
@@ -381,17 +383,113 @@ def test_previa_sem_escala_explicita_equivale_a_escala_relativa():
     assert dif < 0.002
 
 
+# ------------------------------------------------------------------------- igual à referência (lenta e exata)
+
+LIMITE_MAXIMO = 1 / 1024  # diferença máxima (escala 0..1) permitida contra `ajustes_referencia` (a versão anterior)
+LIMITE_MEDIO = 1 / 4096
+
+
+def compara_com_referencia(img: np.ndarray, valores: dict, escala_mm_px: float | None = None) -> tuple[float, float]:
+    """(diferença máxima, média) de `aplicar` contra a referência; falha se passar dos limites."""
+    d = np.abs(aplicar(img, valores, escala_mm_px) - referencia.aplicar(img, valores, escala_mm_px))
+    maximo, media = float(d.max()), float(d.mean())
+    assert maximo <= LIMITE_MAXIMO and media <= LIMITE_MEDIO, (valores, maximo, media)
+    return maximo, media
+
+
+def imagens_para_comparar():
+    forte = foto_sintetica(640, 427, semente=21, sigma_px=0.7)  # bordas de ~1 px
+    fora = np.random.default_rng(9).random((90, 130, 3)).astype(np.float32) * 1.3 - 0.15  # de -0,15 a 1,15
+    return {"foto": foto_sintetica(480, 320), "bordas": forte, "ceu": cena_com_ceu()[0], "fora_da_faixa": fora,
+            "ruido": np.random.default_rng(5).random((120, 160, 3)).astype(np.float32)}
+
+
+@pytest.mark.parametrize("chave", CHAVES)
+def test_cada_ajuste_igual_a_referencia(chave):
+    pior = (0.0, 0.0)
+    for nome, img in imagens_para_comparar().items():
+        for valor in ((-100, -50, 50, 100) if chave != "nitidez" else (30, 100)):
+            m, md = compara_com_referencia(img, {chave: valor}, ESCALA_NITIDEZ if nome == "foto" else None)
+            pior = (max(pior[0], m), max(pior[1], md))
+    print(f"vs referencia {chave}: maxima {pior[0]:.6f} media {pior[1]:.7f}")
+
+
+def test_combinacoes_iguais_a_referencia():
+    rng = np.random.default_rng(42)
+    combinacoes = [{p.chave: 100 for p in PARAMS}, {p.chave: (100 if p.chave == "nitidez" else -100) for p in PARAMS},
+                   {p.chave: (45 if i % 2 else -45) for i, p in enumerate(PARAMS)}]
+    for _ in range(14):  # extremos e valores intermediários misturados, alguns ajustes no padrão
+        combinacoes.append({p.chave: float(rng.choice([0, 0, rng.uniform(p.minimo, p.maximo), p.minimo, p.maximo]))
+                            for p in PARAMS})
+    pior = (0.0, 0.0)
+    for img in imagens_para_comparar().values():
+        for valores in combinacoes:
+            m, md = compara_com_referencia(img, valores)
+            pior = (max(pior[0], m), max(pior[1], md))
+    print(f"vs referencia, combinacoes: maxima {pior[0]:.6f} media {pior[1]:.7f}")
+
+
+def test_imagens_de_borda_iguais_a_referencia():
+    for img in imagens_de_borda():
+        for sinal in (-1, 1):
+            compara_com_referencia(img, {p.chave: (100 if p.chave == "nitidez" else sinal * 100) for p in PARAMS})
+        for p in PARAMS:
+            compara_com_referencia(img, {p.chave: 100})
+
+
+def test_formas_pequenas_iguais_a_referencia():
+    for forma in ((1, 1), (2, 3), (5, 400), (400, 5), (37, 53)):
+        img = np.random.default_rng(1).random((*forma, 3)).astype(np.float32)
+        compara_com_referencia(img, {p.chave: 70 for p in PARAMS})
+        compara_com_referencia(img, {"exposicao": -30, "sombras": 60, "vibracao": 40})
+
+
+def test_resultado_nao_depende_de_chamadas_anteriores_nem_de_threads():
+    img = foto_sintetica(500, 340)
+    outra = foto_sintetica(300, 200, semente=3)
+    todos = {p.chave: (35 if i % 2 else -45) for i, p in enumerate(PARAMS)}
+    sozinho = aplicar(img, todos)
+    guardado = sozinho.copy()
+    aplicar(outra, {"vibracao": 80, "sombras": 50})  # outro tamanho e outros ajustes no meio
+    aplicar(img, {"exposicao": 100, "nitidez": 100})
+    assert np.array_equal(aplicar(img, todos), sozinho)
+    assert np.array_equal(sozinho, guardado)  # o resultado devolvido não é reaproveitado por chamadas seguintes
+    with ThreadPoolExecutor(4) as pool:
+        resultados = list(pool.map(lambda _: aplicar(img, todos), range(8)))
+    assert all(np.array_equal(r, sozinho) for r in resultados)
+
+
 # ------------------------------------------------------------------------------------------- desempenho
+
+def melhor_tempo(img: np.ndarray, valores: dict, repeticoes: int = 3) -> float:
+    aplicar(img, valores)  # aquece (tabelas, mapas)
+    tempos = []
+    for _ in range(repeticoes):
+        t0 = time.perf_counter()
+        aplicar(img, valores)
+        tempos.append(time.perf_counter() - t0)
+    return min(tempos)
+
 
 def test_desempenho_todos_os_ajustes_em_1600x1067():
     img = foto_sintetica(1600, 1067)
     valores = {p.chave: (45 if i % 2 else -45) for i, p in enumerate(PARAMS)}
     valores["nitidez"] = 60
-    aplicar(img, valores)  # aquece
-    tempos = []
-    for _ in range(3):
-        t0 = time.perf_counter()
-        aplicar(img, valores)
-        tempos.append(time.perf_counter() - t0)
-    print(f"1600x1067, todos os ajustes: melhor {min(tempos) * 1000:.0f} ms")
-    assert min(tempos) < 3.0  # teto folgado: o executor do CI é ~2x mais lento; o alvo real é bem menor
+    melhor = melhor_tempo(img, valores, 5)
+    print(f"1600x1067, todos os ajustes: melhor {melhor * 1000:.0f} ms")
+    # Teto folgado: o executor do CI é bem mais lento. Medido: ~65 ms (antes da otimização, #7: ~450 ms; meta 150).
+    assert melhor < 0.6
+
+
+def test_desempenho_so_paga_pelos_ajustes_ligados():
+    img = foto_sintetica(1600, 1067)
+    todos = {p.chave: (45 if i % 2 else -45) for i, p in enumerate(PARAMS)}
+    todos["nitidez"] = 60
+    completo = melhor_tempo(img, todos)
+    neutro = melhor_tempo(img, {p.chave: p.padrao for p in PARAMS})
+    print(f"1600x1067: neutro {neutro * 1000:.1f} ms, todos {completo * 1000:.0f} ms")
+    assert neutro < 0.1 and neutro < completo  # ajuste no padrão é só a cópia
+    for chave in ("exposicao", "contraste", "temperatura", "brancos", "pretos"):  # pontuais: uma só tabela
+        sozinho = melhor_tempo(img, {chave: 45})
+        print(f"1600x1067, so {chave}: {sozinho * 1000:.0f} ms")
+        assert sozinho < 0.3 and sozinho < completo
