@@ -9,15 +9,15 @@ chamam, então dá para testar sem clicar.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtGui import QKeySequence, QShortcut, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget)
+                               QHBoxLayout, QLabel, QLineEdit, QSpinBox, QToolButton, QVBoxLayout, QWidget)
 
 from .. import enquadramento, precos, tamanhos
 from ..i18n import N_, _
 from ..projeto import Foto, Impressao
 from . import prefs, tema
-from .componentes import Card, ToggleSwitch, botao_plano
+from .componentes import Card, Segmented, ToggleSwitch, botao_plano
 from .estado import Estado
 
 NOMES_GRUPOS = {
@@ -25,7 +25,8 @@ NOMES_GRUPOS = {
     tamanhos.AMPLIACAO: N_("Ampliações"),
     tamanhos.QUADRADO: N_("Quadrados"),
 }
-ORIENTACOES = (("auto", N_("Automática")), ("retrato", N_("Retrato")), ("paisagem", N_("Paisagem")))
+ORIENTACOES_FIXAS = (("retrato", N_("Retrato")), ("paisagem", N_("Paisagem")))   # "auto" é só o padrão do modelo
+LIMITE_COPIAS = (1, 999)
 MODOS = (("preencher", N_("Preencher")), ("caber", N_("Caber")))
 NOMES_QUALIDADE = {"boa": N_("Boa"), "aceitavel": N_("Aceitável"), "baixa": N_("Baixa")}
 COR_QUALIDADE = {"boa": tema.OK, "aceitavel": tema.AVISO, "baixa": tema.PERIGO}   # cores de estado
@@ -58,6 +59,22 @@ def escolher_no_combo(combo: QComboBox, tamanho_id: str) -> None:
     indice = combo.findData(tamanho_id, Qt.ItemDataRole.UserRole)
     if indice >= 0:
         combo.setCurrentIndex(indice)
+
+
+def _botao_copia(texto: str, dica: str) -> QToolButton:
+    """Botão − ou + ao lado da quantidade: texto grande e bordado, para ser fácil de acertar."""
+    b = QToolButton()
+    b.setObjectName("Flat")            # o padrão do tema tem margens largas demais para um caractere
+    b.setText(texto)
+    b.setToolTip(dica)
+    b.setFixedSize(34, 30)
+    fonte = b.font()
+    fonte.setPointSizeF(fonte.pointSizeF() + 3)
+    fonte.setBold(True)
+    b.setFont(fonte)
+    b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    return b
 
 
 def _dim_girada(estado: Estado, foto: Foto, imp: Impressao) -> tuple[int, int] | None:
@@ -175,13 +192,33 @@ class LinhaImpressao(QFrame):
         self.setObjectName("LinhaImp")
         self.combo_tamanho = QComboBox()
         preencher_combo_tamanhos(self.combo_tamanho)
+        # o valor das cópias fica neste spin (fora do layout: o tema apertava o campo e o número não aparecia);
+        # o que a pessoa vê é o rótulo "× n", atualizado em atualizar()
         self.spin_copias = QSpinBox()
-        self.spin_copias.setRange(1, 999)
+        self.spin_copias.setRange(*LIMITE_COPIAS)
         self.spin_copias.setPrefix("× ")
         self.spin_copias.setToolTip(_("Cópias"))
-        self.combo_orientacao = QComboBox()
-        for valor, nome in ORIENTACOES:
-            self.combo_orientacao.addItem(_(nome), valor)
+        self.rotulo_copias = QLabel()
+        self.rotulo_copias.setObjectName("Value")
+        self.rotulo_copias.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.rotulo_copias.setToolTip(_("Cópias"))
+        self.rotulo_copias.setMinimumWidth(56)
+        self.botao_menos = _botao_copia("−", _("Uma cópia a menos (−)"))
+        self.botao_mais = _botao_copia("+", _("Uma cópia a mais (+)"))
+        caixa_copias = QWidget()
+        copias = QHBoxLayout(caixa_copias)
+        copias.setContentsMargins(0, 0, 0, 0)
+        copias.setSpacing(4)
+        for w in (self.botao_menos, self.rotulo_copias, self.botao_mais):
+            copias.addWidget(w)
+        self.seg_orientacao = Segmented([(valor, _(nome), _("Papel em pé") if valor == "retrato" else _("Papel deitado"))
+                                         for valor, nome in ORIENTACOES_FIXAS])
+        self.rotulo_auto = QLabel(_("auto"))
+        self.rotulo_auto.setObjectName("Faint")
+        self.rotulo_auto.setToolTip(_("escolhida pela forma da foto"))
+        self.botao_voltar = botao_plano("reset", _("Voltar à orientação automática (pela forma da foto)"),
+                                        _("Voltar ao automático"))
+        self.botao_girar = botao_plano("girar_direita", _("Girar o papel: retrato ↔ paisagem"), _("Girar papel"))
         self.combo_modo = QComboBox()
         for valor, nome in MODOS:
             self.combo_modo.addItem(_(nome), valor)
@@ -189,25 +226,35 @@ class LinhaImpressao(QFrame):
         self.ponto_qualidade.setFixedSize(8, 8)
         self.rotulo_qualidade = QLabel()
         self.botao_remover = botao_plano("lixeira", _("Remover este tamanho"), tamanho=16, cor=tema.APAGADO)
+        acao_orientacao = QHBoxLayout()
+        acao_orientacao.setSpacing(6)
+        acao_orientacao.addWidget(self.rotulo_auto)
+        acao_orientacao.addStretch(1)
+        acao_orientacao.addWidget(self.botao_girar)
         grade = QGridLayout(self)
         grade.setContentsMargins(10, 10, 10, 10)
         grade.setHorizontalSpacing(8)
         grade.setVerticalSpacing(8)
         grade.addWidget(self.combo_tamanho, 0, 0, 1, 2)
         grade.addWidget(self.botao_remover, 0, 2)
-        grade.addWidget(self.spin_copias, 1, 0)
-        grade.addWidget(self.combo_orientacao, 1, 1, 1, 2)
-        grade.addWidget(self.combo_modo, 2, 0, 1, 3)
+        grade.addWidget(self.seg_orientacao, 1, 0, 1, 3)
+        grade.addWidget(caixa_copias, 2, 0)
+        grade.addWidget(self.combo_modo, 2, 1, 1, 2)
         qualidade = QHBoxLayout()
         qualidade.setSpacing(7)
         qualidade.addWidget(self.ponto_qualidade)
         qualidade.addWidget(self.rotulo_qualidade, 1)
         grade.addLayout(qualidade, 3, 0, 1, 3)
+        grade.addLayout(acao_orientacao, 4, 0, 1, 3)
+        grade.addWidget(self.botao_voltar, 5, 0, 1, 3, Qt.AlignmentFlag.AlignLeft)
         grade.setColumnStretch(1, 1)
         self.combo_tamanho.currentIndexChanged.connect(self._ao_tamanho)
+        self.botao_menos.clicked.connect(lambda: self.spin_copias.setValue(self.spin_copias.value() - 1))
+        self.botao_mais.clicked.connect(lambda: self.spin_copias.setValue(self.spin_copias.value() + 1))
         self.spin_copias.valueChanged.connect(lambda v: self._agir(self.painel.definir_copias, v))
-        self.combo_orientacao.currentIndexChanged.connect(
-            lambda _i: self._agir(self.painel.definir_orientacao, self.combo_orientacao.currentData()))
+        self.seg_orientacao.mudou.connect(lambda chave: self._agir(self.painel.definir_orientacao, chave))
+        self.botao_voltar.clicked.connect(lambda: self._agir(self.painel.definir_orientacao, "auto"))
+        self.botao_girar.clicked.connect(lambda: self._agir(lambda i, _v: self.painel.girar_papel(i), None))
         self.combo_modo.currentIndexChanged.connect(
             lambda _i: self._agir(self.painel.definir_modo, self.combo_modo.currentData()))
         self.botao_remover.clicked.connect(lambda: self.painel.remover_impressao(self.indice))
@@ -233,7 +280,7 @@ class LinhaImpressao(QFrame):
     def atualizar(self, foto: Foto, imp: Impressao, ativa: bool) -> None:
         """Põe nos controles os valores do modelo, sem disparar os sinais deles."""
         estado = self.painel.estado
-        for w in (self.combo_tamanho, self.spin_copias, self.combo_orientacao, self.combo_modo):
+        for w in (self.combo_tamanho, self.spin_copias, self.combo_modo):
             w.blockSignals(True)
         item = self.combo_tamanho.model().item(self.combo_tamanho.count() - 1)
         if imp.tamanho == tamanhos.PERSONALIZADO and imp.papel_mm:
@@ -244,10 +291,23 @@ class LinhaImpressao(QFrame):
             item.setText(_("Personalizado…"))
         escolher_no_combo(self.combo_tamanho, imp.tamanho)
         self.spin_copias.setValue(imp.copias)
-        self.combo_orientacao.setCurrentIndex(max(0, self.combo_orientacao.findData(imp.orientacao)))
+        self.rotulo_copias.setText(f"× {imp.copias}")
         self.combo_modo.setCurrentIndex(max(0, self.combo_modo.findData(imp.modo)))
-        for w in (self.combo_tamanho, self.spin_copias, self.combo_orientacao, self.combo_modo):
+        for w in (self.combo_tamanho, self.spin_copias, self.combo_modo):
             w.blockSignals(False)
+
+        # orientação: a resolvida pela forma da foto (auto) ou a fixa; "auto" aparece como indicador discreto
+        dim = _dim_girada(estado, foto, imp)
+        resolvida = tamanhos.orientacao_efetiva(imp.orientacao, *dim) if dim else (
+            None if imp.orientacao == "auto" else imp.orientacao)
+        automatica = imp.orientacao == "auto"
+        if resolvida is None:
+            for b in self.seg_orientacao.botoes.values():
+                b.setChecked(False)
+        else:
+            self.seg_orientacao.definir_atual(resolvida)
+        self.rotulo_auto.setVisible(automatica)
+        self.botao_voltar.setVisible(not automatica)
 
         resultado = qualidade_impressao(estado, foto, imp)
         self.qualidade = resultado[1] if resultado else None
@@ -305,6 +365,10 @@ class PainelImpressoes(Card):
         estado.atual_mudou.connect(lambda _foto: self.sincronizar())
         estado.foto_mudou.connect(self._foto_mudou)
         estado.impressao_mudou.connect(lambda _i: self.sincronizar())
+        # atalhos + e − (e = sem Shift) mudam as cópias da impressão atual
+        for chave, delta in (("+", 1), ("=", 1), ("-", -1)):
+            QShortcut(QKeySequence(chave), self, activated=lambda d=delta: self.mudar_copias_atual(d),
+                      context=Qt.ShortcutContext.WindowShortcut)
         self.sincronizar()
 
     # ------------------------------------------------------------ sincronia com o modelo
@@ -385,14 +449,35 @@ class PainelImpressoes(Card):
     def definir_copias(self, indice: int, copias: int) -> None:
         alvo = self._imp(indice)
         if alvo is not None:
-            alvo[1].copias = max(1, min(999, int(copias)))
+            alvo[1].copias = max(LIMITE_COPIAS[0], min(LIMITE_COPIAS[1], int(copias)))
             self.estado.alterar(alvo[0], pedido=True)
 
+    def mudar_copias_atual(self, delta: int) -> None:
+        """Atalho + / −: soma ``delta`` às cópias da impressão que o editor mostra (limitado a 1 e 999)."""
+        imp = self.estado.impressao_atual
+        if imp is not None:
+            self.definir_copias(self.estado.indice_impressao, imp.copias + delta)
+
     def definir_orientacao(self, indice: int, orientacao: str) -> None:
+        """Fixa "retrato" ou "paisagem"; "auto" volta à orientação dada pela forma da foto."""
         alvo = self._imp(indice)
         if alvo is not None:
             alvo[1].orientacao = orientacao
             refazer_enquadramento(self.estado, *alvo)
+
+    def girar_papel(self, indice: int) -> None:
+        """Troca retrato ↔ paisagem da impressão (fixa a escolha). O recorte é refeito ou reencaixado."""
+        alvo = self._imp(indice)
+        if alvo is None:
+            return
+        foto, imp = alvo
+        dim = _dim_girada(self.estado, foto, imp)
+        if dim is not None:
+            atual = tamanhos.orientacao_efetiva(imp.orientacao, *dim)
+        else:
+            atual = "paisagem" if imp.orientacao == "paisagem" else "retrato"
+        imp.orientacao = "paisagem" if atual == "retrato" else "retrato"
+        refazer_enquadramento(self.estado, foto, imp)
 
     def definir_modo(self, indice: int, modo: str) -> None:
         alvo = self._imp(indice)
