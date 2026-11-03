@@ -57,3 +57,6 @@ Desktop.ini
 *.rw2
 *.revelador
 !tests/data/**
+
+# ---------------------------------------------------------------- agentes (worktrees do Claude Code)
+.claude/worktrees/

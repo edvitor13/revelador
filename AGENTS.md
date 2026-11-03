@@ -70,7 +70,7 @@ revelador/
   __main__.py                 python -m revelador                                                     [existe]
   app.py                      main(): --diagnostico, QApplication, janela (provisória até #1)         [existe]
   diagnostico.py              confere as dependências nativas de verdade (usado pelo CI no .exe)      [existe]
-  i18n.py                     _() e N_(): por enquanto devolvem o texto; tradução depois (#1)
+  i18n.py                     _() e N_(): por enquanto devolvem o texto; tradução depois            [existe]
   system.py                   open_path()/reveal() no explorador, pastas do usuário (#1)
   crashlog.py                 registro de erros não tratados em %LOCALAPPDATA%\Revelador\logs (#1)
   imagem.py                   carregar (Pillow + pillow-heif), orientação EXIF, ICC → sRGB, proxy (#2)
@@ -80,7 +80,7 @@ revelador/
   enquadramento.py            geometria do recorte e recorte automático (funções puras) (#4, #6)
   ajustes.py                  PARAMS (esquema) e aplicar(): ajustes de luz e cor em numpy (#7)
   receita.py                  receita única: foto + impressão + tamanho de destino → imagem (#6, #7, #8)
-  projeto.py                  Trabalho, Foto, Impressao, Recorte; .revelador (JSON) e migrações (#5, #9)
+  projeto.py                  modelo (Trabalho, Foto, Impressao, Recorte, Rosto) [existe]; .revelador (#9)
   exportar.py                 pastas por tamanho, JPEG, cópias, resumo do pedido, fila (#8)
   precos.py                   tabela de preços (centavos por tamanho) e orcamento() do pedido (#13)
   updater.py                  atualização pelas releases do GitHub com SHA-256 (#10)
