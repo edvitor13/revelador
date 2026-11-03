@@ -9,6 +9,8 @@ Decisões de design:
 - **Foto em destaque**: a janela é a mais escura (``BG``); os painéis laterais ficam um degrau acima (``PAINEL``);
   campos e botões, outro degrau (``PAINEL2``); o fundo do editor (``CANVAS_EDITOR``) é um cinza de meio-tom, sem matiz.
 - **Cantos suaves e respiro**: raios de 8 px nos controles e 12 px nos cartões; botões com ~34 px de altura.
+- **Cores de pasta** (``CORES_PASTA``, #32): a única cor fora dos cinzas e do laranja, só na bolinha/chip de uma
+  pasta de tamanho. Tons discretos e médios, distintos entre si e do laranja de destaque, legíveis sobre o fundo escuro.
 - Toda cor/medida da interface vem daqui: nenhum widget escreve hexadecimal nem ``setStyleSheet`` próprio, exceto
   para trocar o ``objectName`` de estilo (``Primary``, ``Flat`` etc.).
 
@@ -24,7 +26,11 @@ import os
 import tempfile
 from pathlib import Path
 
+from collections.abc import Iterable
+
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
+
+from ..i18n import N_, _
 
 # ---------------------------------------------------------------- cinzas neutros (R = G = B)
 BG = "#121212"        # janela e grade de fotos
@@ -51,6 +57,44 @@ PERIGO = "#f06573"   # resolução baixa, erro
 
 # ---------------------------------------------------------------- editor
 CANVAS_EDITOR = "#262626"  # fundo atrás da foto no editor: cinza escuro sem matiz
+
+# ---------------------------------------------------------------- pastas de tamanho (#32)
+# chave (vai para o .revelador em ``Pasta.cor``; nunca muda) -> (cor, nome visível). A ordem é a da paleta: a primeira
+# é ``projeto.COR_PASTA_PADRAO`` (reserva para chave desconhecida) e a próxima livre é a de uma pasta nova.
+_PALETA_PASTA: tuple[tuple[str, str, str], ...] = (
+    ("azul", "#5b9cf0", N_("Azul")),
+    ("verde", "#5cbf7a", N_("Verde")),
+    ("amarelo", "#d9bb55", N_("Amarelo")),
+    ("roxo", "#a487e8", N_("Roxo")),
+    ("vermelho", "#e0656b", N_("Vermelho")),
+    ("ciano", "#4fb9c9", N_("Ciano")),
+    ("rosa", "#de7fb8", N_("Rosa")),
+    ("marrom", "#b8916c", N_("Marrom")),
+)
+CORES_PASTA: dict[str, str] = {chave: cor for chave, cor, _nome in _PALETA_PASTA}
+NOMES_CORES_PASTA: dict[str, str] = {chave: nome for chave, _cor, nome in _PALETA_PASTA}   # textos por N_()
+
+
+def cor_pasta(chave: str) -> str:
+    """Hexadecimal da cor de pasta ``chave``; chave desconhecida dá a primeira cor da paleta."""
+    return CORES_PASTA.get(chave, _PALETA_PASTA[0][1])
+
+
+def nome_cor_pasta(chave: str) -> str:
+    """Nome visível (traduzido) da cor de pasta; chave desconhecida dá o nome da primeira cor."""
+    return _(NOMES_CORES_PASTA.get(chave, _PALETA_PASTA[0][2]))
+
+
+def proxima_cor_pasta(usadas: Iterable[str]) -> str:
+    """Chave da próxima cor para uma pasta nova: a primeira da paleta ainda não usada; todas usadas, a menos usada
+    (empate: a que vem antes na paleta)."""
+    contagem = {chave: 0 for chave in CORES_PASTA}
+    for chave in usadas:
+        if chave in contagem:
+            contagem[chave] += 1
+    menor = min(contagem.values())
+    return next(chave for chave, n in contagem.items() if n == menor)
+
 
 RAIO = 8      # controles
 RAIO_CARD = 12
