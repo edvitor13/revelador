@@ -13,7 +13,7 @@ def test_todas_as_dependencias_funcionam():
     r = diagnostico.executar()
     falhas = {nome: item.get("erro") for nome, item in r["itens"].items() if not item["ok"]}
     assert r["ok"], falhas
-    assert set(r["itens"]) == {"numpy", "pillow", "pillow-heif", "opencv", "qt"}
+    assert set(r["itens"]) == {"numpy", "pillow", "pillow-heif", "opencv", "rostos", "qt"}
     assert r["empacotado"] is False
 
 
