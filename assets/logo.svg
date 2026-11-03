@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Revelador: uma foto (retrato) dentro das marcas de corte, sob a luz vermelha do laboratório. -->
+  <defs>
+    <linearGradient id="fundo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a1418"/>
+      <stop offset="1" stop-color="#1a0a0c"/>
+    </linearGradient>
+    <linearGradient id="foto" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc06a"/>
+      <stop offset="1" stop-color="#e5533c"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#fundo)"/>
+  <g transform="rotate(-6 128 132)">
+    <rect x="68" y="50" width="120" height="160" rx="5" fill="#fbf6ee"/>
+    <rect x="78" y="60" width="100" height="112" fill="url(#foto)"/>
+    <circle cx="128" cy="104" r="19" fill="#fbf6ee" opacity="0.95"/>
+    <path d="M93 172 a35 30 0 0 1 70 0 z" fill="#fbf6ee" opacity="0.95"/>
+  </g>
+  <g stroke="#ff6b4a" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M38 78 V38 H78"/>
+    <path d="M178 38 H218 V78"/>
+    <path d="M218 178 V218 H178"/>
+    <path d="M78 218 H38 V178"/>
+  </g>
+</svg>

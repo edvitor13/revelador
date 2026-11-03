@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Instalador .msi do Revelador (WiX Toolset v5).
+
+  Instalação por usuário (sem administrador) em %LOCALAPPDATA%\Programs\Revelador.
+  Monte com packaging/windows/build_msi.ps1, que passa as variáveis abaixo:
+
+    -d Version=x.y.z        versão do app (só números; o MSI não aceita sufixos)
+    -d SourceDir=...        pasta gerada pelo PyInstaller (dist\Revelador), já com o
+                            revelador-install.json {"kind": "msi"}
+    -d RepoDir=...          raiz do repositório (ícone)
+    -d LicenseRtf=...       licença MIT em RTF (gerada a partir de LICENSE)
+
+  NUNCA mude o UpgradeCode: é ele que faz um .msi novo substituir o antigo no mesmo lugar
+  (o atualizador do app depende disso; tests/test_empacotamento.py confere).
+
+  Propriedades públicas úteis na linha de comando do msiexec:
+    ABRIR_APOS_INSTALAR=1   abre o app quando a instalação termina (útil com /passive ou /qn)
+    INSTALLFOLDER=C:\...    outra pasta (só na primeira instalação; depois a pasta é lembrada)
+    ADDLOCAL / REMOVE       escolher recursos: AtalhoDesktop
+
+  A associação dos trabalhos .revelador entra com a issue #9 (recurso AssociacaoRevelador).
+-->
+<?ifndef Version?>
+<?error Defina -d Version=x.y.z?>
+<?endif?>
+<?ifndef SourceDir?>
+<?error Defina -d SourceDir=pasta do PyInstaller?>
+<?endif?>
+<?ifndef RepoDir?>
+<?error Defina -d RepoDir=raiz do repositório?>
+<?endif?>
+<?ifndef LicenseRtf?>
+<?error Defina -d LicenseRtf=arquivo .rtf da licença?>
+<?endif?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="Revelador"
+           Manufacturer="Vitor Gabriel"
+           Version="$(var.Version)"
+           UpgradeCode="E717D955-5229-48D9-BAF0-C0C95B783A82"
+           Scope="perUser"
+           Language="1046"
+           Codepage="1252"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="Instalador do Revelador $(var.Version)"
+                        Manufacturer="Vitor Gabriel"
+                        Codepage="1252" />
+
+    <!-- Versão nova substitui a antiga no mesmo lugar; a mesma versão pode ser reinstalada. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="Uma versão mais nova do [ProductName] já está instalada. Para voltar a esta versão, desinstale a atual antes." />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Adicionar ou remover programas: ícone e links -->
+    <Icon Id="Revelador.ico" SourceFile="$(var.RepoDir)\assets\logo.ico" />
+    <Property Id="ARPPRODUCTICON" Value="Revelador.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/edvitor13/revelador" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/edvitor13/revelador/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/edvitor13/revelador/releases" />
+    <Property Id="ARPCOMMENTS" Value="Escolhe fotos e prepara cada uma para revelação no tamanho certo." />
+
+    <!-- Lembra a pasta escolhida: atualizações instalam no mesmo lugar. -->
+    <Property Id="INSTALLFOLDER" Secure="yes">
+      <RegistrySearch Id="PastaDaInstalacao" Root="HKCU" Key="Software\Revelador"
+                      Name="InstallDir" Type="raw" />
+    </Property>
+    <Property Id="ABRIR_APOS_INSTALAR" Secure="yes" />
+
+    <!-- Pastas -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramasDoUsuario" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Revelador" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <!-- Recursos (a pessoa escolhe na tela "Instalação personalizada") -->
+    <Feature Id="Principal" Title="Revelador"
+             Description="O aplicativo e o atalho no Menu Iniciar."
+             Level="1" AllowAbsent="no" AllowAdvertise="no" Display="expand"
+             ConfigurableDirectory="INSTALLFOLDER">
+
+      <Component Id="ExecutavelPrincipal" Directory="INSTALLFOLDER" Guid="0456E82A-F8EC-4E56-9883-920C45840DDD">
+        <File Id="ReveladorExe" Source="$(var.SourceDir)\Revelador.exe" KeyPath="no" />
+        <!-- Instalação por usuário: a chave do componente fica no HKCU (e guarda a pasta). -->
+        <RegistryValue Root="HKCU" Key="Software\Revelador" Name="InstallDir" Type="string"
+                       Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RemoveFolder Id="RemoverPastaDoApp" On="uninstall" />
+      </Component>
+
+      <!-- Todo o resto da pasta do PyInstaller (_internal, revelador-install.json...) -->
+      <Files Directory="INSTALLFOLDER" Include="$(var.SourceDir)\**">
+        <Exclude Files="$(var.SourceDir)\Revelador.exe" />
+      </Files>
+
+      <Component Id="AtalhoMenuIniciar" Directory="ProgramMenuFolder" Guid="D1123187-CE99-4732-A31F-B2ECDBD49627">
+        <Shortcut Id="AtalhoNoMenu" Name="Revelador"
+                  Description="Escolhe fotos e prepara cada uma para revelação"
+                  Target="[#ReveladorExe]" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\Revelador" Name="AtalhoMenuIniciar" Type="integer"
+                       Value="1" KeyPath="yes" />
+      </Component>
+
+      <Feature Id="AtalhoDesktop" Title="Atalho na Área de Trabalho"
+               Description="Cria um atalho do Revelador na Área de Trabalho."
+               Level="1" AllowAdvertise="no">
+        <Component Id="AtalhoAreaDeTrabalho" Directory="DesktopFolder" Guid="2CFAE73E-9A0E-4846-B50E-EE0A82A54286">
+          <Shortcut Id="AtalhoNaAreaDeTrabalho" Name="Revelador"
+                    Description="Escolhe fotos e prepara cada uma para revelação"
+                    Target="[#ReveladorExe]" WorkingDirectory="INSTALLFOLDER" />
+          <RegistryValue Root="HKCU" Key="Software\Revelador" Name="AtalhoAreaDeTrabalho" Type="integer"
+                         Value="1" KeyPath="yes" />
+        </Component>
+      </Feature>
+    </Feature>
+
+    <!-- Interface: boas-vindas, licença MIT, escolha de recursos e pasta, progresso, fim. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Abrir o Revelador agora" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#ReveladorExe]" />
+    <CustomAction Id="AbrirRevelador" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixShellExec"
+                  Impersonate="yes" Return="ignore" />
+    <UI>
+      <ui:WixUI Id="WixUI_FeatureTree" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="AbrirRevelador"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+    <!-- Sem interface (/passive, /qn): ABRIR_APOS_INSTALAR=1 abre o app no fim. -->
+    <InstallExecuteSequence>
+      <Custom Action="AbrirRevelador" After="InstallFinalize"
+              Condition="ABRIR_APOS_INSTALAR = 1 AND NOT (REMOVE ~= &quot;ALL&quot;)" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

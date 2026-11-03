@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------- ambiente Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# ---------------------------------------------------------------- build (PyInstaller, WiX)
+build/
+dist/
+*.spec
+!Revelador.spec
+*.zip
+*.msi
+*.wixpdb
+revelador-install.json
+diagnostico*.json
+
+# ---------------------------------------------------------------- testes e ferramentas
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ---------------------------------------------------------------- editores e sistema
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---------------------------------------------------------------- fotos pessoais
+# Fotos, trabalhos e exportações nunca entram no repositório. Imagens de teste são geradas
+# no código; as poucas com licença livre ficam em tests/data/ (registradas em LICENCAS.md).
+/fotos/
+/saida/
+/Revelação*/
+*.jpg
+*.jpeg
+*.heic
+*.heif
+*.webp
+*.tif
+*.tiff
+*.dng
+*.cr2
+*.cr3
+*.nef
+*.arw
+*.raf
+*.orf
+*.rw2
+*.revelador
+!tests/data/**

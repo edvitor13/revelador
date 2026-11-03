@@ -1,0 +1,268 @@
+name: Build
+
+# Só Windows por enquanto (Linux e macOS ficam para depois; veja a issue de ideias e o AGENTS.md).
+# - Todo push e PR: só os testes (job "testes"), rápido.
+# - Push no main/master, tags v* e execução manual (workflow_dispatch): testes + executável (PyInstaller)
+#   + instalador .msi (WiX) e .zip portátil. O executável roda o --diagnostico (Pillow, pillow-heif, OpenCV,
+#   numpy e Qt dentro do pacote) e o .msi é instalado, atualizado e desinstalado de verdade no runner.
+# - Tags v* (por exemplo v0.1.0): publica a Release com os pacotes e o SHA256SUMS.txt, que o atualizador
+#   automático do app exige.
+# Detalhes em AGENTS.md (Empacotamento e release).
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.15"
+  WIX_VERSION: "5.0.2"
+
+jobs:
+  # ------------------------------------------------------------------ testes (sempre)
+  testes:
+    name: Testes (Windows x64)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      # Os testes não abrem janelas; os de interface rodam num subprocesso offscreen.
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar o Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          allow-prereleases: true
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      - name: Instalar dependências Python
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install "pytest>=8"
+          python --version
+          python -m pip list
+
+      - name: Testes
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q
+          code=$?
+          if [ "$code" -eq 5 ]; then
+            echo "Nenhum teste encontrado (código 5 do pytest)."
+            exit 0
+          fi
+          exit $code
+
+  # ------------------------------------------------------------------ pacotes Windows
+  build:
+    name: Pacotes (Windows x64)
+    needs: testes
+    # Só no main/master, em tags v* e na execução manual (que serve para validar outras branches).
+    if: >-
+      ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch' }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      # O app aberto pelo instalador (ABRIR_APOS_INSTALAR=1) roda sem tela.
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar o Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          allow-prereleases: true
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+
+      - name: Instalar dependências Python
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install "pyinstaller>=6.10"
+          python --version
+
+      - name: Versão e nomes dos pacotes
+        id: meta
+        shell: bash
+        run: |
+          ver=$(python packaging/install_marker.py --print-version)
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            # A tag precisa bater com a versão do app: o atualizador compara a versão do marcador
+            # revelador-install.json com a da última release.
+            case "$GITHUB_REF_NAME" in
+              "v$ver" | "v$ver"-*) ;;
+              *) echo "::error::A tag $GITHUB_REF_NAME não bate com a versão do app ($ver, em revelador/__init__.py)."
+                 exit 1 ;;
+            esac
+            label="$GITHUB_REF_NAME"
+          else
+            label="$ver-${GITHUB_SHA::7}"
+          fi
+          {
+            echo "ver=$ver"
+            echo "base=Revelador-$label-windows-x64"
+          } >> "$GITHUB_OUTPUT"
+          echo "Versão $ver; pacotes Revelador-$label-windows-x64.*"
+
+      - name: Gerar o executável (PyInstaller)
+        shell: bash
+        run: |
+          python -m PyInstaller --noconfirm --clean Revelador.spec
+          ls -la dist/Revelador
+          du -sh dist/Revelador
+
+      - name: Conferir as dependências dentro do executável
+        shell: pwsh
+        run: ./packaging/windows/diagnosticar.ps1 -Exe dist/Revelador/Revelador.exe
+
+      # ------------------------------------------------------------ assinatura opcional
+      # Só assina se os segredos WINDOWS_CERT_PFX_BASE64 e WINDOWS_CERT_PASSWORD existirem.
+      # Sem eles, os passos de assinatura são pulados e os pacotes saem sem assinatura.
+      - name: Conferir se há certificado de assinatura
+        id: cert
+        shell: bash
+        env:
+          PFX: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          SENHA: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if [ -n "$PFX" ] && [ -n "$SENHA" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "Certificado encontrado: o executável e o .msi serão assinados."
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "Sem certificado: pacotes sem assinatura digital."
+          fi
+
+      - name: Assinar o executável
+        if: steps.cert.outputs.ok == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: ./packaging/windows/assinar.ps1 dist/Revelador/Revelador.exe
+
+      # ------------------------------------------------------------ .msi e .zip
+      - name: Instalar o WiX Toolset ${{ env.WIX_VERSION }}
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          $tools = Join-Path $env:USERPROFILE ".dotnet\tools"
+          Add-Content -Path $env:GITHUB_PATH -Value $tools
+          & (Join-Path $tools "wix.exe") --version
+
+      - name: Montar o instalador .msi
+        shell: pwsh
+        env:
+          BASE: ${{ steps.meta.outputs.base }}
+          VER: ${{ steps.meta.outputs.ver }}
+        run: ./packaging/windows/build_msi.ps1 -SourceDir dist/Revelador -Output "$env:BASE.msi" -Version $env:VER -WixVersion $env:WIX_VERSION
+
+      - name: Assinar o .msi
+        if: steps.cert.outputs.ok == 'true'
+        shell: pwsh
+        env:
+          BASE: ${{ steps.meta.outputs.base }}
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: ./packaging/windows/assinar.ps1 "$env:BASE.msi"
+
+      - name: Testar o .msi (instalar, atualizar e desinstalar)
+        timeout-minutes: 25
+        shell: pwsh
+        env:
+          BASE: ${{ steps.meta.outputs.base }}
+          VER: ${{ steps.meta.outputs.ver }}
+        run: ./packaging/windows/verificar_msi.ps1 -Msi "$env:BASE.msi" -Version $env:VER
+
+      - name: Montar o .zip portátil
+        shell: pwsh
+        env:
+          BASE: ${{ steps.meta.outputs.base }}
+          VER: ${{ steps.meta.outputs.ver }}
+        run: |
+          python packaging/install_marker.py dist/Revelador zip --version $env:VER
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Compress-Archive -Path dist/Revelador -DestinationPath "$env:BASE.zip"
+          Get-Item "$env:BASE.msi", "$env:BASE.zip" | Format-Table Name, Length
+
+      - name: Enviar artefatos
+        uses: actions/upload-artifact@v4
+        with:
+          name: Revelador-windows-x64
+          path: ${{ steps.meta.outputs.base }}.*
+          if-no-files-found: error
+          compression-level: 0
+
+  # ------------------------------------------------------------------ release (só em tags v*)
+  release:
+    name: Publicar release
+    needs: build
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Baixar o código (notas da versão)
+        uses: actions/checkout@v4
+
+      - name: Baixar os pacotes gerados
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Revelador-*
+          path: pacotes
+          merge-multiple: true
+
+      - name: Gerar o SHA256SUMS.txt
+        working-directory: pacotes
+        run: |
+          sha256sum Revelador-* > SHA256SUMS.txt
+          ls -l
+          cat SHA256SUMS.txt
+
+      - name: Escolher as notas da versão
+        id: notas
+        run: |
+          f="revelador/novidades/release_${GITHUB_REF_NAME}.md"
+          if [ -f "$f" ]; then
+            echo "Notas da versão: $f"
+            { echo "arquivo=$f"; echo "gerar=false"; } >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::$f não existe; usando as notas geradas pelo GitHub."
+            { echo "arquivo="; echo "gerar=true"; } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Criar a release com o instalador e o pacote portátil
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pacotes/*
+          body_path: ${{ steps.notas.outputs.arquivo }}
+          generate_release_notes: ${{ steps.notas.outputs.gerar == 'true' }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
