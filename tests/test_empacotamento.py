@@ -29,6 +29,7 @@ def _carregar(caminho: Path):
 
 install_marker = _carregar(ROOT / "packaging" / "install_marker.py")
 license_rtf = _carregar(ROOT / "packaging" / "windows" / "license_rtf.py")
+discord = _carregar(ROOT / "packaging" / "discord_notify.py")
 
 
 def test_versao_e_data():
@@ -94,3 +95,56 @@ def test_scripts_powershell_com_bom():
     # O Windows PowerShell 5.1 (build.bat local) só lê acentos de um .ps1 em UTF-8 com BOM.
     for ps1 in (ROOT / "packaging" / "windows").glob("*.ps1"):
         assert ps1.read_bytes().startswith(b"\xef\xbb\xbf"), ps1.name
+
+
+# ------------------------------------------------------------------ avisos no Discord
+def test_discord_resumo_para_na_divisoria_e_pula_o_titulo():
+    texto = "# Título\n\n<!-- nota -->\n## Novidades\n- um\n- dois\n![img](x.png)\n\n---\n\nDetalhes\n"
+    resumo = discord.resumo_novidades(texto)
+    assert resumo.splitlines()[0] == "**Novidades**"
+    assert "- um" in resumo and "- dois" in resumo
+    assert "Título" not in resumo and "Detalhes" not in resumo and "img" not in resumo and "nota" not in resumo
+
+
+def test_discord_resumo_e_cortado():
+    resumo = discord.resumo_novidades("\n".join(f"- item {i}" for i in range(50)), limite=2000, linhas=5)
+    assert resumo.count("- item") == 5 and resumo.endswith("…")
+
+
+def test_discord_mensagem_da_release(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "dono/repo")
+    monkeypatch.setenv("DISCORD_WEBHOOK", "https://discord.com/api/webhooks/123/segredo")
+    for nome in ("Revelador-v0.1.0-windows-x64.msi", "Revelador-v0.1.0-windows-x64.zip", "SHA256SUMS.txt"):
+        (tmp_path / nome).write_text("x", encoding="utf-8")
+    notas = tmp_path / "notas.md"
+    notas.write_text("# Revelador 0.1.0\n\n## Novidades\n- enquadramento pelos rostos\n\n---\n\nresto\n",
+                     encoding="utf-8")
+    payload = discord.msg_release("v0.1.0", notas, tmp_path)
+    assert "segredo" not in json.dumps(payload, ensure_ascii=False)  # o webhook nunca entra na mensagem
+    embed = payload["embeds"][0]
+    assert embed["title"] == "Revelador 0.1.0 está disponível"
+    assert "enquadramento pelos rostos" in embed["description"] and "resto" not in embed["description"]
+    campos = {c["name"]: c["value"] for c in embed["fields"]}
+    assert set(campos) == {"Windows", "Conferência"}
+    base = "https://github.com/dono/repo/releases/download/v0.1.0/"
+    assert base + "Revelador-v0.1.0-windows-x64.msi" in campos["Windows"]
+    assert base + "Revelador-v0.1.0-windows-x64.zip" in campos["Windows"]
+
+
+def test_discord_sem_webhook_nao_envia_nada(monkeypatch, capsys):
+    monkeypatch.delenv("DISCORD_WEBHOOK", raising=False)
+
+    def proibido(*a, **k):
+        raise AssertionError("não deveria acessar a rede")
+
+    monkeypatch.setattr(discord.urllib.request, "urlopen", proibido)
+    assert discord.main(["teste"]) == 0
+    assert "não definido" in capsys.readouterr().out
+
+
+def test_discord_recusa_endereco_que_nao_e_do_discord(monkeypatch):
+    def proibido(*a, **k):
+        raise AssertionError("não deveria acessar a rede")
+
+    monkeypatch.setattr(discord.urllib.request, "urlopen", proibido)
+    assert discord.enviar({"content": "x"}, "https://exemplo.com/api/webhooks/1/2") == 1

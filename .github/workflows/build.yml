@@ -6,7 +6,9 @@ name: Build
 #   + instalador .msi (WiX) e .zip portátil. O executável roda o --diagnostico (Pillow, pillow-heif, OpenCV,
 #   numpy e Qt dentro do pacote) e o .msi é instalado, atualizado e desinstalado de verdade no runner.
 # - Tags v* (por exemplo v0.1.0): publica a Release com os pacotes e o SHA256SUMS.txt, que o atualizador
-#   automático do app exige.
+#   automático do app exige, e avisa no Discord.
+# - Push no main/master que falhar: avisa no Discord.
+# - Execução manual com testar_discord: só manda uma mensagem de teste ao Discord.
 # Detalhes em AGENTS.md (Empacotamento e release).
 
 on:
@@ -15,6 +17,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      testar_discord:
+        description: "Só enviar uma mensagem de teste ao Discord (não roda testes nem gera pacotes)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,6 +38,7 @@ jobs:
   # ------------------------------------------------------------------ testes (sempre)
   testes:
     name: Testes (Windows x64)
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.testar_discord) }}
     runs-on: windows-latest
     timeout-minutes: 20
     env:
@@ -79,7 +87,7 @@ jobs:
     # Só no main/master, em tags v* e na execução manual (que serve para validar outras branches).
     if: >-
       ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch' }}
+      || startsWith(github.ref, 'refs/tags/v'))) || (github.event_name == 'workflow_dispatch' && !inputs.testar_discord) }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -212,6 +220,17 @@ jobs:
           Compress-Archive -Path dist/Revelador -DestinationPath "$env:BASE.zip"
           Get-Item "$env:BASE.msi", "$env:BASE.zip" | Format-Table Name, Length
 
+      - name: Conferir a mensagem do Discord (sem enviar)
+        shell: bash
+        env:
+          VER: ${{ steps.meta.outputs.ver }}
+        run: |
+          notas="revelador/novidades/release_v$VER.md"
+          args=(--dry-run release --tag "v$VER" --assets-dir .)
+          if [ -f "$notas" ]; then args+=(--notes "$notas"); fi
+          python packaging/discord_notify.py "${args[@]}"
+          python packaging/discord_notify.py --dry-run falha > /dev/null
+
       - name: Enviar artefatos
         uses: actions/upload-artifact@v4
         with:
@@ -266,3 +285,41 @@ jobs:
           generate_release_notes: ${{ steps.notas.outputs.gerar == 'true' }}
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
+
+      - name: Avisar no Discord
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          NOTAS: ${{ steps.notas.outputs.arquivo }}
+        run: |
+          args=(release --tag "$GITHUB_REF_NAME" --assets-dir pacotes)
+          if [ -n "$NOTAS" ]; then args+=(--notes "$NOTAS"); fi
+          python3 packaging/discord_notify.py "${args[@]}"
+
+  # ------------------------------------------------------------------ avisos no Discord
+  avisar-falha:
+    name: Avisar falha no Discord
+    needs: [testes, build]
+    if: ${{ failure() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging
+      - name: Enviar o aviso
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python3 packaging/discord_notify.py falha
+
+  discord-teste:
+    name: Testar o aviso no Discord
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.testar_discord }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging
+      - name: Enviar a mensagem de teste
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python3 packaging/discord_notify.py teste

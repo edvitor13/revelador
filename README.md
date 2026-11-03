@@ -27,6 +27,7 @@ deixa você ajustar antes de enviar.
   saturação, vibração e nitidez, com antes/depois.
 - **Exportar para revelação**: uma pasta por tamanho, JPEG sRGB a 300 dpi com os pixels exatos do papel e um
   resumo do pedido para o laboratório. As fotos originais nunca são alteradas.
+- **Previsão de custos**: cadastre o valor de cada tamanho no seu laboratório e veja o total estimado do pedido.
 - **Salvar o trabalho** para continuar depois e **atualização automática**.
 
 Tudo roda no seu computador: nenhuma foto é enviada para lugar nenhum.

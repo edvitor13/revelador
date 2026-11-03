@@ -26,6 +26,7 @@ que ordem está nas issues do marco **0.1.0** no GitHub (`gh issue list --milest
 - **IDs e chaves nunca mudam** (`ajustes.PARAMS`, `tamanhos.TAMANHOS`, campos do `.revelador`); parâmetro novo
   com padrão neutro (0 = foto idêntica).
 - **Texto do usuário em PT-BR com acentos, sempre por `_()`**; chaves e identificadores sem acento.
+- **Dinheiro em centavos inteiros** (`precos.py`): nunca `float`; tamanho sem preço deixa o total parcial, nunca zero.
 - **Dependências**: só PySide6, numpy, Pillow, pillow-heif e opencv-python-headless em tempo de execução.
 - **Windows primeiro, código portável** (`pathlib`, `system.open_path()`/`reveal()`); só Windows no CI por ora.
 - **Não sujar o ambiente do usuário** (preferências só por `ui/prefs.settings()`; testes com pastas temporárias;

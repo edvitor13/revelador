@@ -17,3 +17,6 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 - CI no GitHub Actions: testes em todo push; no `main`, executável com diagnóstico, `.msi` instalado, atualizado
   e desinstalado de verdade e `.zip`; release com `SHA256SUMS.txt` nas tags `v*`.
 - Ícone do app (`assets/logo.svg`, gerado por `tools/gerar_icone.py`).
+- Avisos do CI no Discord (`packaging/discord_notify.py`, segredo `DISCORD_WEBHOOK`): release publicada, falha
+  no `main` e mensagem de teste pela execução manual.
+- Previsão de custos da revelação planejada (`docs/ARQUITETURA.md`, seção 13; issue #13).

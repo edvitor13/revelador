@@ -6,7 +6,7 @@ mostrar que algo precisa mudar, mude **este arquivo junto** no mesmo PR. Regras 
 
 Sumário: 1. Visão geral · 2. Modelo de dados · 3. Carregar fotos · 4. Tamanhos de revelação · 5. Enquadramento ·
 6. Receita única · 7. Ajustes · 8. Exportação · 9. Formato `.revelador` · 10. Interface · 11. Atualização
-automática · 12. Empacotamento
+automática · 12. Empacotamento · 13. Custos da revelação
 
 ---
 
@@ -61,6 +61,8 @@ class Impressao:
     orientacao: str = "auto" # "auto" (segue a foto) | "retrato" | "paisagem"
     modo: str = "preencher"  # "preencher" (corta na proporção) | "caber" (foto inteira com borda branca)
     recorte: Recorte = field(default_factory=Recorte)
+    papel_mm: tuple[float, float] | None = None  # só no tamanho "personalizado" (seção 4)
+    preco_centavos: int | None = None            # só no personalizado: valor por cópia (seção 13)
 
 @dataclass
 class Foto:
@@ -130,7 +132,8 @@ coluna de px é a 300 dpi (`round(mm / 25,4 × dpi)`). IDs sem acento e **nunca 
 | `20x20` | 20x20 | 203,2 × 203,2 | 8×8 pol | 1 | 2400 × 2400 | quadrado |
 
 - **Personalizado**: largura × altura em cm digitados pela pessoa, gravados na impressão
-  (`"tamanho": "personalizado"`, `"papel_mm": [w, h]`).
+  (`"tamanho": "personalizado"`, `"papel_mm": [w, h]`), com o valor por cópia opcional junto
+  (`"preco_centavos"`, seção 13).
 - Os tamanhos variam um pouco entre laboratórios (principalmente o 15x21): a tabela é a referência do app e a
   documentação para o usuário deve dizer para confirmar com o laboratório.
 - **dpi**: 300 por padrão (opção 240–400 por trabalho).
@@ -255,8 +258,9 @@ grande; criança pequena + adulto grande; panorâmica 3:1; foto quadrada; sem ro
 - **JPEG**: `uint8`, qualidade 95, subamostragem 4:4:4, **baseline** (algumas máquinas de laboratório recusam
   progressivo), `dpi=(dpi, dpi)`, perfil sRGB embutido, EXIF mínimo: só a data original (sem GPS, sem orientação,
   sem miniatura). Gravação em `*.tmp` na mesma pasta + `os.replace`.
-- **Resumo** `pedido.txt` na raiz da exportação: data, dpi, por tamanho o número de fotos e de cópias, total, e a
-  lista de arquivos com cópias. É o que a pessoa mostra ou envia ao laboratório.
+- **Resumo** `pedido.txt` na raiz da exportação: data, dpi, por tamanho o número de fotos e de cópias, o valor por
+  cópia e o subtotal (quando houver preço; seção 13), o total estimado e a lista de arquivos com cópias. É o que a
+  pessoa mostra ou envia ao laboratório.
 - **Execução**: fila num `QThreadPool` (até `min(4, núcleos − 1)` em paralelo), cada tarefa
   `receita(original) → JPEG`; progresso por arquivo; cancelar termina o arquivo atual, apaga os `*.tmp` e informa
   o que ficou pronto. No fim: "Abrir a pasta" (`system.reveal`).
@@ -316,7 +320,7 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
 │                 │  [Antes/depois]                                  │ ▸ Cor                    │
 │                 │                                                  │ ▸ Detalhe                │
 ├────────────────┴───────────────────────────────────────────────┴──────────────────────────┤
-│ 37 fotos · 12 selecionadas · 10x15: 15 cópias · 20x30: 1 cópia                                │
+│ 37 fotos · 12 selecionadas · 10x15: 15 cópias · 20x30: 1 cópia · Total estimado: R$ 34,40     │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -371,3 +375,47 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   `UpgradeCode` fixo, atalho no Menu Iniciar, atalho opcional na Área de Trabalho, `ABRIR_APOS_INSTALAR`.
 - **`.zip`** portátil: a mesma pasta com o marcador `zip`.
 - Detalhes do CI e da release em [AGENTS.md](../AGENTS.md) (Empacotamento e release).
+
+## 13. Custos da revelação
+
+Previsão do quanto o pedido vai custar, a partir de um **valor base por tamanho** (o preço por cópia que o
+laboratório cobra). `precos.py` (puro) + `ui/precos_dialog.py`.
+
+- **Tabela de preços**: `dict[id_do_tamanho, centavos_por_cópia]`, nas preferências (`ui/prefs.settings()`, grupo
+  `precos`), porque vale para todos os trabalhos. Editada em "Preços da revelação…" (barra de ferramentas e menu):
+  uma linha por tamanho de `tamanhos.TAMANHOS`, campo em reais ("1,50"), vazio = sem preço. Tamanho personalizado
+  leva o valor junto, na própria impressão (`preco_centavos`).
+- **Dinheiro em centavos inteiros** (regra 16). `ler("1,5") → 150`, `ler("R$ 1.234,56") → 123456`,
+  `ler("") → None`; texto inválido é recusado no campo. `formatar(150) → "R$ 1,50"` (milhar com ponto, decimal
+  com vírgula, sem depender da localidade do sistema).
+- **Cálculo** — `orcamento(trabalho, tabela) → Orcamento` (puro):
+
+  ```python
+  @dataclass
+  class LinhaOrcamento:
+      tamanho: str              # id (ou "personalizado-<w>x<h>")
+      nome: str                 # "10x15"
+      fotos: int                # fotos diferentes nesse tamanho
+      copias: int               # soma das cópias
+      unitario: int | None      # centavos por cópia; None = sem preço
+      subtotal: int | None      # unitario × copias
+
+  @dataclass
+  class Orcamento:
+      linhas: list[LinhaOrcamento]   # na ordem da tabela de tamanhos
+      total: int                     # soma dos subtotais conhecidos
+      completo: bool                 # False se algum tamanho usado está sem preço
+  ```
+
+  Só entram fotos **selecionadas** e as impressões delas; cada impressão conta `copias` vezes. Personalizados com
+  o mesmo papel e o mesmo preço somam na mesma linha.
+- **Onde aparece**: barra de status ("Total estimado: R$ 34,40", ou "R$ 30,00 + sem preço" quando parcial),
+  janela "Resumo do pedido" (tabela por tamanho: fotos, cópias, valor por cópia, subtotal e total, com atalho para
+  editar os preços), diálogo de exportação e `pedido.txt` (seção 8). Atualiza a cada mudança de seleção, tamanho
+  ou cópias (o cálculo é instantâneo).
+- O valor é sempre chamado de **estimativa**: o laboratório pode cobrar diferente (descontos por quantidade,
+  entrega). Faixas de preço por quantidade, taxa de entrega e várias tabelas (uma por laboratório) ficam para
+  depois (#12).
+- Testes: `ler`/`formatar` (vírgula, milhar, "R$", vazio, inválido); orçamento com vários tamanhos, cópias,
+  foto em dois tamanhos, foto não selecionada fora da conta, tamanho sem preço (total parcial), personalizado;
+  nenhum `float` no caminho (resultado `int`).

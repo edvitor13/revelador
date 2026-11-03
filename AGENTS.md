@@ -29,9 +29,11 @@ proporção certa e não precisa cortar nada além da margem de corte (sangria).
    pessoa move, aproxima, gira e endireita. Aviso de resolução baixa para o tamanho escolhido.
 4. **Ajustar** a foto no painel lateral: exposição, contraste, realces, sombras, brancos, pretos, temperatura,
    matiz, saturação, vibração e nitidez, com antes/depois.
-5. **Exportar para revelação**: uma pasta por tamanho, JPEG sRGB a 300 dpi com os px exatos do papel e um resumo
-   do pedido (quantas fotos e cópias por tamanho).
-6. **Salvar o trabalho** (`.revelador`) para continuar depois.
+5. **Prever o custo**: com o valor base de cada tamanho (tabela de preços da pessoa), o app mostra o total estimado
+   do pedido e o subtotal por tamanho, atualizado a cada mudança de seleção, tamanho ou cópias.
+6. **Exportar para revelação**: uma pasta por tamanho, JPEG sRGB a 300 dpi com os px exatos do papel e um resumo
+   do pedido (fotos, cópias e valores por tamanho).
+7. **Salvar o trabalho** (`.revelador`) para continuar depois.
 
 ## Estado atual
 
@@ -49,6 +51,7 @@ executável empacotado). As funções chegam pelas issues do marco **0.1.0**, ne
 | #6 | Editor de enquadramento | `ui/editor.py`, `receita.py`, `enquadramento.py` |
 | #7 | Ajustes no painel lateral | `ajustes.py`, `ui/painel_ajustes.py` |
 | #8 | Exportar para revelação | `exportar.py`, `ui/exportar_dialog.py` |
+| #13 | Previsão de custos: valor base por tamanho e total do pedido | `precos.py`, `ui/precos_dialog.py` |
 | #9 | Salvar e abrir o trabalho (`.revelador`) | `projeto.py` |
 | #10 | Atualização automática | `updater.py`, `ui/atualizar_dialog.py` |
 | #11 | Roteiro da 0.1.0 (release) | — |
@@ -79,6 +82,7 @@ revelador/
   receita.py                  receita única: foto + impressão + tamanho de destino → imagem (#6, #7, #8)
   projeto.py                  Trabalho, Foto, Impressao, Recorte; .revelador (JSON) e migrações (#5, #9)
   exportar.py                 pastas por tamanho, JPEG, cópias, resumo do pedido, fila (#8)
+  precos.py                   tabela de preços (centavos por tamanho) e orcamento() do pedido (#13)
   updater.py                  atualização pelas releases do GitHub com SHA-256 (#10)
   ui/
     main_window.py            janela principal: grade, editor, painel lateral (#1)
@@ -87,11 +91,13 @@ revelador/
     editor.py                 visor com a moldura do papel: mover, zoom, girar, endireitar (#6)
     painel_ajustes.py         painel lateral de ajustes, gerado a partir de ajustes.PARAMS (#7)
     exportar_dialog.py        diálogo de exportação e progresso (#8)
+    precos_dialog.py          tabela de preços por tamanho e resumo do custo do pedido (#13)
     atualizar_dialog.py       aviso e instalação da atualização (#10)
   data/modelos/               face_detection_yunet_2023mar.onnx + LICENSE (MIT), SHA-256 em teste (#4)
   novidades/release_vX.Y.Z.md notas da release (lidas pelo CI na tag)
 packaging/
   install_marker.py           grava revelador-install.json {"kind": "msi"|"zip", "version"}          [existe]
+  discord_notify.py           avisos do CI no Discord (release, falha, teste); só biblioteca padrão  [existe]
   windows/Revelador.wxs       instalador .msi (WiX 5), por usuário, UpgradeCode fixo                  [existe]
   windows/build_msi.ps1       monta o .msi                                                            [existe]
   windows/verificar_msi.ps1   CI: instala, confere, atualiza e desinstala o .msi de verdade           [existe]
@@ -164,6 +170,10 @@ tests/                        pytest; widgets do Qt só em subprocesso offscreen
 15. **Fotos de pessoas são privadas.** Nada sai do computador: sem telemetria, sem envio de fotos, detecção de
     rostos local guardando só retângulos. Nenhuma foto pessoal entra no repositório: imagens de teste são geradas
     no código ou têm licença livre registrada em `tests/data/LICENCAS.md`.
+
+16. **Dinheiro em centavos inteiros.** Preços e totais são `int` em centavos (nunca `float`); a conversão de e para
+    texto ("R$ 1.234,56", "1,50") fica só em `precos.formatar()`/`precos.ler()`. Tamanho sem preço é "sem preço" e
+    deixa o total marcado como parcial — nunca vira zero calado. O valor é uma **estimativa** e a interface diz isso.
 
 ## Rodar
 
@@ -283,14 +293,17 @@ A pasta do PyInstaller (`dist/Revelador/`, com `Revelador.exe` e `_internal/`) �
 - **Build local**: `build.bat` (o `.msi` só se o WiX estiver instalado:
   `dotnet tool install --global wix --version 5.0.2`).
 
-### CI
+### CI e Discord
 
-- Todo push e PR: só o job `testes` (Windows).
+- Todo push e PR: só o job `testes` (Windows). Os avisos no Discord usam o segredo `DISCORD_WEBHOOK` (nunca
+  imprima nem grave em arquivo): âmbar quando uma release é publicada, vermelho quando um push no `main` falha;
+  `gh workflow run build.yml -f testar_discord=true` manda só uma mensagem de teste.
 - Push no `main`, tags `v*` e `workflow_dispatch`: o job `build` também gera o executável, roda o diagnóstico,
   monta e testa o `.msi`, monta o `.zip` e envia os dois como artefatos. Para validar uma branch:
   `gh workflow run build.yml --ref <branch>`.
-- Tags `v*`: release com os pacotes e o `SHA256SUMS.txt`. O texto vem de `revelador/novidades/release_{tag}.md`;
-  sem o arquivo, o GitHub gera as notas. A tag precisa bater com `revelador.__version__` (o build falha se não
+- Tags `v*`: release com os pacotes e o `SHA256SUMS.txt`. O texto vem de `revelador/novidades/release_{tag}.md`
+  (as primeiras linhas, até uma linha `---`, viram o resumo do aviso no Discord); sem o arquivo, o GitHub gera as
+  notas. A tag precisa bater com `revelador.__version__` (o build falha se não
   bater). Tag com `-` (ex.: `v0.1.0-beta.1`) vira pre-release, que o atualizador ignora.
 - Linux e macOS ficam para depois (#12): o `build.yml` só tem Windows de propósito.
 
@@ -300,7 +313,8 @@ A pasta do PyInstaller (`dist/Revelador/`, com `Revelador.exe` e `_internal/`) �
    versão de lá), o `CHANGELOG.md` (a seção "Não lançado" vira `[X.Y.Z] - data`) e escreva
    `revelador/novidades/release_vX.Y.Z.md`.
 2. Valide a branch com `gh workflow run build.yml --ref <branch>` (pacotes completos).
-3. Crie a tag `vX.Y.Z` e envie. O workflow gera os pacotes e publica a Release. Release só quando o autor pedir.
+3. Crie a tag `vX.Y.Z` e envie. O workflow gera os pacotes, publica a Release e avisa no Discord. Release só quando
+   o autor pedir.
 
 ## Fluxo de trabalho
 
