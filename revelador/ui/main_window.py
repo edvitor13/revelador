@@ -82,6 +82,7 @@ class MainWindow(QMainWindow):
         self._ligar_grade()
         self._ligar_selecao()
         self._ligar_editor()
+        self._ligar_ajustes()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -303,6 +304,14 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.editor.encerrar)
+
+    # ------------------------------------------------------------ ajustes de luz e cor (#7)
+    def _ligar_ajustes(self) -> None:
+        """Cartões Luz, Cor e Detalhe na coluna do painel lateral, abaixo das impressões, antes do espaçador."""
+        from .painel_ajustes import PainelAjustes
+
+        self.painel_ajustes = PainelAjustes(self.estado, self.grade.fotos_escolhidas)
+        self.coluna_painel.insertWidget(self.coluna_painel.count() - 1, self.painel_ajustes)
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:

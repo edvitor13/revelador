@@ -25,16 +25,19 @@ from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, 
 from PySide6.QtWidgets import (QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
                                QVBoxLayout, QWidget)
 
+from .. import ajustes as ajustes_mod
 from .. import enquadramento, receita, tamanhos
 from ..i18n import N_, _
 from ..projeto import Foto, Impressao, Recorte
 from .estado import Estado
-from .previa import CarregarProxy, RenderizarPrevia, Sinais, para_qimage
+from .previa import AjustarImagem, CarregarProxy, RenderizarPrevia, Sinais, para_qimage
 
 FUNDO = "#6b6b6b"            # o mesmo cinza neutro da janela (``main_window.CINZA_EDITOR``)
 ZOOM_MAXIMO = 10.0
 PASSO_ZOOM = 1.1             # fator por clique da roda (e por atalho)
 DEBOUNCE_MS = 60
+DEBOUNCE_FINO_MS = 350      # parou de mexer nos ajustes: refaz a moldura na resolução do proxy
+LADO_RAPIDO = 640           # lado maior da versão reduzida da moldura (enquanto o controle é arrastado)
 ANGULO_MAX = 45.0
 MARGEM_TELA = 14             # px lógicos entre a moldura e a borda do visor
 
@@ -58,7 +61,8 @@ class Tela(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.setMinimumSize(240, 180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.imagem: QImage | None = None                  # a foto inteira, já girada
+        self.imagem: QImage | None = None                  # a foto inteira, já girada (e ajustada)
+        self.largura_ref = 0                               # largura do proxy girado em px (a imagem pode estar reduzida)
         self.moldura: enquadramento.Retangulo | None = None  # recorte em px da imagem girada
         self.margem_rel = 0.0                              # margem de corte ÷ largura do papel
         self.rostos: list[tuple[float, float, float, float]] = []   # caixas em px da imagem girada
@@ -92,7 +96,7 @@ class Tela(QWidget):
         q = self.quadro()
         if q is None or self.imagem is None:
             return 1.0
-        return q.width() / self.imagem.width()
+        return q.width() / (self.largura_ref or self.imagem.width())
 
     # ------------------------------------------------------------ desenho
     def paintEvent(self, _evento) -> None:  # noqa: N802 - nome do Qt
@@ -129,7 +133,7 @@ class Tela(QWidget):
         p.drawText(QRectF(area), int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), texto)
 
     def _para_tela(self, quadro: QRectF, pontos) -> list[QPointF]:
-        k = quadro.width() / self.imagem.width()
+        k = quadro.width() / (self.largura_ref or self.imagem.width())
         return [QPointF(quadro.left() + x * k, quadro.top() + y * k) for x, y in pontos]
 
     @staticmethod
@@ -160,7 +164,7 @@ class Tela(QWidget):
         # Rostos detectados.
         if self.mostrar_rostos:
             p.setPen(QPen(QColor("#66ff99"), 1.5))
-            k = quadro.width() / self.imagem.width()
+            k = quadro.width() / (self.largura_ref or self.imagem.width())
             for x, y, w, h in self.rostos:
                 p.drawRect(QRectF(quadro.left() + x * k, quadro.top() + y * k, w * k, h * k))
         # Borda do papel e margem de corte tracejada.
@@ -209,6 +213,7 @@ class Editor(QWidget):
 
     proxy_carregado = Signal()      # o proxy da foto atual chegou
     previa_atualizada = Signal()    # chegou uma prévia nova (não descartada)
+    ajustada_atualizada = Signal()  # chegou a foto inteira ajustada da moldura (reduzida ou final)
 
     def __init__(self, estado: Estado, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -223,6 +228,11 @@ class Editor(QWidget):
         self._ger_proxy = 0
         self._erro = ""
         self._dpr_previa = 1.0
+        self._ajustada: QImage | None = None        # a foto inteira girada com os ajustes (moldura)
+        self._ajustada_giro = 0
+        self._ajustada_final = False
+        self._chave_ajustada: tuple | None = None   # (giro, ajustes) da última versão pedida
+        self._ger_ajuste = 0
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(2)
         self._sinais = Sinais(self)
@@ -230,6 +240,15 @@ class Editor(QWidget):
         self._sinais.proxy_erro.connect(self._proxy_erro)
         self._sinais.previa_pronta.connect(self._previa_pronta)
         self._sinais.previa_erro.connect(self._previa_erro)
+        self._sinais.ajustada_pronta.connect(self._ajustada_pronta)
+        self._timer_ajuste = QTimer(self)
+        self._timer_ajuste.setSingleShot(True)
+        self._timer_ajuste.setInterval(DEBOUNCE_MS)
+        self._timer_ajuste.timeout.connect(lambda: self._disparar_ajustada(LADO_RAPIDO, False))
+        self._timer_fino = QTimer(self)
+        self._timer_fino.setSingleShot(True)
+        self._timer_fino.setInterval(DEBOUNCE_FINO_MS)
+        self._timer_fino.timeout.connect(lambda: self._disparar_ajustada(None, True))
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(DEBOUNCE_MS)
@@ -237,7 +256,8 @@ class Editor(QWidget):
         self._montar()
         self._atalhos()
         for sinal, slot in ((estado.atual_mudou, self._atual_mudou), (estado.foto_mudou, self._foto_mudou),
-                            (estado.impressao_mudou, self._impressao_mudou)):
+                            (estado.impressao_mudou, self._impressao_mudou),
+                            (estado.comparando_mudou, self._comparando_mudou)):
             sinal.connect(slot)
         self._atualizar()
 
@@ -273,7 +293,7 @@ class Editor(QWidget):
         self.caixa_rostos.toggled.connect(self.mostrar_rostos)
         self.botao_previa = QPushButton(_("Ver como sai"))
         self.botao_previa.setCheckable(True)
-        self.botao_previa.setToolTip(_("Mostra o resultado como será revelado (\\)"))
+        self.botao_previa.setToolTip(_("Mostra o resultado como será revelado"))
         self.botao_previa.toggled.connect(self.definir_previa)
 
         self.rotulo_info = QLabel()
@@ -303,7 +323,6 @@ class Editor(QWidget):
         atalho("R", lambda: self.girar(+1))
         atalho("Shift+R", lambda: self.girar(-1))
         atalho("A", self.enquadrar_pelos_rostos)
-        atalho("\\", lambda: self.botao_previa.toggle())
         atalho(QKeySequence.StandardKey.ZoomIn, lambda: self.aproximar(PASSO_ZOOM))
         atalho(QKeySequence.StandardKey.ZoomOut, lambda: self.aproximar(1 / PASSO_ZOOM))
 
@@ -492,6 +511,7 @@ class Editor(QWidget):
         self._imagens.clear()
         self._caminho = None
         self._timer.stop()
+        self._limpar_ajustada()
         self.previa_geracao += 1
         if foto is not None:
             self._caminho = str(foto.caminho)
@@ -500,10 +520,12 @@ class Editor(QWidget):
 
     def _foto_mudou(self, foto_id: str) -> None:
         if self.estado.atual is not None and self.estado.atual.id == foto_id:
+            self._agendar_ajustada()
             self._atualizar()
             self._agendar_previa()
 
     def _impressao_mudou(self, _indice: int) -> None:
+        self._agendar_ajustada()
         self._atualizar()
         self._agendar_previa()
 
@@ -512,6 +534,7 @@ class Editor(QWidget):
             return
         self.proxy = proxy
         self._imagens.clear()
+        self._agendar_ajustada()
         self._atualizar()
         self._agendar_previa()
         self.proxy_carregado.emit()
@@ -521,6 +544,78 @@ class Editor(QWidget):
             return
         self._erro = mensagem
         self._atualizar()
+
+    def _comparando_mudou(self, _sim: bool) -> None:
+        self._atualizar()
+        self._agendar_previa()
+
+    def _ajustes_da_foto(self) -> dict:
+        """Ajustes da foto atual (só os fora do padrão), ou ``{}`` no antes/depois."""
+        foto = self.estado.atual
+        if foto is None or self.estado.comparando:
+            return {}
+        return ajustes_mod.sanitizar(foto.ajustes)
+
+    # ------------------------------------------------------------ moldura ajustada (foto inteira com os ajustes)
+    def _limpar_ajustada(self) -> None:
+        self._ger_ajuste += 1
+        self._timer_ajuste.stop()
+        self._timer_fino.stop()
+        self._ajustada, self._chave_ajustada, self._ajustada_final = None, None, False
+
+    def _agendar_ajustada(self) -> None:
+        """Pede a foto inteira ajustada: primeiro reduzida (rápida), depois no tamanho do proxy quando parar de mexer.
+
+        Só refaz se o giro ou os valores mudaram (mover o recorte não recalcula nada).
+        """
+        foto, imp = self.estado.atual, self.estado.impressao_atual
+        if foto is None or self.proxy is None:
+            return
+        valores = ajustes_mod.sanitizar(foto.ajustes)
+        if not valores:
+            self._limpar_ajustada()
+            return
+        giro = imp.recorte.giro % 4 if imp is not None else 0
+        chave = (giro, tuple(sorted(valores.items())))
+        if chave == self._chave_ajustada:
+            return
+        self._chave_ajustada = chave
+        self._ger_ajuste += 1
+        self._timer_ajuste.start()
+        self._timer_fino.start()
+
+    def _escala_moldura(self, imp: Impressao | None, largura_img: int) -> float | None:
+        """Px por mm de papel da foto inteira exibida em ``largura_img`` px (a nitidez é em mm de papel)."""
+        if imp is None:
+            return None
+        try:
+            w, h = self._dims()
+            W, _H = receita.dimensoes_giradas(imp, w, h)
+            ret = receita.retangulo_da_impressao(imp, w, h)
+            papel_l = receita.papel_orientado_mm(imp, w, h)[0]
+            return largura_img / W * ret.w / papel_l
+        except (KeyError, ValueError, ZeroDivisionError):
+            return None
+
+    def _disparar_ajustada(self, max_lado: int | None, final: bool) -> None:
+        imp = self.estado.impressao_atual
+        if self.estado.atual is None or self.proxy is None or self._chave_ajustada is None:
+            return
+        giro = self._chave_ajustada[0]
+        W = self.proxy.shape[1] if giro % 2 == 0 else self.proxy.shape[0]
+        escala = self._escala_moldura(imp, W)
+        self._pool.start(AjustarImagem(self._sinais, self._ger_ajuste, self.proxy, giro,
+                                       dict(self._chave_ajustada[1]), escala, max_lado, final))
+
+    def _ajustada_pronta(self, geracao: int, final: bool, imagem: object) -> None:
+        if geracao != self._ger_ajuste:
+            return
+        if self._ajustada is not None and self._ajustada_final and not final:
+            return          # a versão reduzida chegou depois da final da mesma geração
+        self._ajustada, self._ajustada_final = imagem, final
+        self._ajustada_giro = self._chave_ajustada[0] if self._chave_ajustada else 0
+        self._atualizar()
+        self.ajustada_atualizada.emit()
 
     # ------------------------------------------------------------ prévia (receita num trabalhador)
     def _agendar_previa(self) -> None:
@@ -540,7 +635,7 @@ class Editor(QWidget):
         area = self.tela.area_util()
         destino = receita.destino_na_caixa(imp, *self._dims(), int(area.width() * dpr), int(area.height() * dpr))
         self._dpr_previa = dpr
-        self._pool.start(RenderizarPrevia(self._sinais, self.previa_geracao, self.proxy, imp, foto.ajustes, destino))
+        self._pool.start(RenderizarPrevia(self._sinais, self.previa_geracao, self.proxy, imp, self._ajustes_da_foto(), destino))
 
     def _previa_pronta(self, geracao: int, imagem: object) -> None:
         if geracao != self.previa_geracao:
@@ -577,7 +672,11 @@ class Editor(QWidget):
         else:
             t.mensagem = ""
             giro = imp.recorte.giro % 4 if imp is not None else 0
-            t.imagem = self._imagem_girada(giro)
+            bruta = self._imagem_girada(giro)
+            t.largura_ref = bruta.width()
+            usar = (self._ajustada is not None and self._ajustada_giro == giro and not self.estado.comparando
+                    and self._chave_ajustada is not None)
+            t.imagem = self._ajustada if usar else bruta
             if imp is None:
                 t.dica = _("Marque a foto para revelar e escolha o tamanho")
             else:
@@ -640,6 +739,9 @@ class Editor(QWidget):
     def encerrar(self) -> None:
         """Espera os trabalhadores terminarem (chamado ao fechar o aplicativo)."""
         self._timer.stop()
+        self._timer_ajuste.stop()
+        self._timer_fino.stop()
+        self._ger_ajuste += 1
         self._ger_proxy += 1
         self.previa_geracao += 1
         self._pool.waitForDone(3000)
