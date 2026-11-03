@@ -456,3 +456,16 @@ else:
     raise AssertionError("pasta apagada devia dar ValueError")
 """
 )
+
+
+def test_exportacao_por_pasta_leva_o_acabamento_do_tamanho_da_pasta(tmp_path):
+    fotos = tmp_path / "fotos"
+    fotos.mkdir()
+    t = _trabalho_pastas(fotos)
+    acab = {"10x15": exportar.Acabamento("grossa", "fosco"), "20x30": exportar.Acabamento(papel="brilho")}
+    plano = exportar.planejar(t, tmp_path / "saida", exportar.MODO_PASTAS, 100, hoje=HOJE,
+                              organizar=exportar.ORGANIZAR_PASTA, acabamentos=acab)
+    assert {i.grupo for i in plano.itens} == {
+        "Família - borda grossa - fosco", "FAMÍLIA - borda grossa - fosco (2)", "CON_",   # CON_ é 13x18: sem
+        "10x15 - brilho",                                                               # a pasta "10x15" é 20x30
+        "10x15 - borda grossa - fosco"}                                                 # avulsas de 10x15

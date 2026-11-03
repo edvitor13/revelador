@@ -331,3 +331,40 @@ def test_conferir(fotos):
     infos = {pequena.id: imagem.abrir_info(a)}
     por_tipo = {av.tipo: av.foto_id for av in exportar.conferir(t, infos)}
     assert por_tipo == {"baixa": "a", "mudou": "b", "sumiu": "c", "sem_impressao": "sem"}
+
+
+# -------------------------------------------------------------------- nome da pasta e acabamento por tamanho
+
+def test_nome_da_pasta_principal_escolhido_e_limpo(fotos, saida):
+    t = trabalho_misto(fotos)
+    assert exportar.planejar(t, saida, hoje=HOJE, nome="Fotos da Ana").pasta == saida / "Fotos da Ana"
+    assert exportar.planejar(t, saida, hoje=HOJE, nome='  Casa: "nova"?  ').pasta == saida / "Casa_ _nova__"
+    assert exportar.planejar(t, saida, hoje=HOJE, nome="   ").pasta == saida / "Revelação 2026-03-09"
+    (saida / "Fotos da Ana").mkdir(parents=True)
+    assert exportar.planejar(t, saida, hoje=HOJE, nome="Fotos da Ana").pasta == saida / "Fotos da Ana (2)"
+
+
+def test_acabamento_vai_no_nome_da_subpasta_e_no_pedido(fotos, saida):
+    acab = {"10x15": exportar.Acabamento("fina", "fosco"), "A4 (21x29,7)": exportar.Acabamento(papel="brilho")}
+    r = exportar.executar(exportar.planejar(trabalho_misto(fotos), saida, exportar.MODO_PASTAS, 100, hoje=HOJE,
+                                            nome="Pedido", acabamentos=acab))
+    raiz = saida / "Pedido"
+    assert rel(r, raiz) == sorted([
+        "10x15 - borda fina - fosco/1 cópia/IMG_1.jpg", "10x15 - borda fina - fosco/3 cópias/IMG_1.jpg",
+        "A4 (21x29,7) - brilho/2 cópias/IMG_2.jpg", "pedido.txt",
+    ])
+    pedido = (raiz / "pedido.txt").read_text(encoding="utf-8")
+    assert "Acabamento (para o laboratório)" in pedido
+    assert "10x15: borda fina, fosco" in pedido and "A4 (21x29,7): brilho" in pedido
+
+
+def test_acabamento_nao_informado_nao_muda_nada(fotos, saida):
+    t = trabalho_misto(fotos)
+    vazio = {"10x15": exportar.Acabamento()}
+    a = exportar.planejar(t, saida, hoje=HOJE)
+    b = exportar.planejar(t, saida, hoje=HOJE, acabamentos=vazio)
+    assert [i.destinos for i in a.itens] == [i.destinos for i in b.itens]
+    assert "Acabamento" not in exportar.texto_pedido(b)
+    assert exportar.Acabamento("sem", "semibrilho").partes == ["sem borda", "semibrilho"]
+    with pytest.raises(ValueError):
+        exportar.Acabamento("media")

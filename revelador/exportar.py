@@ -4,9 +4,11 @@ Fluxo
 -----
 1. ``conferir(trabalho, infos)``: avisos antes de exportar (resolução baixa, original que sumiu ou mudou, foto
    selecionada sem impressão).
-2. ``planejar(trabalho, destino, modo_copias, ..., organizar=...)``: o ``Plano``, sem tocar no disco: pasta
-   ``Revelação AAAA-MM-DD`` (nunca uma pasta que já existe: sufixo `` (2)``...), uma subpasta por tamanho (ou, com
-   ``organizar="pasta"``, uma por pasta de tamanho, #32, e as impressões avulsas por tamanho) e um ``Item`` por
+2. ``planejar(trabalho, destino, modo_copias, ..., organizar=..., nome=..., acabamentos=...)``: o ``Plano``, sem
+   tocar no disco: a pasta principal com o nome escolhido (padrão ``Revelação AAAA-MM-DD``; nunca uma pasta que já
+   existe: sufixo `` (2)``...), uma subpasta por tamanho (ou, com ``organizar="pasta"``, uma por pasta de tamanho,
+   #32, e as impressões avulsas por tamanho), com o acabamento do tamanho no nome ("10x15 - borda fina - fosco":
+   só um aviso para o laboratório; a foto sai sem borda) e um ``Item`` por
    impressão de foto selecionada, com os caminhos finais já sem colisão. O plano guarda CÓPIAS do modelo, então
    pode ser executado em outra thread enquanto a interface continua viva.
 3. ``exportar_item(item, dpi)``: ``carregar_fonte(original)`` → ``renderizar`` nos px exatos do papel →
@@ -34,7 +36,7 @@ from PIL import Image, ImageCms
 
 from . import imagem, precos, receita, tamanhos
 from . import __version__
-from .i18n import _
+from .i18n import N_, _
 from .imagem import ErroImagem, InfoFoto
 from .projeto import Foto, Impressao, Trabalho, gravar_texto_seguro
 
@@ -47,6 +49,12 @@ ORGANIZAR_TAMANHO = "tamanho"   # uma subpasta por tamanho (padrão)
 ORGANIZAR_PASTA = "pasta"       # uma subpasta por pasta de tamanho (#32); avulsas continuam por tamanho
 ORGANIZACOES = (ORGANIZAR_TAMANHO, ORGANIZAR_PASTA)
 
+# Acabamento por tamanho: só vai no NOME da subpasta e no pedido.txt, para o laboratório ("" = não informar).
+BORDAS = ("", "sem", "fina", "grossa")
+PAPEIS = ("", "fosco", "brilho", "semibrilho")
+TEXTO_BORDA = {"": N_("Não informar"), "sem": N_("sem borda"), "fina": N_("borda fina"), "grossa": N_("borda grossa")}
+TEXTO_PAPEL = {"": N_("Não informar"), "fosco": N_("fosco"), "brilho": N_("brilho"), "semibrilho": N_("semibrilho")}
+
 QUALIDADE_JPEG = 95
 MAX_PARALELO = 4
 NOME_PEDIDO = "pedido.txt"
@@ -58,6 +66,25 @@ _TAG_DATA_ORIGINAL = 0x9003
 
 
 # ----------------------------------------------------------------------------------------------- modelos
+
+@dataclass(frozen=True)
+class Acabamento:
+    """Como o laboratório deve revelar um tamanho: borda (``BORDAS``) e papel (``PAPEIS``); "" = não informar."""
+
+    borda: str = ""
+    papel: str = ""
+
+    def __post_init__(self) -> None:
+        if self.borda not in BORDAS:
+            raise ValueError(f"borda desconhecida: {self.borda!r} (use {BORDAS})")
+        if self.papel not in PAPEIS:
+            raise ValueError(f"papel desconhecido: {self.papel!r} (use {PAPEIS})")
+
+    @property
+    def partes(self) -> list[str]:
+        """Os textos informados, na ordem borda, papel (["borda fina", "fosco"])."""
+        return [_(TEXTO_BORDA[self.borda])] * bool(self.borda) + [_(TEXTO_PAPEL[self.papel])] * bool(self.papel)
+
 
 @dataclass
 class Item:
@@ -83,6 +110,7 @@ class Plano:
     trabalho: Trabalho           # cópia, para o orçamento do pedido.txt
     tabela_precos: dict[str, int] = field(default_factory=dict)
     organizar: str = ORGANIZAR_TAMANHO
+    acabamentos: dict[str, Acabamento] = field(default_factory=dict)   # por nome do tamanho ("10x15")
 
     @property
     def arquivos(self) -> int:
@@ -152,6 +180,18 @@ def nome_pasta(dia: date) -> str:
     return _("Revelação {data}").format(data=dia.isoformat())
 
 
+def nome_principal(nome: str | None, dia: date) -> str:
+    """Nome da pasta principal da exportação: o escolhido (limpo para o Windows) ou, vazio, ``Revelação AAAA-MM-DD``."""
+    nome = " ".join(str(nome or "").split())
+    return nome_subpasta(nome) if nome else nome_pasta(dia)
+
+
+def com_acabamento(nome: str, acabamento: Acabamento | None) -> str:
+    """``"10x15"`` + borda fina e fosco → ``"10x15 - borda fina - fosco"`` (sem acabamento informado: o nome)."""
+    partes = acabamento.partes if acabamento else []
+    return nome_subpasta(" - ".join([nome, *partes])) if partes else nome
+
+
 def pasta_livre(destino: Path, nome: str) -> Path:
     """``destino/nome``; se já existir, ``nome (2)``, ``nome (3)``..."""
     candidata = destino / nome
@@ -179,16 +219,24 @@ class _Reserva:
             n += 1
 
 
-def _grupos(trabalho: Trabalho, brutos: list[tuple[Foto, Impressao]], organizar: str) -> list[str]:
+def _grupos(trabalho: Trabalho, brutos: list[tuple[Foto, Impressao]], organizar: str,
+            acabamentos: Mapping[str, Acabamento] | None = None) -> list[str]:
     """Nome da subpasta de primeiro nível de cada impressão (mesma ordem de ``brutos``).
 
     Por tamanho: ``nome_tamanho``. Por pasta: a pasta de tamanho da impressão vira uma subpasta com o nome dela
     (``nome_subpasta``), e a impressão avulsa (ou de pasta que não existe mais) fica na subpasta do tamanho. Os nomes
     são únicos sem diferenciar maiúsculas: as pastas de tamanho escolhem primeiro (na ordem de ``trabalho.pastas``),
-    depois os tamanhos das avulsas; um nome repetido ganha `` (2)``, `` (3)``...
+    depois os tamanhos das avulsas; um nome repetido ganha `` (2)``, `` (3)``... O acabamento do tamanho
+    (``acabamentos[nome_tamanho]``) vai no fim do nome ("10x15 - borda fina - fosco", "Família - fosco").
     """
+    acab = acabamentos or {}
+
+    def do_tamanho(imp: Impressao) -> str:
+        tam = nome_tamanho(imp)
+        return com_acabamento(tam, acab.get(tam))
+
     if organizar == ORGANIZAR_TAMANHO:
-        return [nome_tamanho(imp) for _foto, imp in brutos]
+        return [do_tamanho(imp) for _foto, imp in brutos]
     pastas = {p.id: p for p in trabalho.pastas}
     usadas = {imp.pasta for _foto, imp in brutos if imp.pasta in pastas}
     usados: set[str] = set()
@@ -202,10 +250,11 @@ def _grupos(trabalho: Trabalho, brutos: list[tuple[Foto, Impressao]], organizar:
         usados.add(candidato.casefold())
         nomes[chave] = candidato
 
+    acab_pasta = {imp.pasta: acab.get(nome_tamanho(imp)) for _foto, imp in brutos if imp.pasta in pastas}
     for p in trabalho.pastas:
         if p.id in usadas:
-            reservar(("pasta", p.id), nome_subpasta(p.nome))
-    chaves = [("pasta", imp.pasta) if imp.pasta in pastas else ("tamanho", nome_tamanho(imp)) for _foto, imp in brutos]
+            reservar(("pasta", p.id), com_acabamento(nome_subpasta(p.nome), acab_pasta.get(p.id)))
+    chaves = [("pasta", imp.pasta) if imp.pasta in pastas else ("tamanho", do_tamanho(imp)) for _foto, imp in brutos]
     for chave in dict.fromkeys(chaves):
         if chave not in nomes:
             reservar(chave, chave[1])
@@ -214,8 +263,12 @@ def _grupos(trabalho: Trabalho, brutos: list[tuple[Foto, Impressao]], organizar:
 
 def planejar(trabalho: Trabalho, destino: str | os.PathLike, modo_copias: str = MODO_PASTAS, dpi: int | None = None,
              tabela_precos: Mapping[str, int] | None = None, hoje: date | None = None,
-             organizar: str = ORGANIZAR_TAMANHO) -> Plano:
+             organizar: str = ORGANIZAR_TAMANHO, nome: str | None = None,
+             acabamentos: Mapping[str, Acabamento] | None = None) -> Plano:
     """O que será gravado, sem tocar no disco. Um item por impressão de foto selecionada (ordem do trabalho).
+
+    ``nome``: nome da pasta principal (vazio/None: ``Revelação AAAA-MM-DD``); se já existir, ganha `` (2)``...
+    ``acabamentos``: borda e papel por nome de tamanho ("10x15"), escritos no nome das subpastas e no pedido.txt.
 
     ``organizar``: ``"tamanho"`` (uma subpasta por tamanho) ou ``"pasta"`` (uma por pasta de tamanho; as impressões
     avulsas continuam por tamanho). Dentro de cada subpasta, o mesmo esquema de cópias (``modo_copias``).
@@ -226,11 +279,12 @@ def planejar(trabalho: Trabalho, destino: str | os.PathLike, modo_copias: str = 
         raise ValueError(f"organização desconhecida: {organizar!r} (use {ORGANIZACOES})")
     dia = hoje or date.today()
     dpi = int(dpi or trabalho.dpi)
-    pasta = pasta_livre(Path(destino), nome_pasta(dia))
+    pasta = pasta_livre(Path(destino), nome_principal(nome, dia))
     congelado = copy.deepcopy(trabalho)
 
     brutos = [(foto, imp) for foto in congelado.selecionadas() for imp in foto.impressoes]
-    grupos = _grupos(congelado, brutos, organizar)
+    acabamentos = {k: v for k, v in (acabamentos or {}).items() if v.partes}
+    grupos = _grupos(congelado, brutos, organizar, acabamentos)
     ids_pastas = {p.id for p in congelado.pastas}
     # modo "pastas": sem subpasta de quantidade nas subpastas em que todas as impressões são de 1 cópia
     so_uma: dict[str, bool] = {}
@@ -254,7 +308,7 @@ def planejar(trabalho: Trabalho, destino: str | os.PathLike, modo_copias: str = 
             destinos = [reserva.reservar(base, stem) for _i in range(copias)]
         itens.append(Item(foto, imp, precos.chave_preco(imp), tam, copias, destinos, grupo,
                           imp.pasta if imp.pasta in ids_pastas else None))
-    return Plano(pasta, itens, modo_copias, dpi, dia, congelado, dict(tabela_precos or {}), organizar)
+    return Plano(pasta, itens, modo_copias, dpi, dia, congelado, dict(tabela_precos or {}), organizar, acabamentos)
 
 
 # ------------------------------------------------------------------------------------------- conferência
@@ -397,6 +451,7 @@ def texto_pedido(plano: Plano, resultado: Resultado | None = None) -> str:
         else:
             txt += " — " + _("sem preço")
         linhas.append(txt)
+    linhas += _linhas_acabamento(plano, feitos)
     linhas += _linhas_pastas(plano, feitos)
     linhas.append("")
     if any(ln.unitario is not None for ln in orc.linhas):
@@ -417,6 +472,14 @@ def texto_pedido(plano: Plano, resultado: Resultado | None = None) -> str:
             rel = d.relative_to(plano.pasta).as_posix()
             linhas.append(f"{rel}  ({texto_copias(item.copias)})")
     return "\n".join(linhas) + "\n"
+
+
+def _linhas_acabamento(plano: Plano, feitos: list[Item]) -> list[str]:
+    """Borda e papel de cada tamanho exportado, quando informados ("10x15: borda fina, fosco")."""
+    tamanhos_feitos = list(dict.fromkeys(i.tamanho_nome for i in feitos))
+    linhas = [f"{tam}: {', '.join(plano.acabamentos[tam].partes)}" for tam in tamanhos_feitos
+              if tam in plano.acabamentos]
+    return (["", _("Acabamento (para o laboratório)")] + linhas) if linhas else []
 
 
 def _linhas_pastas(plano: Plano, feitos: list[Item]) -> list[str]:
