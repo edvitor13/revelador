@@ -6,6 +6,8 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.1.0] - 2026-11-03
+
 ### Adicionado
 - Pedidos do autor (rodada de 2026-11-03): filtro da grade por tamanho e botão "Repetidas…" (fotos muito
   parecidas em arquivos diferentes, com a escolha de manter todas ou unificar numa só, somando tamanhos e cópias);

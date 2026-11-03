@@ -10,6 +10,7 @@ laboratório. Suas fotos originais nunca são alteradas.
 - **Exportar** uma pasta por tamanho, nos pixels exatos do papel.
 - **Salvar o trabalho** e recuperar depois de uma falha.
 - **Custo estimado** do pedido pela tabela de preços do seu laboratório.
+- **Visualizar** (F5): passe pelas fotos vendo como cada tamanho vai sair no papel.
 
 ---
 
@@ -27,6 +28,15 @@ laboratório. Suas fotos originais nunca são alteradas.
   os valores; cancelar não deixa arquivo pela metade.
 - **Trabalho** (`.revelador`): Novo, Abrir, Recentes, Salvar e Salvar como, aviso ao fechar com mudanças,
   recuperação depois de uma falha e "Procurar…" para fotos que mudaram de lugar.
+- **Pastas de tamanho**: agrupe fotos por pedido (ex.: "Família 10x15") com nome, cor, tamanho e cópias; importar
+  uma pasta do disco já cria a pasta e marca as fotos; a exportação pode sair organizada por pasta.
+- **Grade**: foto importada já entra marcada no tamanho padrão; filtro por tamanho e "Sem pasta"; marcar ou
+  desmarcar todas; − e + de cópias em cada tamanho; "Repetidas…" acha fotos iguais em arquivos diferentes e
+  unifica numa só; "Duplicar foto" para usar outro recorte.
+- **Recorte único por foto**, valendo para todos os tamanhos, com "Enquadrar pelos rostos" e "Centralizar".
+- **Exportar de novo com o mesmo nome** substitui a pasta inteira (a antiga vai para a Lixeira), sem misturar
+  revelações.
+- **Salvamento automático** a cada minuto.
 - **Tela de boas-vindas** com os trabalhos recentes, as novidades da versão e o aviso de atualização.
 - **Atualização automática** pelas releases do GitHub, só com o SHA-256 conferido; pode ser desligada.
 - Os tamanhos variam um pouco entre laboratórios (principalmente o 15x21): confirme as medidas com o seu antes de

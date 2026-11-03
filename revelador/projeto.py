@@ -55,7 +55,7 @@ class Recorte:
 
 @dataclass
 class Impressao:
-    """Uma foto num tamanho de papel, com a quantidade de cópias e o recorte próprio."""
+    """Uma foto num tamanho de papel, com a quantidade de cópias e o recorte (o mesmo da foto, reencaixado no papel)."""
 
     tamanho: str = TAMANHO_PADRAO   # id de tamanhos.TAMANHOS, ou "personalizado"
     copias: int = 1
@@ -85,7 +85,7 @@ class Pasta:
 
 @dataclass
 class Foto:
-    """Uma foto importada. Os ajustes valem para todas as impressões dela; o recorte é de cada impressão."""
+    """Uma foto importada. Os ajustes e o recorte valem para todas as impressões dela."""
 
     id: str
     caminho: Path
