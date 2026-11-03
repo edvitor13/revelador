@@ -46,6 +46,8 @@ class Estado(QObject):
         self.atual: Foto | None = None
         self.indice_impressao = 0             # impressão da foto atual mostrada no editor
         self.info: dict[str, InfoFoto] = {}   # metadados lidos em segundo plano (largura/altura orientadas etc.)
+        self.miniaturas: dict[str, Path] = {}  # JPEG de miniatura no cache, por id de foto (preenchido em segundo plano)
+        self.erros: dict[str, str] = {}        # mensagem amigável das fotos que não abriram, por id de foto
         self._modificado = False
 
     # ------------------------------------------------------------ consulta
@@ -68,6 +70,8 @@ class Estado(QObject):
         """Troca o trabalho inteiro (novo ou aberto de um ``.revelador``)."""
         self.trabalho = trabalho
         self.info.clear()
+        self.miniaturas.clear()
+        self.erros.clear()
         self.atual = None
         self.fotos_mudaram.emit()
         self.atual_mudou.emit(None)
@@ -98,6 +102,8 @@ class Estado(QObject):
         self.trabalho.fotos = [f for f in self.trabalho.fotos if f.id not in ids]
         for foto_id in ids:
             self.info.pop(foto_id, None)
+            self.miniaturas.pop(foto_id, None)
+            self.erros.pop(foto_id, None)
         if self.atual is not None and self.atual.id in ids:
             self.definir_atual(None)
         self.fotos_mudaram.emit()
@@ -127,6 +133,20 @@ class Estado(QObject):
         foto.bytes = info.bytes
         foto.mtime = info.mtime / 1e9   # Foto.mtime em segundos; InfoFoto.mtime em ns
         self.refazer_recortes_auto(foto)
+        self.foto_mudou.emit(foto_id)
+
+    def definir_miniatura(self, foto_id: str, caminho: Path) -> None:
+        """Miniatura pronta no cache (a grade mostra)."""
+        if self.por_id(foto_id) is None:
+            return
+        self.miniaturas[foto_id] = Path(caminho)
+        self.foto_mudou.emit(foto_id)
+
+    def definir_erro(self, foto_id: str, mensagem: str) -> None:
+        """A foto não abriu: a grade a marca com aviso e mostra a mensagem no balão."""
+        if self.por_id(foto_id) is None:
+            return
+        self.erros[foto_id] = mensagem
         self.foto_mudou.emit(foto_id)
 
     def definir_rostos(self, foto_id: str, rostos: list[Rosto]) -> None:
