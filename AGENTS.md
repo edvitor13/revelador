@@ -40,8 +40,9 @@ proporção certa e não precisa cortar nada além da margem de corte (sangria).
 Versão **0.1.0 em construção**. As fases A (núcleo), B (importação, grade, seleção, custo, editor) e C (ajustes,
 exportação, salvar/abrir, atualização) e o **visual novo** estão no `main`. O que cada issue já tem:
 
-- **#1, #2, #7, #8, #10, #13: feitas** (fechadas). Ajustes com painel e prévia rápida, exportação com diálogo,
-  atualização com diálogo e verificação ao abrir, preços e custo do pedido.
+- **#1, #2, #7, #8, #10, #13, #31, #33: feitas** (fechadas). Ajustes com painel e prévia rápida, exportação com
+  diálogo, atualização com diálogo e verificação ao abrir, preços e custo do pedido, tamanho das miniaturas da grade
+  ajustável (#31) e orientação Retrato | Paisagem explícita com "Girar papel" e cópias rápidas (#33).
 - **#3 (tamanhos)**: tabela, funções de px/qualidade e personalizado prontos e na interface (seletor, painel).
 - **#4 (rostos)**: YuNet, política do recorte e detecção em segundo plano depois da importação.
 - **#5 (seleção)**: marca na grade, filtro Todas | Selecionadas, painel de impressões, tamanho padrão, status. Falta
