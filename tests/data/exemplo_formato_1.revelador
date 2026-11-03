@@ -1,0 +1,23 @@
+{
+  "app": "Revelador",
+  "formato": 1,
+  "versao_app": "0.1.0",
+  "padrao": {"tamanho": "10x15", "dpi": 300, "margem_corte_mm": 2.0},
+  "fotos": [
+    {
+      "id": "f1",
+      "caminho": "Fotos/IMG_1234.jpg",
+      "caminho_absoluto": "C:\\Exemplo\\Fotos\\IMG_1234.jpg",
+      "bytes": 2481234,
+      "mtime": 1767225600.0,
+      "selecionada": true,
+      "ajustes": {"exposicao": 12, "sombras": 30},
+      "rostos": [{"x": 0.41, "y": 0.22, "w": 0.08, "h": 0.11, "olhos": [[0.43, 0.26], [0.47, 0.26]], "confianca": 0.93}],
+      "impressoes": [
+        {"tamanho": "10x15", "copias": 2, "recorte": {"cx": 0.45, "cy": 0.38}},
+        {"tamanho": "20x30", "orientacao": "paisagem", "modo": "caber"}
+      ]
+    },
+    {"id": "f2", "caminho": "Fotos/IMG_9.jpg", "bytes": 10, "mtime": 1.0}
+  ]
+}
