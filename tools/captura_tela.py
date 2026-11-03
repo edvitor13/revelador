@@ -8,7 +8,8 @@ Gera, em SAIDA (padrão ``saida/``):
   ``editor_alcas.png``: só o editor, aproximado e endireitado, com o mouse sobre a alça do canto inferior direito;
   ``janela_vazia.png``: sem fotos; ``janela_ajustes.png``: o painel rolado até os ajustes (a foto atual tem exposição, contraste, saturação e temperatura
   alterados); ``resumo.png``, ``precos.png``, ``personalizado.png`` e ``exportar.png``: os diálogos do pedido;
-  ``menu_projeto.png`` e ``menu_engrenagem.png``: os menus da barra superior;
+  ``menu_projeto.png`` e ``menu_engrenagem.png``: os menus da barra superior; ``configuracoes.png``: o diálogo de
+  Configurações; ``barra_status.png``: a barra de status com o indicador do salvamento automático ("Salvo às...");
 - ``catalogo.png``: uma folha com os componentes do tema (botões, seletor, chave, sliders, cartões, campos, tabela,
   lista, ícones e cores de estado).
 
@@ -219,12 +220,20 @@ def capturar_janelas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int
     personalizado.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     personalizado.show()
     gravar(personalizado, "personalizado.png")
+    configuracoes = janela.criar_dialogo_configuracoes()
+    configuracoes.resize(560, 440)
+    configuracoes.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    configuracoes.show()
+    gravar(configuracoes, "configuracoes.png")
+    configuracoes.hide()
     for nome, botao in (("menu_projeto.png", janela.botao_projeto), ("menu_engrenagem.png", janela.botao_menu)):
         menu = botao.menu()
         menu.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         menu.popup(botao.mapToGlobal(botao.rect().bottomLeft()))
         gravar(menu, nome)
         menu.hide()
+    janela.autosalvar.salvar_agora(sincrono=True)   # grava na pasta temporária (prefs): o indicador diz "Salvo às"
+    gravar(janela.statusBar(), "barra_status.png")
     _fechar(janela)
     return feitos
 
