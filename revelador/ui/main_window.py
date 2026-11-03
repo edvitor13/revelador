@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, Qt
 from PySide6.QtGui import QAction, QColor, QPalette
-from PySide6.QtWidgets import (QApplication, QLabel, QMainWindow, QMessageBox, QSplitter, QToolBar, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QApplication, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea,
+                               QSplitter, QToolBar, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__
+from .. import APP_NAME, __version__, precos
 from ..i18n import _
 from . import prefs
 from .estado import Estado
+from .painel_impressoes import PainelImpressoes, SeletorTamanhoPadrao, tamanho_padrao_salvo
+from .precos_dialog import PrecosDialog, tabela_precos
+from .resumo import ResumoDialog, texto_barra
 
 CINZA_EDITOR = "#6b6b6b"  # cinza neutro: um fundo colorido enganaria a percepção de cor da foto
 TAMANHO_INICIAL = (1280, 800)
@@ -72,6 +75,7 @@ class MainWindow(QMainWindow):
         self._criar_areas()
         self.statusBar().showMessage(_("Pronto."))
         self.restaurar_estado()
+        self._ligar_selecao()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -127,6 +131,67 @@ class MainWindow(QMainWindow):
         self.divisor.setSizes(PROPORCAO_INICIAL)
         self.setCentralWidget(self.divisor)
         self.setAcceptDrops(True)
+
+    # ------------------------------------------------------------ seleção, tamanhos e custo (#5, #13)
+    def _ligar_selecao(self) -> None:
+        """Painel de impressões, tamanho padrão, menu/ação de preços e o custo na barra de status.
+
+        O painel lateral é uma coluna rolável (``coluna_painel``): a seção de impressões fica no topo e há um
+        espaçador no fim; quem acrescentar seções insere antes dele (``insertWidget(count() - 1, ...)``).
+        """
+        padrao = tamanho_padrao_salvo()
+        if padrao:
+            self.estado.trabalho.tamanho_padrao = padrao
+        self.orientacao_painel.hide()
+        rolagem = QScrollArea()
+        rolagem.setWidgetResizable(True)
+        rolagem.setFrameShape(QScrollArea.Shape.NoFrame)
+        conteudo = QWidget()
+        self.coluna_painel = QVBoxLayout(conteudo)
+        self.coluna_painel.setContentsMargins(0, 0, 0, 0)
+        self.painel_impressoes = PainelImpressoes(self.estado)
+        self.coluna_painel.addWidget(self.painel_impressoes)
+        self.coluna_painel.addStretch(1)
+        rolagem.setWidget(conteudo)
+        self.rolagem_painel = rolagem
+        self.area_painel.layout().addWidget(rolagem)
+
+        self.seletor_tamanho = SeletorTamanhoPadrao(self.estado)
+        self.espaco_tamanho.layout().addWidget(self.seletor_tamanho)
+
+        self.acao_precos = QAction(_("Preços do laboratório…"), self)
+        self.acao_precos.triggered.connect(self.abrir_precos)
+        self.acao_resumo = QAction(_("Resumo do pedido…"), self)
+        self.acao_resumo.triggered.connect(self.abrir_resumo)
+        self.menu_pedido = QMenu(_("&Pedido"), self)
+        self.menu_pedido.addAction(self.acao_resumo)
+        self.menu_pedido.addAction(self.acao_precos)
+        self.menuBar().insertMenu(self.menu_ajuda.menuAction(), self.menu_pedido)
+        self.barra.addAction(self.acao_precos)
+
+        self.botao_custo = QPushButton()
+        self.botao_custo.setFlat(True)
+        self.botao_custo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_custo.setToolTip(_("Estimativa — clique para ver o resumo do pedido"))
+        self.botao_custo.clicked.connect(self.abrir_resumo)
+        self.statusBar().addPermanentWidget(self.botao_custo)
+        self.resumo: ResumoDialog | None = None
+        self.estado.pedido_mudou.connect(self.atualizar_custo)
+        self.atualizar_custo()
+
+    def atualizar_custo(self) -> None:
+        orc = precos.orcamento(self.estado.trabalho, tabela_precos())
+        self.botao_custo.setText(texto_barra(self.estado.trabalho, orc))
+
+    def abrir_resumo(self) -> None:
+        if self.resumo is None:
+            self.resumo = ResumoDialog(self.estado, self)
+        self.resumo.atualizar()
+        self.resumo.show()
+        self.resumo.raise_()
+
+    def abrir_precos(self) -> None:
+        PrecosDialog(self.estado, self).exec()
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
