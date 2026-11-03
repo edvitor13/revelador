@@ -10,6 +10,9 @@ Gera, em SAIDA (padrão ``saida/``):
   alterados); ``resumo.png``, ``precos.png``, ``personalizado.png`` e ``exportar.png``: os diálogos do pedido;
   ``menu_projeto.png`` e ``menu_engrenagem.png``: os menus da barra superior; ``configuracoes.png``: o diálogo de
   Configurações; ``barra_status.png``: a barra de status com o indicador do salvamento automático ("Salvo às...");
+- ``boas_vindas.png`` e ``boas_vindas_estreita.png``: a tela de boas-vindas (1440x900 e a janela mais estreita), com
+  três trabalhos recentes, um trabalho para recuperar e o aviso de atualização simulado; ``novidades.png``: o
+  diálogo das novidades da versão;
 - ``catalogo.png``: uma folha com os componentes do tema (botões, seletor, chave, sliders, cartões, campos, tabela,
   lista, ícones e cores de estado).
 
@@ -234,6 +237,70 @@ def capturar_janelas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int
         menu.hide()
     janela.autosalvar.salvar_agora(sincrono=True)   # grava na pasta temporária (prefs): o indicador diz "Salvo às"
     gravar(janela.statusBar(), "barra_status.png")
+    _fechar(janela)
+    return feitos
+
+
+# ------------------------------------------------------------------ tela de boas-vindas (#35)
+def capturar_boas_vindas(app, fotos: list[Path], pasta: Path, saida: Path) -> list[tuple[str, int, int]]:
+    """Grava a tela de boas-vindas larga e estreita e o diálogo das novidades (trabalhos de exemplo em `pasta`)."""
+    import json
+
+    from PySide6.QtCore import Qt
+
+    from revelador import projeto, updater
+    from revelador.projeto import Foto, Impressao, Trabalho
+    from revelador.ui import prefs
+
+    feitos: list[tuple[str, int, int]] = []
+
+    def gravar(widget, nome: str) -> None:
+        for _ in range(4):
+            app.processEvents()
+            time.sleep(0.02)
+        feitos.append((nome, *_gravar(widget, saida / nome)))
+
+    recentes = []
+    if fotos:
+        pasta.mkdir(parents=True, exist_ok=True)
+        for i, (nome, n, sel, tams) in enumerate((("Casamento da Ana", 9, 4, ("10x15", "13x18")),
+                                                  ("Viagem a Paraty", 6, 2, ("15x21",)),
+                                                  ("Aniversário do Pedro", 4, 0, ()))):
+            escolha = [fotos[(i * 3 + k) % len(fotos)] for k in range(n)]
+            itens = []
+            for k, foto in enumerate(escolha):
+                f = Foto(id=f"t{i}f{k}", caminho=foto, selecionada=k < sel)
+                if f.selecionada:
+                    f.impressoes = [Impressao(tamanho=tams[k % len(tams)])]
+                itens.append(f)
+            destino = pasta / f"{nome}.revelador"
+            projeto.salvar(Trabalho(fotos=itens), destino)
+            recentes.append(str(destino))
+        sobra = Trabalho(fotos=[Foto(id="r1", caminho=fotos[-1], selecionada=True,
+                                     impressoes=[Impressao(tamanho="10x15")])])
+        projeto.salvar_recuperacao(sobra)   # aparece como "Há um trabalho para recuperar"
+    prefs.settings().setValue("projeto/recentes", json.dumps(recentes, ensure_ascii=False))
+
+    janela = _janela(app, *TAMANHO_JANELA)
+    bv = janela.boas_vindas
+    nova = updater.Release(tag="v0.2.0", version=(0, 2, 0), name="0.2.0", body="", url="", published="", assets={})
+    bv.mostrar()
+    janela.verificador.verificado.emit(nova, "")   # aviso de atualização simulado (sem rede)
+    _esperar_ate(app, lambda: not bv.ocupado())
+    esperar_workers(app)
+    gravar(janela, "boas_vindas.png")
+    janela.resize(1000, 700)
+    app.processEvents()
+    gravar(janela, "boas_vindas_estreita.png")
+    dialogo = bv.mostrar_novidades()
+    if dialogo is not None:
+        dialogo.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        dialogo.show()
+        gravar(dialogo, "novidades.png")
+        dialogo.close()
+    for arquivo in projeto.listar_recuperacao():
+        projeto.apagar_recuperacao(arquivo)
+    prefs.settings().remove("projeto/recentes")
     _fechar(janela)
     return feitos
 
@@ -499,6 +566,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 fotos = gerar_fotos(temporario / "fotos")
         for nome, largura, altura in capturar_janelas(app, fotos, args.saida):
+            print(f"{nome:<22}{largura}x{altura}")
+        for nome, largura, altura in capturar_boas_vindas(app, fotos, temporario / "trabalhos", args.saida):
             print(f"{nome:<22}{largura}x{altura}")
         largura, altura = capturar_catalogo(app, args.saida / "catalogo.png")
         print(f"{'catalogo.png':<22}{largura}x{altura}")

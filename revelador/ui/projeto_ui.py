@@ -290,11 +290,11 @@ class ProjetoUi(QObject):
                                              limitar_ajustes=ajustes.sanitizar)
         except ErroFormato as e:
             self._erro(str(e))
-            self._esquecer_recente(caminho)
+            self.esquecer_recente(caminho)
             return False
         except OSError:
             self._erro(_("Não consegui abrir “{nome}”. O arquivo ainda existe?").format(nome=caminho.name))
-            self._esquecer_recente(caminho)
+            self.esquecer_recente(caminho)
             return False
         for foto in trabalho.fotos:   # "pasta/../fotos/a.jpg" (caminho relativo resolvido) vira o caminho limpo
             foto.caminho = Path(os.path.normpath(foto.caminho))
@@ -329,7 +329,7 @@ class ProjetoUi(QObject):
             if os.path.normcase(str(Path(antigo).absolute())) == os.path.normcase(str(Path(destino).absolute())):
                 auto.esquecer_automatico(antigo)       # a pessoa adotou o próprio arquivo automático
             elif auto.apagar_automatico(antigo):
-                self._esquecer_recente(antigo)
+                self.esquecer_recente(antigo)
         return True
 
     def _gravar(self, destino: Path) -> bool:
@@ -439,7 +439,7 @@ class ProjetoUi(QObject):
         self._gravar_recentes(([novo] + resto)[:MAX_RECENTES])
         self.reconstruir_menu()
 
-    def _esquecer_recente(self, caminho: Path) -> None:
+    def esquecer_recente(self, caminho: Path) -> None:
         chave = os.path.normcase(str(Path(caminho).absolute()))
         self._gravar_recentes([str(p) for p in self.recentes() if os.path.normcase(str(p)) != chave])
         self.reconstruir_menu()
