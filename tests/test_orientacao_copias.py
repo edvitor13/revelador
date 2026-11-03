@@ -211,3 +211,24 @@ app.processEvents()
 assert f.impressoes[0].copias == 1
 print("ok")
 """)
+
+
+def test_chip_compacto_mostra_total_e_clique_funciona():
+    rodar("""
+estado = Estado()
+estado.trabalho = Trabalho()
+f = nova_foto(estado, "a", 4000, 3000)
+f.impressoes = [Impressao(tamanho="9x13", copias=2)]
+estado.refazer_recortes_auto(f)
+g = Grade(estado); g.resize(400, 300); g.show()
+esperar(lambda: g.total() == 1)
+g.definir_miniatura(100)
+app.processEvents()
+idx = g.modelo.index(0)
+chips = layout_chips(area_chips(g.lista.visualRect(idx)), f, True)
+assert len(chips) == 1 and chips[0][2] == "×2", chips
+QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=chips[0][0].center())
+app.processEvents()
+assert f.impressoes[0].copias == 3
+print("ok")
+""")
