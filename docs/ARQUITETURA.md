@@ -94,19 +94,22 @@ class Trabalho:
 
 - **Formatos**: JPEG, PNG, HEIC/HEIF (`pillow_heif.register_heif_opener()`, uma vez), WebP, TIFF. RAW fica para
   depois (#12). Arquivo que não abre vira item com aviso, nunca derruba a importação.
-- **Orientação**: `ImageOps.exif_transpose` logo depois de abrir. Daí em diante, "imagem orientada" é a base de
-  todas as coordenadas.
+- **Orientação**: a tag EXIF é aplicada por `transpose` **depois** da redução e da conversão de cor (equivale ao
+  `ImageOps.exif_transpose`, mas barato). Daí em diante, "imagem orientada" é a base de todas as coordenadas.
 - **Cor**: se houver `icc_profile`, `ImageCms.profileToProfile(..., srgb, renderingIntent=RELATIVE_COLORIMETRIC,
-  flags=BLACKPOINTCOMPENSATION, outputMode="RGB")`; sem perfil, assume sRGB. CMYK com perfil converte pelo perfil;
+  flags=BLACKPOINTCOMPENSATION, outputMode="RGB")`; sem perfil, assume sRGB. Perfil inválido ou não suportado também
+  é tratado como sRGB, e perfil com "sRGB" no nome pula a conversão. CMYK com perfil converte pelo perfil;
   transparência é composta sobre **branco** (cor do papel). Tons de cinza viram RGB.
 - **Proxy**: cópia com lado maior ≤ 2048 px para a prévia e a detecção de rostos. Para JPEG use
   `Image.draft("RGB", ...)` (decodificação reduzida pelo DCT), que é várias vezes mais rápida. Cache em memória
-  (LRU por bytes, ~512 MB).
+  (LRU por bytes, ~512 MB). `proxy()` devolve um array **somente leitura e compartilhado**: copie antes de alterar.
 - **Miniaturas** (`miniaturas.py`): lado maior 320 px, JPEG q85 em
   `%LOCALAPPDATA%\Revelador\cache\miniaturas\<sha1(caminho|bytes|mtime)>.jpg`; limpeza LRU acima de 500 MB.
-  Geradas num `QThreadPool` na ordem em que aparecem na tela.
-- **Metadados** úteis: tamanho em px (orientado), data original (EXIF `DateTimeOriginal`) para ordenar, modelo da
-  câmera. Nada é escrito de volta no arquivo.
+  Geradas num `QThreadPool` na ordem em que aparecem na tela. Fora do Windows o cache fica em
+  `$XDG_CACHE_HOME/Revelador/cache` (ou `~/.cache`).
+- **Metadados** (`InfoFoto`): tamanho em px (orientado), data original (EXIF `DateTimeOriginal`) para ordenar,
+  modelo da câmera, nome do perfil, bytes e `mtime`. `InfoFoto.mtime` é `st_mtime_ns` (inteiro); `Foto.mtime`
+  segue em segundos e o `Estado` converte. Nada é escrito de volta no arquivo.
 - **Original para exportação**: o mesmo carregamento sem redução, em float32 0..1.
 
 ## 4. Tamanhos de revelação
@@ -131,6 +134,8 @@ coluna de px é a 300 dpi (`round(mm / 25,4 × dpi)`). IDs sem acento e **nunca 
 | `15x15` | 15x15 | 152,4 × 152,4 | 6×6 pol | 1 | 1800 × 1800 | quadrado |
 | `20x20` | 20x20 | 203,2 × 203,2 | 8×8 pol | 1 | 2400 × 2400 | quadrado |
 
+- **`obter(id)`** só atende os 14 tamanhos da tabela. O personalizado passa por `papel_mm(id, papel_mm)`,
+  `proporcao(id, orientacao, papel_mm)` e `px(id, orientacao, dpi, papel_mm)`; cada lado vale de 20 a 1000 mm.
 - **Personalizado**: largura × altura em cm digitados pela pessoa, gravados na impressão
   (`"tamanho": "personalizado"`, `"papel_mm": [w, h]`), com o valor por cópia opcional junto
   (`"preco_centavos"`, seção 13).
@@ -139,6 +144,7 @@ coluna de px é a 300 dpi (`round(mm / 25,4 × dpi)`). IDs sem acento e **nunca 
 - **dpi**: 300 por padrão (opção 240–400 por trabalho).
 - **Resolução efetiva** de uma impressão = px do recorte na foto original ÷ polegadas do papel. ≥ 200 dpi: boa;
   150–199: aceitável (aviso discreto); < 150: baixa (aviso visível na grade, no editor e antes de exportar).
+  `qualidade(dpi)` devolve as chaves `"boa"`, `"aceitavel"` e `"baixa"`.
 - **Orientação**: `"auto"` usa retrato se a imagem (já girada) for mais alta que larga, paisagem se não; papel
   quadrado ignora. A proporção usada no recorte é `lado_menor/lado_maior` (retrato) ou o inverso (paisagem).
 - **Margem de corte** (sangria): o laboratório apara ~1–3 mm por lado. O editor mostra a área segura
@@ -170,21 +176,43 @@ proxy reduzido a lado maior 1280 px. Devolve `Rosto` normalizado (caixa, olhos, 
 largura < 1,5% do lado menor da imagem. Roda uma vez por foto, num trabalhador, e o resultado vai para
 `Foto.rostos`.
 
-Política (`enquadramento.recorte_automatico(W, H, r, rostos) → Recorte`, pura):
+Política (`enquadramento.recorte_automatico(W, H, proporcao, rostos, margem=0.0) → Recorte`, pura):
 
 1. **Sem rostos** → centro (`cx = cy = 0,5`, `zoom = 1`, `origem = "centro"`).
 2. **Importância** de cada rosto = área × confiança. **Principais** = rostos com importância ≥ 15% da maior
-   (tira gente pequena ao fundo).
-3. **Região de interesse (ROI)** = união das caixas principais **expandidas**: +60% da altura do rosto para cima
-   (cabelo, topo da cabeça), +35% para baixo (queixo, pescoço) e +30% da largura para os lados.
-4. Recorte com `zoom = 1` (a impressão usa o máximo da foto) na proporção do papel.
-5. **Horizontal**: centraliza no centro da ROI; se a ROI for mais larga que o recorte, centraliza no centróide
-   dos rostos ponderado pela importância.
-6. **Vertical**: põe a linha dos olhos (média ponderada) a 1/3 do topo do recorte; depois garante o topo da ROI
-   dentro do recorte (cabeça nunca cortada) e, se couber, a base da ROI também.
-7. Se a ROI não couber nem com `zoom = 1`, descarta o rosto principal menos importante e repete; com um rosto só,
-   prioriza a cabeça inteira.
-8. Limita à imagem e evita rostos dentro da margem de corte quando houver folga. `origem = "auto"`.
+   (`PRINCIPAL`; tira gente pequena ao fundo).
+3. **Região de interesse (ROI)** = união das caixas principais **expandidas**. Há três expansões
+   (`EXPANSOES`, em fração da altura do rosto para cima e para baixo e da largura para os lados): 0,60 / 0,35 /
+   0,30 (a folgada), 0,45 / 0,20 / 0,15 e 0,35 / 0,10 / 0,05 (a mais justa, que ainda inclui o topo da cabeça).
+4. **Antes de descartar um rosto**, tenta as expansões nessa ordem, cada uma primeiro com a margem de corte e
+   depois sem ela. `margem` é a fração do lado menor do papel (2 mm num 10x15 = 2/102): quando há folga, nenhum
+   rosto fica dentro dela.
+5. Recorte com `zoom = 1` (o maior recorte, sem ângulo) na proporção do papel.
+6. **Horizontal**: centraliza no **centróide dos rostos ponderado pela importância**, mantendo a ROI inteira dentro
+   do recorte (o rosto principal fica mais perto do centro).
+7. **Vertical**: põe a linha dos olhos (média ponderada pela importância; sem pontos dos olhos, 40% da altura da
+   caixa) a 1/3 do topo do recorte; depois garante o topo da ROI dentro (cabeça nunca cortada) e, se couber, a
+   base também.
+8. Se a ROI não couber nem com a expansão mais justa, **descarta** um rosto principal e repete. Entre os
+   **empatados** (importância até 1,25× a menor, `EMPATE`) sai o mais distante do centro do grupo (o da ponta).
+   Com um rosto só e maior que o papel, centra nele e prioriza o topo da cabeça.
+9. Limita à imagem. `origem = "auto"` e `giro = 0` (quem chama põe o giro da impressão).
+
+- **`recorte_sugerido(impressao, largura, altura, rostos, margem_corte_mm=0.0) → Recorte`** é o **caminho único da
+  interface** (ao selecionar, ao trocar tamanho ou orientação de uma impressão não manual, quando chegam os rostos).
+  Recebe a imagem orientada **sem giro**, aplica o giro da impressão (`girar_rostos`), resolve a orientação e a
+  proporção, converte a margem de mm para fração do lado menor do papel e chama `recorte_automatico`, mantendo o
+  giro. Quem chama só substitui o recorte quando `origem != "manual"`.
+- **Funções auxiliares** de `enquadramento.py`: `tamanho_maximo(W, H, proporcao, angulo=0)` (maior `w × h` que
+  girado cabe na imagem), `caixa_envolvente(w, h, angulo)` e `zoom_efetivo(recorte, W, H, proporcao)` (o zoom de
+  fato aplicado; endireitar só aproxima quando precisa, senão o recorte mantém a escala do zoom pedido).
+- **Modelo** (`rostos.py`): lido uma vez para a memória e passado como buffer ao OpenCV (caminhos com acento no
+  Windows quebram a leitura por caminho); `criar_detector(largura, altura)` cria o `cv2.FaceDetectorYN` (um por
+  thread, pois ele não é seguro entre threads); o SHA-256 do arquivo é fixo e conferido por teste
+  (`sha256_modelo()`). O OpenCV 5 escreve um aviso inofensivo no stderr ao criar o detector. `detectar(rgb)` nunca
+  lança: falha vira lista vazia e registro no `logging`.
+- `tools/previa_recortes.py` gera, para uma pasta de fotos reais, JPEGs reduzidos com o recorte automático em pé e
+  deitado, para validar a política a olho.
 
 Casos de teste obrigatórios (rostos sintéticos em coordenadas): retrato com um rosto em foto 4:3 deitada para
 10x15 em pé; grupo em linha numa foto 16:9 para 10x15 deitado; rosto encostado na borda; selfie com rosto
@@ -211,8 +239,10 @@ grande; criança pequena + adulto grande; panorâmica 3:1; foto quadrada; sem ro
 
 ## 7. Ajustes
 
-`ajustes.PARAMS` (esquema; o painel lateral é gerado dele) e `ajustes.aplicar(rgb, valores)` (pura). Todos de
--100 a 100 com padrão 0 (nitidez: 0 a 100). **Padrão = identidade exata.** Ordem fixa:
+`ajustes.PARAMS` (esquema; o painel lateral é gerado dele) e `ajustes.aplicar(rgb, valores, escala_mm_px=None)`
+(pura). São **11 ajustes**, todos de -100 a 100 com padrão 0 (nitidez: 0 a 100). **Padrão = identidade exata.** A
+ordem do painel (`PARAMS`: exposição, contraste, realces, sombras, brancos, pretos, temperatura, matiz, saturação,
+vibração, nitidez) **não é** a ordem de aplicação; esta é fixa em `aplicar()`:
 
 | Ordem | Chave | Nome | Grupo | Efeito |
 |---|---|---|---|---|
@@ -234,8 +264,22 @@ grande; criança pequena + adulto grande; panorâmica 3:1; foto quadrada; sem ro
 - **Nitidez**: raio de 0,1 mm de papel (≈ 1,2 px a 300 dpi), convertido para a escala da prévia; quantidade até
   1,5× na ponta; aplicada por último, no tamanho final.
 - Sem cortes duros: toda curva é suave e o resultado é limitado a 0..1 só no fim.
-- Desempenho: uma prévia de ~1600 × 1067 em float32 deve ficar em ~100 ms; ajuste que não couber nisso ganha
-  versão reduzida da máscara (ex.: desfoque na metade da resolução e ampliado) — o mesmo código na exportação.
+- **Fórmulas finais** (`t = v/100`; valores negativos viram 0 antes de luz linear ou OKLab):
+  1. Temperatura e matiz em luz linear: `gR = 2^(0,4·t_temp)`, `gB = 2^(−0,4·t_temp)`, `gG = 2^(−0,3·t_matiz)`,
+     divididos por `0,2126·gR + 0,7152·gG + 0,0722·gB` (a luminância do branco se mantém).
+  2. Exposição em luz linear: `× 2^(v/50)` (±2 EV), na mesma multiplicação do passo 1.
+  3. Brancos e pretos (sRGB): `y += 0,2·t_brancos·x²` e `y += 0,15·t_pretos·(1−x)²`.
+  4. Guia `G = 0,75·desfoque(Y) + 0,25·Y` (sigma 2% do lado menor, numa cópia reduzida a sigma ≈ 4 px e ampliada);
+     `Mr = smoothstep(0,45; 1; G)`, `Ms = 1 − smoothstep(0; 0,55; G)`. Realces: `RGB × (1 + 0,4·t·Mr)`.
+     Sombras: `RGB^(1 − 0,6·t·Ms)` por canal.
+  5. Contraste: `y = x + t·x(1−x)(2x−1)`.
+  6. OKLab, `a` e `b` × `Fs·Fv`: `Fs = 1 + t_sat`; `p = (1 − min(C/0,3; 1))²`; `pele = ((1 + cos(h − 55°))/2)^8`;
+     `Fv = 1 + t·p·(1 − 0,75·pele)` se positivo, `1 + t·(0,3 + 0,7·(1−p))·(1 − 0,75·pele)` se negativo.
+  7. Nitidez em `L` (OKLab): `L' = L + 1,5·t·d·d²/(d²+0,01²)`, `d = L − gaussiana(L)`, sigma = 0,1 mm ×
+     `escala_mm_px` (sem ela, 1/1000 do lado menor).
+- **Desempenho medido**: ~440–580 ms numa prévia de 1600 × 1067 com tudo ligado, contra o alvo de ~100 ms.
+  Otimização pendente (fica para a interface, #7): tabela de consulta para sRGB↔linear e prévia reduzida durante o
+  arraste do controle. O mesmo código roda na exportação.
 - **Copiar/colar ajustes** entre fotos (Ctrl+C / Ctrl+V; colar em várias selecionadas) e **Redefinir** (por
   ajuste com duplo clique no controle, por grupo e tudo). **Antes/depois**: mesmo recorte sem ajustes.
 - Depois da 0.1.0 (#12): automático, clareza, redução de ruído, preto e branco, olhos vermelhos.
@@ -300,10 +344,13 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
 }
 ```
 
-- `caminho` relativo à pasta do `.revelador` (com `/`) quando a foto está no mesmo disco; `caminho_absoluto` como
-  reserva. Foto não encontrada: o app oferece "Procurar…" e reaproveita a pasta para as outras.
-- Gravação segura (temporário + `os.replace`). **Recuperação**: autossalvamento a cada 2 min em
-  `%LOCALAPPDATA%\Revelador\recuperacao\`; na abertura depois de uma falha, oferece recuperar.
+- `caminho` relativo à pasta do `.revelador` (com `/`) quando a foto está no mesmo disco; em outro disco vale o
+  caminho absoluto; `caminho_absoluto` fica como reserva. Foto não encontrada: o app oferece "Procurar…" e
+  reaproveita a pasta para as outras. Foto sem caminho é ignorada, com aviso.
+- O tamanho `"personalizado"` é sempre aceito, mesmo com a lista de tamanhos válidos passada a `abrir()`.
+- Gravação segura por `projeto.gravar_texto_seguro()` (`.tmp` na mesma pasta + `os.replace`). **Recuperação**:
+  autossalvamento a cada 2 min em `%LOCALAPPDATA%\Revelador\recuperacao\<nome>.revelador` (ou
+  `sem-nome.revelador`), com caminhos absolutos; na abertura depois de uma falha, oferece recuperar.
 - O `.msi` associa `.revelador` ao app (a #9 acrescenta o recurso `AssociacaoRevelador` no `.wxs`).
 
 ## 10. Interface
@@ -339,20 +386,38 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   `REVELADOR_SETTINGS_DIR`, num `.ini`. Guarda geometria da janela, últimas pastas, tamanho padrão, dpi, modo de
   cópias e a verificação de atualizações.
 - **Erros**: `crashlog.py` instala `sys.excepthook` e `threading.excepthook`, grava em
-  `%LOCALAPPDATA%\Revelador\logs\` e mostra uma mensagem curta com "Abrir registro".
+  `%LOCALAPPDATA%\Revelador\logs\erro-<data>.txt` (até 20 arquivos de 256 KB cada) e mostra uma mensagem curta
+  com "Abrir registro".
+- **`MainWindow`** (`ui/main_window.py`): tem `area_grade`, `area_editor` e `area_painel` (com `orientacao_*`, os
+  textos provisórios), `acao_importar`, `acao_exportar`, `espaco_tamanho` (onde entra o seletor de tamanho),
+  `arquivos_iniciais` (caminhos da linha de comando) e `estado`. Cada parte nova se liga num `_ligar_<parte>()`
+  chamado no fim do `__init__`. Tema **Fusion** com a paleta do sistema (segue o claro/escuro do Windows ao vivo);
+  o fundo do editor é cinza neutro `#6b6b6b`, para não enganar a percepção de cor da foto.
+- **Estado compartilhado** (`ui/estado.py`, `janela.estado`): os widgets **não se conhecem**; leem e mudam o
+  modelo por ele e reagem aos sinais. Só a thread principal o toca; workers devolvem por sinal.
+  - Sinais: `fotos_mudaram()` (lista mudou), `atual_mudou(foto | None)`, `impressao_mudou(indice)` (impressão do
+    editor), `foto_mudou(id)` (qualquer mudança numa foto), `pedido_mudou()` (muda orçamento ou exportação),
+    `modificado_mudou(bool)`.
+  - Atributos: `trabalho`, `atual`, `indice_impressao`, `info` (`InfoFoto` por id), `modificado`, `impressao_atual`.
+  - Métodos: `por_id`, `definir_trabalho`, `adicionar`, `remover`, `definir_atual`, `definir_impressao`,
+    `definir_info`, `definir_rostos`, `selecionar` (a primeira seleção cria uma impressão no tamanho padrão),
+    `refazer_recortes_auto` (usa `recorte_sugerido` nas impressões não manuais), `alterar(foto, pedido=False)` e
+    `marcar_modificado`. Mexeu no modelo → `estado.alterar(foto, pedido=...)`.
 
 ## 11. Atualização automática
 
 `updater.py` é o mesmo desenho do PeliculaConverter (`pelicula/updater.py`), só para o Windows por enquanto:
 
 - `REPO = "edvitor13/revelador"`; consulta `releases/latest` (pre-releases ficam de fora), compara
-  `parse_version(tag)` com `__version__`.
+  `parse_version(tag)` com `__version__`. `is_newer()` ignora tags com `-`. `can_auto_install()` é falso fora do
+  Windows.
 - `install_info()` lê `revelador-install.json` ao lado do executável (`{"kind": "msi"|"zip", "version"}`); sem
   marcador num executável empacotado → `zip`; rodando do código-fonte → `source` (só mostra o link).
 - `PATTERNS = {"msi": r"-windows-x64\.msi$", "zip": r"-windows-x64\.zip$"}` escolhe o pacote da release.
 - `download()` exige o `SHA256SUMS.txt` da release e confere o SHA-256 antes de qualquer coisa.
 - `install()` escreve um `.ps1` que espera o app fechar, roda `msiexec /i … /passive /norestart` (msi) ou
-  `robocopy /MIR` da pasta extraída (zip, recusando caminhos absolutos ou com `..`), e reabre o app por
+  `robocopy /MIR` da pasta extraída (zip: recusa entrada com caminho absoluto, unidade/UNC, barra inicial ou `..`,
+  validado **antes** de extrair), e reabre o app por
   `ProcessStartInfo` com `UseShellExecute = false`. O PowerShell sobe com `CREATE_NO_WINDOW` (nunca
   `DETACHED_PROCESS`, que faz o PowerShell sair sem rodar o script quando o pai não tem console). Registro em
   `atualizar.log` e `instalar.log` na pasta do download.
@@ -408,7 +473,9 @@ laboratório cobra). `precos.py` (puro) + `ui/precos_dialog.py`.
   ```
 
   Só entram fotos **selecionadas** e as impressões delas; cada impressão conta `copias` vezes. Personalizados com
-  o mesmo papel e o mesmo preço somam na mesma linha.
+  o mesmo papel e o mesmo preço somam na mesma linha (uma linha por papel + preço), chamada "Personalizado
+  {menor}x{maior} mm"; `chave_preco(impressao)` dá o id (`personalizado-<menor>x<maior>`). `ler("0")` é `0`:
+  preço zero é diferente de sem preço (`None`).
 - **Onde aparece**: barra de status ("Total estimado: R$ 34,40", ou "R$ 30,00 + sem preço" quando parcial),
   janela "Resumo do pedido" (tabela por tamanho: fotos, cópias, valor por cópia, subtotal e total, com atalho para
   editar os preços), diálogo de exportação e `pedido.txt` (seção 8). Atualiza a cada mudança de seleção, tamanho
