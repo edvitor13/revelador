@@ -1,7 +1,8 @@
 """Ponto de entrada da interface do Revelador.
 
-Por enquanto abre a janela provisória da 0.1.0 em construção; a issue #1 troca pela janela principal
-(``ui/main_window.py``). ``--diagnostico ARQUIVO.json`` confere as dependências nativas e sai sem abrir janela
+Instala o registro de erros, aplica o tema e abre a janela principal (``ui/main_window.py``); as fotos passadas
+na linha de comando ficam em ``janela.arquivos_iniciais`` para a importação. ``--diagnostico ARQUIVO.json``
+confere as dependências nativas e sai sem abrir janela
 (usado pelo CI no executável empacotado; veja ``diagnostico.py``).
 """
 
@@ -24,24 +25,30 @@ def pasta_assets() -> Path:
     return Path(__file__).resolve().parent.parent / "assets"
 
 
-def criar_janela():
-    """Janela provisória (até a #1): título, versão e onde acompanhar o andamento."""
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QLabel, QMainWindow
+def _ligar_aviso_de_erro(janela) -> None:
+    """Mostra um aviso curto, com "Abrir registro", quando o crashlog grava um erro (de qualquer thread)."""
+    from PySide6.QtCore import QObject, Qt, Signal
+    from PySide6.QtWidgets import QMessageBox
 
-    janela = QMainWindow()
-    janela.setWindowTitle(f"{APP_NAME} {__version__}")
-    texto = QLabel(
-        f"<h2>{APP_NAME} {__version__}</h2>"
-        "<p>Em construção: escolher fotos, enquadrar no tamanho do papel e separar para revelação.</p>"
-        "<p>Acompanhe em <a href='https://github.com/edvitor13/revelador/issues'>"
-        "github.com/edvitor13/revelador</a>.</p>")
-    texto.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    texto.setOpenExternalLinks(True)
-    texto.setWordWrap(True)
-    janela.setCentralWidget(texto)
-    janela.resize(720, 420)
-    return janela
+    from . import crashlog, system
+    from .i18n import _
+
+    class Ponte(QObject):
+        erro = Signal(str)
+
+    ponte = Ponte(janela)
+
+    def mostrar(caminho: str) -> None:
+        texto = _("Ocorreu um erro inesperado. O programa continua aberto e suas fotos não foram alteradas.")
+        caixa = QMessageBox(QMessageBox.Icon.Warning, _("Algo deu errado"), texto,
+                            QMessageBox.StandardButton.Ok, janela)
+        abrir = caixa.addButton(_("Abrir registro"), QMessageBox.ButtonRole.ActionRole)
+        caixa.exec()
+        if caixa.clickedButton() is abrir:
+            system.reveal(caminho) if caminho else system.open_path(crashlog.pasta_logs())
+
+    ponte.erro.connect(mostrar, Qt.ConnectionType.QueuedConnection)
+    crashlog.ao_gravar = lambda caminho, _texto: ponte.erro.emit(str(caminho or ""))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -70,6 +77,13 @@ def main(argv: list[str] | None = None) -> int:
     if icone.is_file():
         app.setWindowIcon(QIcon(str(icone)))
 
-    janela = criar_janela()
+    from . import crashlog
+    from .ui.main_window import MainWindow, aplicar_tema
+
+    crashlog.instalar()
+    aplicar_tema(app)
+    janela = MainWindow()
+    janela.arquivos_iniciais = [a for a in args if not a.startswith("--")]  # a importação vem na #2
+    _ligar_aviso_de_erro(janela)
     janela.show()
     return app.exec()
