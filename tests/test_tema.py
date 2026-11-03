@@ -54,7 +54,8 @@ app = QApplication(sys.argv[:1])
 from PySide6.QtGui import QPalette
 from revelador.ui import tema
 css = tema.folha_de_estilo("C:/x/seta.png", "C:/x/marca.png")
-for nome in ("TopBar", "Panel", "Primary", "Flat", "Seg", "SegBox", "Muted", "Faint", "PanelTitle", "Kicker", "Card"):
+for nome in ("TopBar", "Panel", "Primary", "Flat", "Seg", "SegBox", "Muted", "Faint", "PanelTitle", "Kicker", "Card",
+             "Canvas", "Rodape", "Pilula", "LinhaImp", "AppName"):
     assert "#" + nome in css, nome
 for ident in ("QListView", "QTableView", "QHeaderView", "QSlider", "QDialogButtonBox", "QComboBox", "QScrollBar"):
     assert ident in css, ident
@@ -203,3 +204,55 @@ def test_captura_tela_gera_png(tmp_path):
         arq = saida / nome
         assert arq.is_file() and arq.stat().st_size > 2000, nome
         assert arq.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_pilula_barra_adaptavel_e_slider_horizontal():
+    p = rodar_python("""
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton
+import sys
+app = QApplication(sys.argv[:1])
+from revelador.ui import tema
+tema.instalar(app)
+from revelador.ui.componentes import BarraAdaptavel, Pilula, Slider, botao_plano, com_menu
+from PySide6.QtWidgets import QMenu
+from PySide6.QtCore import Qt
+
+# Pilula: text() devolve o texto inteiro, a tela mostra uma versão encurtada no meio se faltar lugar
+pi = Pilula()
+pi.setText("12 fotos · 18 cópias · R$ 45,60 (sem preço: 15x21, 20x25, 30x40)")
+assert pi.text().startswith("12 fotos") and pi.minimumSizeHint().width() < pi.sizeHint().width()
+pi.resize(150, 32); app.processEvents()
+assert "…" in QPushButton.text(pi)
+pi.resize(pi.sizeHint().width() + 10, 32); app.processEvents()
+assert pi.text() == "12 fotos · 18 cópias · R$ 45,60 (sem preço: 15x21, 20x25, 30x40)"
+
+# BarraAdaptavel: com pouca largura, rótulos somem, botões ficam só com ícone e os opcionais somem
+barra = BarraAdaptavel("TopBar")
+lay = QHBoxLayout(barra)
+rotulo, opcional = QLabel("rótulo de apoio longo longo"), QLabel("opcional opcional opcional opcional")
+b1 = botao_plano("importar", "dica", "Importar fotos")
+b2 = botao_plano("salvar", "dica", "Projeto")
+for w in (rotulo, b1, b2, opcional):
+    lay.addWidget(w)
+barra.definir_adaptacao(compactos=[b1, b2], opcionais=[opcional], rotulos=[rotulo])
+barra.resize(2000, 40); barra.show(); app.processEvents()
+assert barra.nivel == 0 and not rotulo.isHidden() and not b1.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+barra.resize(300, 40); app.processEvents()
+assert barra.nivel == 3 and rotulo.isHidden() and opcional.isHidden()
+assert b1.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly and b1.toolTip() == "dica"
+barra.resize(2000, 40); app.processEvents()
+assert barra.nivel == 0 and not rotulo.isHidden() and not opcional.isHidden()
+
+# botão com menu liga a setinha do tema
+com_menu(b1, QMenu())
+assert b1.property("menu") is True
+
+# Slider horizontal: tudo numa linha
+sl = Slider("Endireitar", -45, 45, 0.1, 0.0, "°", horizontal=True)
+sl.resize(400, 30); sl.show(); app.processEvents()
+assert abs(sl.rotulo.geometry().center().y() - sl.trilho.geometry().center().y()) <= 3
+assert sl.campo.text() == "0,0°"
+print("ok")
+""")
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip().endswith("ok"), p.stdout

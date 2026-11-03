@@ -6,13 +6,14 @@ O valor é sempre uma **estimativa** (``docs/ARQUITETURA.md``, seção 13). O c�
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QPushButton,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import precos
 from ..i18n import _
 from ..precos import Orcamento
 from ..projeto import Trabalho
+from . import tema
 from .estado import Estado
 from .precos_dialog import PrecosDialog, tabela_precos
 
@@ -50,30 +51,44 @@ class ResumoDialog(QDialog):
         super().__init__(parent)
         self.estado = estado
         self.setWindowTitle(_("Resumo do pedido"))
-        self.setMinimumSize(520, 340)
+        self.setMinimumSize(560, 380)
         raiz = QVBoxLayout(self)
+        raiz.setContentsMargins(22, 20, 22, 18)
+        raiz.setSpacing(12)
         self.tabela = QTableWidget(0, 5)
         self.tabela.setHorizontalHeaderLabels(
             [_("Tamanho"), _("Fotos"), _("Cópias"), _("Valor por cópia"), _("Subtotal")])
         self.tabela.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tabela.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.tabela.verticalHeader().hide()
-        self.tabela.horizontalHeader().setStretchLastSection(True)
+        self.tabela.verticalHeader().setDefaultSectionSize(36)
+        self.tabela.setShowGrid(False)
+        self.tabela.setAlternatingRowColors(True)
+        self.tabela.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        cabecalho = self.tabela.horizontalHeader()
+        cabecalho.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        cabecalho.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for coluna in range(1, 5):
+            self.tabela.horizontalHeaderItem(coluna).setTextAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         raiz.addWidget(self.tabela, 1)
         self.rotulo_total = QLabel()
-        fonte = self.rotulo_total.font()
-        fonte.setBold(True)
-        self.rotulo_total.setFont(fonte)
+        self.rotulo_total.setObjectName("PanelTitle")
+        self.rotulo_total.setStyleSheet(f"font-size: 14pt; color: {tema.TEXTO};")
         raiz.addWidget(self.rotulo_total)
         self.rotulo_aviso = QLabel(_("Estimativa — confirme com o seu laboratório."))
+        self.rotulo_aviso.setObjectName("Faint")
         self.rotulo_aviso.setWordWrap(True)
         raiz.addWidget(self.rotulo_aviso)
         linha = QHBoxLayout()
         self.botao_precos = QPushButton(_("Editar preços…"))
+        self.botao_precos.setObjectName("Flat")
         self.botao_precos.clicked.connect(self.editar_precos)
         linha.addWidget(self.botao_precos)
         linha.addStretch(1)
         fechar = QPushButton(_("Fechar"))
+        fechar.setObjectName("Primary")
+        fechar.setMinimumWidth(96)
         fechar.clicked.connect(self.accept)
         linha.addWidget(fechar)
         raiz.addLayout(linha)

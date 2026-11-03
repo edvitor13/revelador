@@ -11,19 +11,24 @@ from __future__ import annotations
 from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QListView, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
                                QVBoxLayout, QWidget)
 
 from .. import tamanhos
 from ..i18n import _
 from ..projeto import Foto
+from . import icones, tema
 from .estado import Estado
 
-CELULA = QSize(168, 176)
-LADO_MINIATURA_VISTA = 152
-TAMANHO_MARCA = 22
+CELULA = QSize(170, 214)
+MARGEM_CARTAO = 4       # entre a célula e o cartão
+MARGEM_MINIATURA = 6    # entre o cartão e a miniatura
+RAIO_CARTAO = 12
+RAIO_MINIATURA = 8
+TAMANHO_MARCA = 24
+ALTURA_CHIP = 18
 LIMITE_PIXMAPS = 400
 PAPEL_FOTO = Qt.ItemDataRole.UserRole
 
@@ -37,9 +42,17 @@ def rotulo_impressao(tamanho: str, copias: int) -> str:
     return f"{nome} ×{copias}"
 
 
+def rect_miniatura(celula: QRect) -> QRect:
+    """Quadrado da miniatura dentro da célula."""
+    cartao = celula.adjusted(MARGEM_CARTAO, MARGEM_CARTAO, -MARGEM_CARTAO, -MARGEM_CARTAO)
+    lado = cartao.width() - 2 * MARGEM_MINIATURA
+    return QRect(cartao.left() + MARGEM_MINIATURA, cartao.top() + MARGEM_MINIATURA, lado, lado)
+
+
 def rect_marca(celula: QRect) -> QRect:
-    """Retângulo da marca de seleção (canto superior esquerdo da célula)."""
-    return QRect(celula.left() + 8, celula.top() + 8, TAMANHO_MARCA, TAMANHO_MARCA)
+    """Retângulo da marca de seleção (canto superior esquerdo da miniatura)."""
+    miniatura = rect_miniatura(celula)
+    return QRect(miniatura.left() + 8, miniatura.top() + 8, TAMANHO_MARCA, TAMANHO_MARCA)
 
 
 class ModeloGrade(QAbstractListModel):
@@ -119,6 +132,8 @@ class ModeloGrade(QAbstractListModel):
 
 
 class DelegadoGrade(QStyledItemDelegate):
+    """Desenha cada célula: miniatura de cantos suaves, marca de seleção, nome e chips dos tamanhos."""
+
     def __init__(self, modelo: ModeloGrade, parent=None) -> None:
         super().__init__(parent)
         self.modelo = modelo
@@ -130,57 +145,115 @@ class DelegadoGrade(QStyledItemDelegate):
         foto: Foto | None = index.data(PAPEL_FOTO)
         if foto is None:
             return
-        paleta = option.palette
-        r = option.rect.adjusted(3, 3, -3, -3)
+        estados = option.state
+        atual = bool(estados & QStyle.StateFlag.State_Selected)
+        sobre = bool(estados & QStyle.StateFlag.State_MouseOver)
+        cartao = option.rect.adjusted(MARGEM_CARTAO, MARGEM_CARTAO, -MARGEM_CARTAO, -MARGEM_CARTAO)
+        miniatura = rect_miniatura(option.rect)
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        estados = option.state
-        if estados & QStyle.StateFlag.State_Selected:
-            p.fillRect(r, paleta.highlight())
-        elif estados & QStyle.StateFlag.State_MouseOver:
-            cor = QColor(paleta.highlight().color())
-            cor.setAlpha(60)
-            p.fillRect(r, cor)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.setPen(Qt.PenStyle.NoPen)
+        if atual:
+            fundo = QColor(tema.DESTAQUE)
+            fundo.setAlpha(34)
+            p.setBrush(fundo)
+            p.drawRoundedRect(cartao, RAIO_CARTAO, RAIO_CARTAO)
+        elif sobre:
+            p.setBrush(QColor(tema.PAINEL2))
+            p.drawRoundedRect(cartao, RAIO_CARTAO, RAIO_CARTAO)
 
-        area = QRect(r.left() + 4, r.top() + 4, r.width() - 8, LADO_MINIATURA_VISTA - 24)
+        # miniatura
+        p.setBrush(QColor(tema.PAINEL2))
+        p.drawRoundedRect(miniatura, RAIO_MINIATURA, RAIO_MINIATURA)
         erro = foto.id in self.modelo.estado.erros
         pm = self.modelo.pixmap(foto)
         if pm is not None and not erro:
+            area = miniatura
             alvo = pm.size().scaled(area.size(), Qt.AspectRatioMode.KeepAspectRatio)
-            alvo_r = QRect(QPoint(area.center().x() - alvo.width() // 2, area.center().y() - alvo.height() // 2),
+            alvo_r = QRect(QPoint(area.center().x() - alvo.width() // 2 + 1, area.center().y() - alvo.height() // 2 + 1),
                            alvo)
+            recorte = QPainterPath()
+            recorte.addRoundedRect(QRectF(alvo_r), RAIO_MINIATURA - 2, RAIO_MINIATURA - 2)
+            p.setClipPath(recorte)
             p.drawPixmap(alvo_r, pm)
+            p.setClipping(False)
+        elif erro:
+            icone = icones.icone("aviso", tema.PERIGO, 28).pixmap(28, 28)
+            p.drawPixmap(miniatura.center().x() - 14, miniatura.center().y() - 22, icone)
+            p.setPen(QColor(tema.PERIGO))
+            p.setFont(tema.fonte(8.5))
+            p.drawText(QRect(miniatura.left(), miniatura.center().y() + 12, miniatura.width(), 18),
+                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, _("Não abriu"))
         else:
-            p.fillRect(area, QColor(128, 128, 128, 50))
-            p.setPen(paleta.windowText().color())
-            p.drawText(area, Qt.AlignmentFlag.AlignCenter, "⚠" if erro else "…")
-        if erro:
-            p.setPen(QColor("#d9822b"))
-            p.drawText(area.adjusted(0, 0, -4, -2), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom,
-                       "⚠ " + _("Não abriu"))
+            icone = icones.icone("foto", tema.FRACO, 28).pixmap(28, 28)
+            p.setOpacity(0.5)
+            p.drawPixmap(miniatura.center().x() - 14, miniatura.center().y() - 14, icone)
+            p.setOpacity(1.0)
+        if atual:
+            p.setPen(QPen(QColor(tema.DESTAQUE), 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(QRectF(miniatura).adjusted(1, 1, -1, -1), RAIO_MINIATURA, RAIO_MINIATURA)
 
-        # marca de seleção
-        marca = rect_marca(option.rect)
-        p.setPen(QColor("#ffffff"))
-        p.setBrush(QColor("#2d7ff9") if foto.selecionada else QColor(0, 0, 0, 120))
-        p.drawEllipse(marca)
-        if foto.selecionada:
-            p.drawText(marca, Qt.AlignmentFlag.AlignCenter, "✓")
+        self._marca(p, option.rect, foto, atual or sobre)
 
-        # nome e chips das impressões
-        texto_cor = paleta.highlightedText().color() if estados & QStyle.StateFlag.State_Selected \
-            else paleta.text().color()
-        p.setPen(texto_cor)
-        nome_r = QRect(r.left() + 4, r.top() + LADO_MINIATURA_VISTA - 18, r.width() - 8, 16)
+        # nome do arquivo (apagado, cortado com "…")
+        p.setFont(tema.fonte(8.5))
+        p.setPen(QColor(tema.TEXTO if atual else tema.APAGADO))
+        nome_r = QRect(miniatura.left() + 2, miniatura.bottom() + 8, miniatura.width() - 4, 16)
         p.drawText(nome_r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   p.fontMetrics().elidedText(foto.caminho.name, Qt.TextElideMode.ElideMiddle, nome_r.width()))
-        chips = "  ".join(rotulo_impressao(i.tamanho, i.copias) for i in foto.impressoes)
-        if chips:
-            chip_r = QRect(r.left() + 4, r.top() + LADO_MINIATURA_VISTA, r.width() - 8, 16)
-            p.setPen(texto_cor)
-            p.drawText(chip_r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                       p.fontMetrics().elidedText(chips, Qt.TextElideMode.ElideRight, chip_r.width()))
+                   p.fontMetrics().elidedText(foto.caminho.name, Qt.TextElideMode.ElideRight, nome_r.width()))
+        self._chips(p, QRect(miniatura.left() + 2, nome_r.bottom() + 5, miniatura.width() - 4, ALTURA_CHIP), foto)
         p.restore()
+
+    def _marca(self, p: QPainter, celula: QRect, foto: Foto, visivel: bool) -> None:
+        """Marca de seleção para revelação: círculo vazio (só com o mouse em cima) ou laranja com visto."""
+        marca = rect_marca(celula)
+        if foto.selecionada:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(tema.DESTAQUE))
+            p.drawEllipse(marca)
+            p.save()
+            p.translate(marca.left() + marca.width() * 0.17, marca.top() + marca.height() * 0.17)
+            p.scale(marca.width() * 0.66 / 24.0, marca.height() * 0.66 / 24.0)
+            icones.desenhar("check", p, QColor(tema.TEXTO_SOBRE_DESTAQUE))
+            p.restore()
+        elif visivel:
+            p.setBrush(QColor(0, 0, 0, 120))
+            p.setPen(QPen(QColor(255, 255, 255, 215), 1.6))
+            p.drawEllipse(QRectF(marca).adjusted(1, 1, -1, -1))
+
+    def _chips(self, p: QPainter, area: QRect, foto: Foto) -> None:
+        """Um chip em pílula por impressão ("10x15 ×2"); o que não couber vira "+N"."""
+        if not foto.impressoes:
+            return
+        fonte = tema.fonte(8, QFont.Weight.DemiBold)
+        medidas = QFontMetrics(fonte)
+        p.setFont(fonte)
+        x = area.left()
+        textos = [rotulo_impressao(i.tamanho, i.copias) for i in foto.impressoes]
+        for n, texto in enumerate(textos):
+            largura = medidas.horizontalAdvance(texto) + 16
+            resto = len(textos) - n - 1
+            reserva = medidas.horizontalAdvance(f"+{resto}") + 16 + 4 if resto else 0
+            if x + largura + reserva > area.right() + 1 and n > 0:
+                self._pilula(p, QRect(x, area.top(), medidas.horizontalAdvance(f"+{len(textos) - n}") + 16,
+                                      ALTURA_CHIP), f"+{len(textos) - n}", apagado=True)
+                return
+            self._pilula(p, QRect(x, area.top(), min(largura, area.right() - x + 1), ALTURA_CHIP),
+                         medidas.elidedText(texto, Qt.TextElideMode.ElideRight, area.right() - x - 14))
+            x += largura + 4
+
+    @staticmethod
+    def _pilula(p: QPainter, r: QRect, texto: str, apagado: bool = False) -> None:
+        fundo = QColor(tema.PAINEL3) if apagado else QColor(tema.DESTAQUE)
+        if not apagado:
+            fundo.setAlpha(46)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(fundo)
+        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        p.setPen(QColor(tema.APAGADO if apagado else tema.DESTAQUE_HI))
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, texto)
 
 
 class _Lista(QListView):
@@ -221,7 +294,7 @@ class Grade(QWidget):
         self.lista.setMovement(QListView.Movement.Static)
         self.lista.setResizeMode(QListView.ResizeMode.Adjust)
         self.lista.setUniformItemSizes(True)
-        self.lista.setSpacing(2)
+        self.lista.setSpacing(0)
         self.lista.setMouseTracking(True)
         self.lista.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.lista.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)

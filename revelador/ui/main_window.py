@@ -1,22 +1,26 @@
-"""Janela principal: barra de ferramentas, três áreas (grade, editor, painel lateral) e barra de status.
+"""Janela principal: barra superior, três áreas (grade, editor, painel lateral) e barra de status.
 
-As áreas começam vazias, só com um texto de orientação; as próximas issues encaixam os widgets de verdade nos
-layouts ``area_grade.layout()``, ``area_editor.layout()`` e ``area_painel.layout()`` (e escondem o texto de
-orientação correspondente, ``orientacao_grade`` etc.). Geometria da janela e das divisórias ficam em ``prefs``.
+A barra superior (``BarraAdaptavel``) substitui menus e barra de ferramentas: logo, Importar, Projeto, "Mostrar"
+(todas | selecionadas), tamanho padrão, o custo do pedido, Exportar e a engrenagem. As ações ficam todas em
+``self.acao_*`` (com atalhos valendo na janela inteira) e a barra só as posiciona; quem implementa uma ação só a conecta.
+As áreas começam vazias, só com um texto de orientação; os widgets de verdade entram nos layouts
+``area_grade.layout()``, ``area_editor.layout()`` e ``area_painel.layout()``. O painel lateral é uma coluna rolável
+(``coluna_painel``): cada seção é um ``Card`` inserido antes do espaçador final. Geometria e divisórias ficam em ``prefs``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QPalette
-from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QLabel, QMainWindow, QMenu, QMessageBox,
-                               QPushButton, QScrollArea, QSplitter, QToolBar, QVBoxLayout, QWidget)
+from PySide6.QtCore import QByteArray, QSize, Qt, QTimer
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
+                               QPushButton, QScrollArea, QSplitter, QToolButton, QVBoxLayout, QWidget)
 
 from .. import APP_NAME, __version__, imagem, precos
 from ..i18n import _
-from . import prefs
+from . import icones, prefs, tema
+from .componentes import BarraAdaptavel, Pilula, Segmented, botao_plano, com_menu
 from .estado import Estado
 from .grade import Grade
 from .painel_impressoes import PainelImpressoes, SeletorTamanhoPadrao, tamanho_padrao_salvo
@@ -24,43 +28,24 @@ from .precos_dialog import PrecosDialog, tabela_precos
 from .resumo import ResumoDialog, texto_barra
 from .tarefas import Importacao
 
-CINZA_EDITOR = "#6b6b6b"  # cinza neutro: um fundo colorido enganaria a percepção de cor da foto
 TAMANHO_INICIAL = (1280, 800)
-PROPORCAO_INICIAL = [260, 700, 300]
+PROPORCAO_INICIAL = [380, 580, 320]   # para a janela inicial de 1280 px
+LARGURA_MINIMA = (200, 400, 300)   # grade, editor, painel
+MARGEM_PAINEL = 14
 
 
-def aplicar_tema(app: QApplication) -> None:
-    """Estilo Fusion com a paleta do sistema, que segue o claro/escuro do Windows (inclusive ao vivo)."""
-    app.setStyle("Fusion")
-
-    def atualizar(*_args) -> None:
-        app.setPalette(app.style().standardPalette())
-
-    atualizar()
-    try:
-        app.styleHints().colorSchemeChanged.connect(atualizar)
-    except AttributeError:  # Qt antigo, sem o sinal
-        pass
-
-
-def _area(nome: str, texto: str, fundo: str | None = None) -> tuple[QWidget, QLabel]:
-    """Área vazia: um widget com layout vertical e o texto de orientação centralizado."""
+def _area(nome: str, texto: str, estilo: str | None = None) -> tuple[QWidget, QLabel]:
+    """Área vazia: um widget com layout vertical e o texto de orientação centralizado. `estilo`: nome de objeto do tema."""
     widget = QWidget()
-    widget.setObjectName(nome)
+    widget.setObjectName(estilo or nome)
+    widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     layout = QVBoxLayout(widget)
-    layout.setContentsMargins(6, 6, 6, 6)
+    layout.setContentsMargins(0, 0, 0, 0)
     orientacao = QLabel(texto)
+    orientacao.setObjectName("Muted")
     orientacao.setAlignment(Qt.AlignmentFlag.AlignCenter)
     orientacao.setWordWrap(True)
-    orientacao.setEnabled(False)
     layout.addWidget(orientacao)
-    if fundo:
-        paleta = widget.palette()
-        paleta.setColor(QPalette.ColorRole.Window, QColor(fundo))
-        paleta.setColor(QPalette.ColorRole.WindowText, QColor("#e6e6e6"))
-        paleta.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor("#c8c8c8"))
-        widget.setPalette(paleta)
-        widget.setAutoFillBackground(True)
     return widget, orientacao
 
 
@@ -72,11 +57,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.arquivos_iniciais: list[str] = []
         self.estado = Estado(self)   # trabalho aberto e foto atual; os widgets conversam por ele
+        padrao = tamanho_padrao_salvo()
+        if padrao:
+            self.estado.trabalho.tamanho_padrao = padrao
 
         self._criar_acoes()
-        self._criar_barra_de_ferramentas()
-        self._criar_menus()
+        self._criar_barra_superior()
         self._criar_areas()
+        self.statusBar().setSizeGripEnabled(False)
         self.statusBar().showMessage(_("Pronto."))
         self.restaurar_estado()
         self._ligar_grade()
@@ -87,6 +75,8 @@ class MainWindow(QMainWindow):
     def _criar_acoes(self) -> None:
         self.acao_importar = QAction(_("Importar…"), self)
         self.acao_importar.setShortcut("Ctrl+I")
+        self.acao_importar_pasta = QAction(_("Importar pasta…"), self)
+        self.acao_importar_pasta.setShortcut("Ctrl+Shift+I")
         self.acao_exportar = QAction(_("Exportar para revelação…"), self)
         self.acao_exportar.setShortcut("Ctrl+E")
         self.acao_exportar.setEnabled(False)  # liga quando houver fotos para exportar
@@ -96,7 +86,7 @@ class MainWindow(QMainWindow):
         self.acao_sobre = QAction(_("Sobre o {app}").format(app=APP_NAME), self)
         self.acao_sobre.triggered.connect(self.mostrar_sobre)
         # Contrato: ações criadas aqui, desligadas; cada issue só as conecta e liga no seu _ligar_<parte>() e a barra
-        # superior (visual) só as posiciona. Ninguém mais cria menu próprio para elas.
+        # superior só as posiciona. Ninguém mais cria menu próprio para elas.
         self.acao_novo = QAction(_("Novo trabalho"), self)                    # #9
         self.acao_novo.setShortcut("Ctrl+N")
         self.acao_abrir = QAction(_("Abrir trabalho…"), self)                 # #9
@@ -111,84 +101,174 @@ class MainWindow(QMainWindow):
                      self.acao_verificar_atualizacoes):
             acao.setEnabled(False)
         self.menu_recentes.setEnabled(False)
+        self.acao_precos = QAction(_("Preços do laboratório…"), self)
+        self.acao_precos.triggered.connect(self.abrir_precos)
+        self.acao_resumo = QAction(_("Resumo do pedido…"), self)
+        self.acao_resumo.triggered.connect(self.abrir_resumo)
+        self.acao_importar.setIcon(icones.icone("foto", tema.TEXTO, 16))
+        self.acao_importar_pasta.setIcon(icones.icone("pasta", tema.TEXTO, 16))
+        # Sem barra de menus, os atalhos precisam estar na própria janela.
+        self.acoes_da_janela = [
+            self.acao_importar, self.acao_importar_pasta, self.acao_exportar, self.acao_novo, self.acao_abrir,
+            self.acao_salvar, self.acao_salvar_como, self.acao_verificar_atualizacoes, self.acao_sair,
+        ]
+        for acao in self.acoes_da_janela:
+            self.addAction(acao)
 
-    def _criar_barra_de_ferramentas(self) -> None:
-        barra = QToolBar(_("Ferramentas"), self)
-        barra.setObjectName("barra_ferramentas")
-        barra.setMovable(False)
-        barra.addAction(self.acao_importar)
-        barra.addAction(self.acao_exportar)
-        barra.addSeparator()
-        # Lugar do seletor de tamanho padrão (outra issue coloca o widget aqui).
-        self.espaco_tamanho = QWidget()
-        self.espaco_tamanho.setLayout(QVBoxLayout())
-        self.espaco_tamanho.layout().setContentsMargins(0, 0, 0, 0)
-        barra.addWidget(self.espaco_tamanho)
-        self.barra = barra
-        self.addToolBar(barra)
+    def _menu(self, *itens) -> QMenu:
+        """Menu da barra superior. Itens: QAction, QMenu (submenu) ou None (separador)."""
+        menu = QMenu(self)
+        for item in itens:
+            if item is None:
+                menu.addSeparator()
+            elif isinstance(item, QMenu):
+                menu.addMenu(item)
+            else:
+                menu.addAction(item)
+        return menu
 
-    def _criar_menus(self) -> None:
-        arquivo = self.menuBar().addMenu(_("&Arquivo"))
-        for acao in (self.acao_novo, self.acao_abrir):
-            arquivo.addAction(acao)
-        arquivo.addMenu(self.menu_recentes)
-        for acao in (self.acao_salvar, self.acao_salvar_como):
-            arquivo.addAction(acao)
-        arquivo.addSeparator()
-        arquivo.addAction(self.acao_importar)
-        arquivo.addAction(self.acao_exportar)
-        arquivo.addSeparator()
-        arquivo.addAction(self.acao_sair)
-        ajuda = self.menuBar().addMenu(_("A&juda"))
-        ajuda.addAction(self.acao_verificar_atualizacoes)
-        ajuda.addAction(self.acao_sobre)
-        self.menu_arquivo, self.menu_ajuda = arquivo, ajuda
+    def _criar_barra_superior(self) -> None:
+        """Barra superior: logo e nome, Importar, Projeto, Mostrar, tamanho padrão, custo, Exportar e engrenagem."""
+        barra = BarraAdaptavel("TopBar")
+        lay = QHBoxLayout(barra)
+        lay.setContentsMargins(16, 9, 14, 9)
+        lay.setSpacing(8)
+        logo = QLabel()
+        logo.setPixmap(icones.icone_app().pixmap(QSize(30, 30)))
+        nome = QLabel(APP_NAME)
+        nome.setObjectName("AppName")
+        lay.addWidget(logo)
+        lay.addWidget(nome)
+        lay.addSpacing(16)
+
+        self.botao_importar = com_menu(
+            botao_plano("importar", _("Importar fotos ou uma pasta (Ctrl+I)"), _("Importar")),
+            self._menu(self.acao_importar, self.acao_importar_pasta))
+        self.botao_projeto = com_menu(
+            botao_plano("salvar", _("Novo, abrir e salvar o trabalho"), _("Projeto")),
+            self._menu(self.acao_novo, self.acao_abrir, self.menu_recentes, None, self.acao_salvar,
+                       self.acao_salvar_como))
+        lay.addWidget(self.botao_importar)
+        lay.addWidget(self.botao_projeto)
+        lay.addSpacing(10)
+
+        self.filtro_mostrar = Segmented([("todas", _("Todas"), _("Mostrar todas as fotos")),
+                                         ("selecionadas", _("Selecionadas"),
+                                          _("Mostrar só as fotos marcadas para revelar"))])
+        self.filtro_mostrar.definir_atual("todas")
+        self.rotulo_mostrar = QLabel(_("Mostrar"))
+        self.rotulo_mostrar.setObjectName("Muted")
+        lay.addWidget(self.rotulo_mostrar)
+        lay.addWidget(self.filtro_mostrar)
+        lay.addSpacing(10)
+
+        self.seletor_tamanho = SeletorTamanhoPadrao(self.estado)
+        lay.addWidget(self.seletor_tamanho)
+        lay.addStretch(1)
+
+        self.botao_custo = Pilula()
+        self.botao_custo.setIcon(icones.icone("dinheiro", tema.APAGADO, 16))
+        self.botao_custo.setIconSize(QSize(16, 16))
+        self.botao_custo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_custo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.botao_custo.setToolTip(_("Estimativa — clique para ver o resumo do pedido"))
+        self.botao_custo.clicked.connect(self.abrir_resumo)
+        lay.addWidget(self.botao_custo)
+
+        self.botao_exportar = QToolButton()
+        self.botao_exportar.setObjectName("Primary")
+        self.botao_exportar.setIcon(icones.icone("exportar", tema.TEXTO_SOBRE_DESTAQUE, 18))
+        self.botao_exportar.setIconSize(QSize(18, 18))
+        self.botao_exportar.setText(_("Exportar para revelação"))
+        self.botao_exportar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.botao_exportar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_exportar.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.botao_exportar.clicked.connect(self.acao_exportar.trigger)
+        self.acao_exportar.changed.connect(self._sincronizar_exportar)
+        self._sincronizar_exportar()
+        lay.addWidget(self.botao_exportar)
+
+        self.botao_menu = com_menu(
+            botao_plano("configuracoes", _("Preços, resumo, atualizações e sobre")),
+            self._menu(self.acao_precos, self.acao_resumo, None, self.acao_verificar_atualizacoes, self.acao_sobre))
+        self.botao_menu.setProperty("menu", False)   # só o ícone, sem a setinha
+        lay.addWidget(self.botao_menu)
+
+        barra.definir_adaptacao(
+            rotulos=[self.rotulo_mostrar, self.seletor_tamanho.rotulo],
+            compactos=[self.botao_importar, self.botao_projeto, self.botao_exportar],
+            opcionais=[nome])
+        self.barra_superior = barra
+
+    def _sincronizar_exportar(self) -> None:
+        acao = self.acao_exportar
+        self.botao_exportar.setEnabled(acao.isEnabled())
+        self.botao_exportar.setToolTip(f"{acao.text().rstrip('…')} ({acao.shortcut().toString()})")
 
     def _criar_areas(self) -> None:
         self.area_grade, self.orientacao_grade = _area("area_grade", _("Arraste fotos ou pastas para cá"))
         self.area_editor, self.orientacao_editor = _area(
-            "area_editor", _("Escolha uma foto na grade para enquadrar"), CINZA_EDITOR)
+            "area_editor", _("Escolha uma foto na grade para enquadrar"), "Canvas")
         self.area_painel, self.orientacao_painel = _area(
-            "area_painel", _("Os tamanhos e ajustes da foto escolhida aparecem aqui"))
+            "area_painel", _("Os tamanhos e ajustes da foto escolhida aparecem aqui"), "Panel")
         self.divisor = QSplitter(Qt.Orientation.Horizontal)
-        for area in (self.area_grade, self.area_editor, self.area_painel):
+        for area, minimo in zip((self.area_grade, self.area_editor, self.area_painel), LARGURA_MINIMA):
+            area.setMinimumWidth(minimo)
             self.divisor.addWidget(area)
         self.divisor.setChildrenCollapsible(False)
-        self.divisor.setStretchFactor(0, 0)
-        self.divisor.setStretchFactor(1, 1)
+        self.divisor.setHandleWidth(4)
+        self.divisor.setStretchFactor(0, 1)    # a grade e o editor dividem o que sobra ou falta; o painel é fixo
+        self.divisor.setStretchFactor(1, 3)
         self.divisor.setStretchFactor(2, 0)
         self.divisor.setSizes(PROPORCAO_INICIAL)
-        self.setCentralWidget(self.divisor)
+        central = QWidget()
+        coluna = QVBoxLayout(central)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.setSpacing(0)
+        coluna.addWidget(self.barra_superior)
+        coluna.addWidget(self.divisor, 1)
+        self.setCentralWidget(central)
         self.setAcceptDrops(True)
 
     # ------------------------------------------------------------ importação e grade (#2, #4)
     def _ligar_grade(self) -> None:
         """Grade de miniaturas, importação (botão, arrastar e soltar, linha de comando) e filtro "Mostrar"."""
         self.grade = Grade(self.estado)
-        self.area_grade.layout().addWidget(self.grade)
         self.importacao = Importacao(self.estado, self)
         self.importacao.mensagem.connect(self.statusBar().showMessage)
+        # Estado vazio: ícone, orientação e um botão; some quando entra a primeira foto.
+        self.vazio_grade = QWidget()
+        vazio = QVBoxLayout(self.vazio_grade)
+        vazio.setContentsMargins(24, 24, 24, 24)
+        vazio.setSpacing(12)
+        vazio.addStretch(1)
+        icone = QLabel()
+        icone.setPixmap(icones.icone("foto", tema.FRACO, 44).pixmap(QSize(44, 44)))
+        icone.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vazio.addWidget(icone)
+        self.area_grade.layout().removeWidget(self.orientacao_grade)
+        vazio.addWidget(self.orientacao_grade)
+        botao = QPushButton("  " + _("Importar fotos"))
+        botao.setObjectName("Primary")
+        botao.setIcon(icones.icone("importar", tema.TEXTO_SOBRE_DESTAQUE, 16))
+        botao.setCursor(Qt.CursorShape.PointingHandCursor)
+        botao.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        botao.clicked.connect(self.acao_importar.trigger)
+        vazio.addWidget(botao, 0, Qt.AlignmentFlag.AlignHCenter)
+        vazio.addStretch(1)
+        self.area_grade.layout().addWidget(self.vazio_grade)
+        self.area_grade.layout().addWidget(self.grade)
         self.estado.fotos_mudaram.connect(self._atualizar_orientacao_grade)
+        self._atualizar_orientacao_grade()
 
-        self.acao_importar_pasta = QAction(_("Importar pasta…"), self)
-        self.acao_importar_pasta.setShortcut("Ctrl+Shift+I")
         self.acao_importar.triggered.connect(self.escolher_arquivos)
         self.acao_importar_pasta.triggered.connect(self.escolher_pasta)
-        self.barra.insertAction(self.acao_exportar, self.acao_importar_pasta)
-        self.menu_arquivo.insertAction(self.acao_exportar, self.acao_importar_pasta)
-
-        self.filtro_mostrar = QComboBox()
-        self.filtro_mostrar.setObjectName("filtro_mostrar")
-        self.filtro_mostrar.addItem(_("Todas"), False)
-        self.filtro_mostrar.addItem(_("Selecionadas"), True)
-        self.filtro_mostrar.currentIndexChanged.connect(
-            lambda _i: self.grade.definir_filtro(bool(self.filtro_mostrar.currentData())))
-        self.barra.addSeparator()
-        self.barra.addWidget(QLabel(_("Mostrar:") + " "))
-        self.barra.addWidget(self.filtro_mostrar)
+        self.filtro_mostrar.mudou.connect(lambda chave: self.grade.definir_filtro(chave == "selecionadas"))
 
     def _atualizar_orientacao_grade(self) -> None:
-        self.orientacao_grade.setVisible(not self.estado.trabalho.fotos)
+        tem_fotos = bool(self.estado.trabalho.fotos)
+        self.vazio_grade.setVisible(not tem_fotos)
+        self.grade.setVisible(tem_fotos)
 
     def importar(self, caminhos) -> list:
         """Importa arquivos e pastas (recursivo, só formatos aceitos); devolve as fotos novas."""
@@ -233,21 +313,21 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ seleção, tamanhos e custo (#5, #13)
     def _ligar_selecao(self) -> None:
-        """Painel de impressões, tamanho padrão, menu/ação de preços e o custo na barra de status.
+        """Painel de impressões, preços e o custo do pedido na barra superior.
 
         O painel lateral é uma coluna rolável (``coluna_painel``): a seção de impressões fica no topo e há um
-        espaçador no fim; quem acrescentar seções insere antes dele (``insertWidget(count() - 1, ...)``).
+        espaçador no fim; quem acrescentar seções (``Card``) insere antes dele (``insertWidget(count() - 1, ...)``).
         """
-        padrao = tamanho_padrao_salvo()
-        if padrao:
-            self.estado.trabalho.tamanho_padrao = padrao
         self.orientacao_painel.hide()
         rolagem = QScrollArea()
         rolagem.setWidgetResizable(True)
         rolagem.setFrameShape(QScrollArea.Shape.NoFrame)
+        rolagem.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         conteudo = QWidget()
+        conteudo.setObjectName("Panel")
         self.coluna_painel = QVBoxLayout(conteudo)
-        self.coluna_painel.setContentsMargins(0, 0, 0, 0)
+        self.coluna_painel.setContentsMargins(MARGEM_PAINEL, MARGEM_PAINEL, MARGEM_PAINEL, MARGEM_PAINEL)
+        self.coluna_painel.setSpacing(12)
         self.painel_impressoes = PainelImpressoes(self.estado)
         self.coluna_painel.addWidget(self.painel_impressoes)
         self.coluna_painel.addStretch(1)
@@ -255,25 +335,6 @@ class MainWindow(QMainWindow):
         self.rolagem_painel = rolagem
         self.area_painel.layout().addWidget(rolagem)
 
-        self.seletor_tamanho = SeletorTamanhoPadrao(self.estado)
-        self.espaco_tamanho.layout().addWidget(self.seletor_tamanho)
-
-        self.acao_precos = QAction(_("Preços do laboratório…"), self)
-        self.acao_precos.triggered.connect(self.abrir_precos)
-        self.acao_resumo = QAction(_("Resumo do pedido…"), self)
-        self.acao_resumo.triggered.connect(self.abrir_resumo)
-        self.menu_pedido = QMenu(_("&Pedido"), self)
-        self.menu_pedido.addAction(self.acao_resumo)
-        self.menu_pedido.addAction(self.acao_precos)
-        self.menuBar().insertMenu(self.menu_ajuda.menuAction(), self.menu_pedido)
-        self.barra.addAction(self.acao_precos)
-
-        self.botao_custo = QPushButton()
-        self.botao_custo.setFlat(True)
-        self.botao_custo.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.botao_custo.setToolTip(_("Estimativa — clique para ver o resumo do pedido"))
-        self.botao_custo.clicked.connect(self.abrir_resumo)
-        self.statusBar().addPermanentWidget(self.botao_custo)
         self.resumo: ResumoDialog | None = None
         self.estado.pedido_mudou.connect(self.atualizar_custo)
         self.atualizar_custo()

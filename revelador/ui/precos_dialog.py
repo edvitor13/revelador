@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFormLayout, QLabel, Q
 
 from .. import precos, tamanhos
 from ..i18n import _
-from . import prefs
+from . import prefs, tema
 from .estado import Estado
 
 GRUPO = "precos"
@@ -53,18 +53,24 @@ class PrecosDialog(QDialog):
         super().__init__(parent)
         self.estado = estado
         self.setWindowTitle(_("Preços da revelação"))
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(420)
         self.campos: dict[str, QLineEdit] = {}
         self.erros: dict[str, QLabel] = {}
 
         raiz = QVBoxLayout(self)
+        raiz.setContentsMargins(22, 20, 22, 18)
+        raiz.setSpacing(14)
         aviso = QLabel(_("Valor cobrado por cópia em cada tamanho. Deixe vazio para tamanho sem preço. "
                          "O total do pedido é sempre uma estimativa."))
+        aviso.setObjectName("Muted")
         aviso.setWordWrap(True)
         raiz.addWidget(aviso)
 
         corpo = QWidget()
         form = QFormLayout(corpo)
+        form.setContentsMargins(0, 0, 12, 0)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(10)
         atual = tabela_precos()
         for t in tamanhos.TAMANHOS:
             campo = QLineEdit()
@@ -73,7 +79,7 @@ class PrecosDialog(QDialog):
             if t.id in atual:
                 campo.setText(precos.formatar(atual[t.id]).removeprefix("R$ "))
             erro = QLabel()
-            erro.setStyleSheet("color: #c0392b;")
+            erro.setStyleSheet(f"color: {tema.PERIGO};")
             erro.hide()
             campo.textChanged.connect(lambda _t, i=t.id: self.erros[i].hide())
             caixa = QVBoxLayout()
@@ -89,7 +95,7 @@ class PrecosDialog(QDialog):
         raiz.addWidget(rolagem, 1)
         ajuda = QLabel(_(tamanhos.AJUDA))
         ajuda.setWordWrap(True)
-        ajuda.setEnabled(False)
+        ajuda.setObjectName("Faint")
         raiz.addWidget(ajuda)
 
         self.botao_limpar = QPushButton(_("Limpar"))

@@ -1,4 +1,4 @@
-"""Seção "Impressões" do painel lateral e o seletor de tamanho padrão da barra de ferramentas.
+"""Seção "Impressões" do painel lateral (um ``Card``) e o seletor de tamanho padrão da barra superior.
 
 Tudo conversa só pelo ``Estado``: selecionar a foto atual, listar/alterar/remover as impressões dela e avisar com
 ``estado.alterar(foto, pedido=True)``. Trocar tamanho, orientação ou papel refaz o recorte automático ou reencaixa o
@@ -10,14 +10,14 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame,
-                               QGridLayout, QGroupBox, QLabel, QLineEdit, QPushButton, QSpinBox, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout,
+                               QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import enquadramento, precos, tamanhos
 from ..i18n import N_, _
 from ..projeto import Foto, Impressao
-from . import prefs
+from . import prefs, tema
+from .componentes import Card, ToggleSwitch, botao_plano
 from .estado import Estado
 
 NOMES_GRUPOS = {
@@ -28,7 +28,7 @@ NOMES_GRUPOS = {
 ORIENTACOES = (("auto", N_("Automática")), ("retrato", N_("Retrato")), ("paisagem", N_("Paisagem")))
 MODOS = (("preencher", N_("Preencher")), ("caber", N_("Caber")))
 NOMES_QUALIDADE = {"boa": N_("Boa"), "aceitavel": N_("Aceitável"), "baixa": N_("Baixa")}
-COR_BAIXA = "#c0392b"
+COR_QUALIDADE = {"boa": tema.OK, "aceitavel": tema.AVISO, "baixa": tema.PERIGO}   # cores de estado
 
 
 # ------------------------------------------------------------------------------------------------ combos e contas
@@ -115,6 +115,8 @@ class PersonalizadoDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(_("Tamanho personalizado"))
         form = QFormLayout()
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(10)
         self.largura = self._spin(largura_mm)
         self.altura = self._spin(altura_mm)
         self.preco = QLineEdit()
@@ -122,15 +124,19 @@ class PersonalizadoDialog(QDialog):
         if preco_centavos is not None:
             self.preco.setText(precos.formatar(preco_centavos).removeprefix("R$ "))
         self.erro = QLabel()
-        self.erro.setStyleSheet(f"color: {COR_BAIXA};")
+        self.erro.setStyleSheet(f"color: {tema.PERIGO};")
         self.erro.hide()
         form.addRow(_("Largura (mm)"), self.largura)
         form.addRow(_("Altura (mm)"), self.altura)
         form.addRow(_("Preço por cópia (R$)"), self.preco)
         raiz = QVBoxLayout(self)
+        raiz.setContentsMargins(22, 20, 22, 18)
+        raiz.setSpacing(14)
         raiz.addLayout(form)
         raiz.addWidget(self.erro)
         botoes = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        botoes.button(QDialogButtonBox.StandardButton.Ok).setText(_("Aplicar"))
+        botoes.button(QDialogButtonBox.StandardButton.Cancel).setText(_("Cancelar"))
         botoes.accepted.connect(self.accept)
         botoes.rejected.connect(self.reject)
         raiz.addWidget(botoes)
@@ -166,33 +172,38 @@ class LinhaImpressao(QFrame):
         self.painel = painel
         self.indice = indice
         self.qualidade: str | None = None
-        self.setObjectName("linha_imp")
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet('QFrame#linha_imp { border: 1px solid transparent; }'
-                           'QFrame#linha_imp[ativa="true"] { border: 1px solid palette(highlight); }')
+        self.setObjectName("LinhaImp")
         self.combo_tamanho = QComboBox()
         preencher_combo_tamanhos(self.combo_tamanho)
         self.spin_copias = QSpinBox()
         self.spin_copias.setRange(1, 999)
         self.spin_copias.setPrefix("× ")
+        self.spin_copias.setToolTip(_("Cópias"))
         self.combo_orientacao = QComboBox()
         for valor, nome in ORIENTACOES:
             self.combo_orientacao.addItem(_(nome), valor)
         self.combo_modo = QComboBox()
         for valor, nome in MODOS:
             self.combo_modo.addItem(_(nome), valor)
+        self.ponto_qualidade = QLabel()
+        self.ponto_qualidade.setFixedSize(8, 8)
         self.rotulo_qualidade = QLabel()
-        self.botao_remover = QToolButton()
-        self.botao_remover.setText("✕")
-        self.botao_remover.setToolTip(_("Remover este tamanho"))
+        self.botao_remover = botao_plano("lixeira", _("Remover este tamanho"), tamanho=16, cor=tema.APAGADO)
         grade = QGridLayout(self)
-        grade.setContentsMargins(4, 4, 4, 4)
+        grade.setContentsMargins(10, 10, 10, 10)
+        grade.setHorizontalSpacing(8)
+        grade.setVerticalSpacing(8)
         grade.addWidget(self.combo_tamanho, 0, 0, 1, 2)
         grade.addWidget(self.botao_remover, 0, 2)
         grade.addWidget(self.spin_copias, 1, 0)
         grade.addWidget(self.combo_orientacao, 1, 1, 1, 2)
         grade.addWidget(self.combo_modo, 2, 0, 1, 3)
-        grade.addWidget(self.rotulo_qualidade, 3, 0, 1, 3)
+        qualidade = QHBoxLayout()
+        qualidade.setSpacing(7)
+        qualidade.addWidget(self.ponto_qualidade)
+        qualidade.addWidget(self.rotulo_qualidade, 1)
+        grade.addLayout(qualidade, 3, 0, 1, 3)
+        grade.setColumnStretch(1, 1)
         self.combo_tamanho.currentIndexChanged.connect(self._ao_tamanho)
         self.spin_copias.valueChanged.connect(lambda v: self._agir(self.painel.definir_copias, v))
         self.combo_orientacao.currentIndexChanged.connect(
@@ -243,8 +254,10 @@ class LinhaImpressao(QFrame):
         self.rotulo_qualidade.setText(texto_qualidade(resultado))
         if resultado:
             self.rotulo_qualidade.setToolTip(_("Resolução efetiva: {dpi} dpi").format(dpi=round(resultado[0])))
-        baixa = self.qualidade == "baixa"
-        self.rotulo_qualidade.setStyleSheet(f"color: {COR_BAIXA}; font-weight: bold;" if baixa else "")
+        cor = COR_QUALIDADE.get(self.qualidade or "", tema.APAGADO)
+        peso = "font-weight: 600;" if self.qualidade == "baixa" else ""
+        self.rotulo_qualidade.setStyleSheet(f"color: {cor}; {peso}")
+        self.ponto_qualidade.setStyleSheet(f"background: {cor}; border-radius: 4px;" if self.qualidade else "")
         self.botao_remover.setEnabled(len(foto.impressoes) > 1)
         self.setProperty("ativa", "true" if ativa else "false")
         self.style().unpolish(self)
@@ -252,32 +265,39 @@ class LinhaImpressao(QFrame):
 
 
 # ------------------------------------------------------------------------------------------------ painel
-class PainelImpressoes(QGroupBox):
+class PainelImpressoes(Card):
     """"Revelar esta foto" e a lista de impressões (tamanho, cópias, orientação, modo) da foto atual."""
 
     def __init__(self, estado: Estado, parent: QWidget | None = None) -> None:
-        super().__init__(_("Impressões"), parent)
+        super().__init__(_("Impressões"), _("Tamanho e cópias da foto escolhida"), parent=parent)
         self.estado = estado
         self.linhas: list[LinhaImpressao] = []
-        raiz = QVBoxLayout(self)
+        raiz = self.corpo_layout
         self.rotulo_vazio = QLabel(_("Escolha uma foto na grade"))
-        self.rotulo_vazio.setEnabled(False)
+        self.rotulo_vazio.setObjectName("Faint")
         self.rotulo_vazio.setWordWrap(True)
         raiz.addWidget(self.rotulo_vazio)
         self.caixa_foto = QWidget()
         interno = QVBoxLayout(self.caixa_foto)
         interno.setContentsMargins(0, 0, 0, 0)
+        interno.setSpacing(10)
         self.rotulo_nome = QLabel()
+        self.rotulo_nome.setObjectName("Muted")
         self.rotulo_nome.setWordWrap(True)
         interno.addWidget(self.rotulo_nome)
-        self.caixa_selecao = QCheckBox(_("Revelar esta foto"))
-        interno.addWidget(self.caixa_selecao)
+        linha_selecao = QHBoxLayout()
+        linha_selecao.addWidget(QLabel(_("Revelar esta foto")))
+        linha_selecao.addStretch(1)
+        self.caixa_selecao = ToggleSwitch()
+        linha_selecao.addWidget(self.caixa_selecao)
+        interno.addLayout(linha_selecao)
         self.caixa_linhas = QWidget()
         self.layout_linhas = QVBoxLayout(self.caixa_linhas)
         self.layout_linhas.setContentsMargins(0, 0, 0, 0)
+        self.layout_linhas.setSpacing(8)
         interno.addWidget(self.caixa_linhas)
-        self.botao_adicionar = QPushButton(_("+ Outro tamanho"))
-        interno.addWidget(self.botao_adicionar)
+        self.botao_adicionar = botao_plano("mais", "", _("Outro tamanho"), tamanho=16, cor=tema.APAGADO)
+        interno.addWidget(self.botao_adicionar, 0, Qt.AlignmentFlag.AlignLeft)
         raiz.addWidget(self.caixa_foto)
 
         self.caixa_selecao.toggled.connect(self.alternar_selecao)
@@ -416,17 +436,19 @@ def tamanho_padrao_salvo() -> str | None:
 
 
 class SeletorTamanhoPadrao(QWidget):
-    """"Tamanho padrão [10x15 ▾]" da barra de ferramentas: vale para as próximas fotos selecionadas."""
+    """"Tamanho padrão [10x15 ▾]" da barra superior: vale para as próximas fotos selecionadas."""
 
     def __init__(self, estado: Estado, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.estado = estado
-        caixa = QVBoxLayout(self)
+        caixa = QHBoxLayout(self)
         caixa.setContentsMargins(0, 0, 0, 0)
+        caixa.setSpacing(8)
         self.combo = QComboBox()
         preencher_combo_tamanhos(self.combo, personalizado=False)
         self.combo.setToolTip(_(tamanhos.AJUDA))
         self.rotulo = QLabel(_("Tamanho padrão"))
+        self.rotulo.setObjectName("Muted")
         caixa.addWidget(self.rotulo)
         caixa.addWidget(self.combo)
         self.atualizar()

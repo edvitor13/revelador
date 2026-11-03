@@ -13,7 +13,9 @@ Decisões de design:
   para trocar o ``objectName`` de estilo (``Primary``, ``Flat`` etc.).
 
 Nomes de objeto da folha de estilo: ``TopBar``, ``Panel``, ``Card``, ``Primary``, ``Danger``, ``Flat``, ``Seg``,
-``SegBox``, ``Muted``, ``Faint``, ``PanelTitle``, ``Kicker``, ``Value``, ``Mono``, ``Thumb``.
+``SegBox``, ``Muted``, ``Faint``, ``PanelTitle``, ``Kicker``, ``Value``, ``Mono``, ``Canvas`` (fundo do editor), ``Rodape``
+(barra de controles do editor), ``Pilula`` (botão arredondado do custo do pedido), ``LinhaImp`` (uma impressão no painel)
+e ``AppName`` (nome do app na barra superior). Botão com menu: ``setProperty("menu", True)`` mostra a setinha.
 """
 
 from __future__ import annotations
@@ -127,8 +129,13 @@ QToolTip {{ background: {PAINEL3}; color: {TEXTO}; border: 1px solid {BORDA_FORT
     border-radius: 6px; }}
 
 QWidget#Panel {{ background: {PAINEL}; }}
+QWidget#Canvas {{ background: {CANVAS_EDITOR}; }}
+QWidget#Rodape {{ background: {PAINEL}; border-top: 1px solid {BORDA}; }}
+QLabel#AppName {{ font-family: "{t}"; font-size: 13pt; font-weight: 600; color: {TEXTO}; }}
 QWidget#TopBar {{ background: {PAINEL}; border-bottom: 1px solid {BORDA}; }}
 QFrame#Card {{ background: {PAINEL2}; border: 1px solid {BORDA}; border-radius: {RAIO_CARD}px; }}
+QFrame#LinhaImp {{ background: {PAINEL}; border: 1px solid {BORDA}; border-radius: 10px; }}
+QFrame#LinhaImp[ativa="true"] {{ border: 1px solid {DESTAQUE_DIM}; border-radius: 10px; }}
 QLabel {{ background: transparent; }}
 QLabel#Muted {{ color: {APAGADO}; }}
 QLabel#Faint {{ color: {FRACO}; font-size: 8.5pt; }}
@@ -156,11 +163,11 @@ QPushButton:hover, QToolButton:hover {{ background: {PAINEL3}; border-color: {BO
 QPushButton:pressed, QToolButton:pressed {{ background: {PAINEL}; }}
 QPushButton:focus {{ border-color: {DESTAQUE_DIM}; }}
 QPushButton:disabled, QToolButton:disabled {{ color: {FRACO}; background: {PAINEL}; border-color: {BORDA}; }}
-QPushButton#Primary {{ background: {DESTAQUE}; color: {TEXTO_SOBRE_DESTAQUE}; border: 1px solid {DESTAQUE};
+QPushButton#Primary, QToolButton#Primary {{ background: {DESTAQUE}; color: {TEXTO_SOBRE_DESTAQUE}; border: 1px solid {DESTAQUE};
     font-weight: 600; padding: 7px 16px; }}
-QPushButton#Primary:hover {{ background: {DESTAQUE_HI}; border-color: {DESTAQUE_HI}; }}
-QPushButton#Primary:pressed {{ background: {DESTAQUE}; }}
-QPushButton#Primary:disabled {{ background: {DESTAQUE_DIM}; border-color: {DESTAQUE_DIM}; color: {PAINEL2}; }}
+QPushButton#Primary:hover, QToolButton#Primary:hover {{ background: {DESTAQUE_HI}; border-color: {DESTAQUE_HI}; }}
+QPushButton#Primary:pressed, QToolButton#Primary:pressed {{ background: {DESTAQUE}; }}
+QPushButton#Primary:disabled, QToolButton#Primary:disabled {{ background: {PAINEL3}; border-color: {BORDA}; color: {FRACO}; }}
 QPushButton#Danger {{ color: {PERIGO}; }}
 QPushButton#Danger:hover {{ border-color: {PERIGO}; }}
 QToolButton#Flat, QPushButton#Flat {{ background: transparent; border: 1px solid transparent; padding: 6px 10px; }}
@@ -173,6 +180,12 @@ QToolButton#Seg:hover {{ color: {TEXTO}; background: {PAINEL3}; }}
 QToolButton#Seg:checked {{ color: {TEXTO_SOBRE_DESTAQUE}; background: {DESTAQUE}; font-weight: 600; }}
 QFrame#SegBox {{ background: {PAINEL}; border: 1px solid {BORDA}; border-radius: {RAIO + 2}px; }}
 QToolButton::menu-indicator {{ image: none; width: 0; }}
+QToolButton#Flat[menu="true"] {{ padding-right: 24px; }}
+QToolButton#Flat[menu="true"]::menu-indicator {{ image: url("{seta}"); width: 12px; height: 12px;
+    subcontrol-origin: padding; subcontrol-position: center right; right: 6px; }}
+QPushButton#Pilula, QToolButton#Pilula {{ background: {PAINEL2}; border: 1px solid {BORDA}; border-radius: 15px;
+    padding: 6px 16px; color: {TEXTO}; }}
+QPushButton#Pilula:hover, QToolButton#Pilula:hover {{ background: {PAINEL3}; border-color: {BORDA_FORTE}; }}
 
 QComboBox {{
     background: {PAINEL2}; border: 1px solid {BORDA}; border-radius: {RAIO}px; padding: 6px 11px; min-height: 20px;
@@ -223,9 +236,9 @@ QMenu::icon {{ padding-left: 6px; }}
 QMenuBar {{ background: {PAINEL}; }}
 QMenuBar::item:selected {{ background: {PAINEL3}; }}
 
-QSplitter::handle {{ background: {BORDA}; }}
-QSplitter::handle:horizontal {{ width: 1px; }}
-QSplitter::handle:vertical {{ height: 1px; }}
+QSplitter::handle {{ background: {BG}; }}
+QSplitter::handle:horizontal {{ width: 4px; }}
+QSplitter::handle:vertical {{ height: 4px; }}
 QSplitter::handle:hover {{ background: {DESTAQUE_DIM}; }}
 QStatusBar {{ background: {PAINEL}; border-top: 1px solid {BORDA}; color: {APAGADO}; }}
 QStatusBar::item {{ border: none; }}
@@ -247,6 +260,7 @@ QListView::item, QListWidget::item {{ border-radius: {RAIO}px; }}
 QListView::item:hover {{ background: {PAINEL2}; }}
 QListView::item:selected {{ background: {SELECAO}; color: {TEXTO}; }}
 QListView:focus {{ border: none; }}
+QListView#lista_grade {{ padding: 10px 6px 10px 10px; }}
 
 QTableView, QTableWidget {{ background: {PAINEL2}; alternate-background-color: {PAINEL}; border: 1px solid {BORDA};
     border-radius: {RAIO}px; gridline-color: transparent; outline: 0; selection-background-color: {SELECAO};

@@ -9,8 +9,8 @@ a receita vai amostrar). O recorte só entra no modelo depois de passar por ``en
 sempre dentro da imagem. Os gestos têm métodos públicos (``mover``, ``aproximar``, ``girar``, ``endireitar``,
 ``enquadrar_pelos_rostos``) que o mouse e os atalhos só chamam; os testes chamam direto.
 
-Dois modos de ver (``definir_previa``): a foto inteira com a moldura do papel (padrão) e "Ver como sai", a prévia
-pela receita no tamanho do visor, calculada num trabalhador com *debounce* de ~60 ms e contador de geração
+Dois modos de ver (``definir_previa``, seletor "Moldura | Resultado"): a foto inteira com a moldura do papel (padrão)
+e o resultado, a prévia pela receita no tamanho do visor, calculada num trabalhador com *debounce* de ~60 ms e contador de geração
 (resultado velho é descartado). Impressão no modo *caber* mostra sempre a prévia (a moldura não faz sentido).
 """
 
@@ -22,16 +22,18 @@ from dataclasses import replace
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from .. import enquadramento, receita, tamanhos
 from ..i18n import N_, _
 from ..projeto import Foto, Impressao, Recorte
+from . import tema
+from .componentes import BarraAdaptavel, Segmented, Slider, botao_plano
 from .estado import Estado
 from .previa import CarregarProxy, RenderizarPrevia, Sinais, para_qimage
 
-FUNDO = "#6b6b6b"            # o mesmo cinza neutro da janela (``main_window.CINZA_EDITOR``)
+FUNDO = tema.CANVAS_EDITOR   # cinza escuro neutro: um fundo colorido enganaria a percepção de cor da foto
+ESCURECER_FORA = 166         # ~65% de preto sobre a parte da foto que fica fora do papel
 ZOOM_MAXIMO = 10.0
 PASSO_ZOOM = 1.1             # fator por clique da roda (e por atalho)
 DEBOUNCE_MS = 60
@@ -118,14 +120,14 @@ class Tela(QWidget):
         if self.dica and quadro is not None:
             faixa = QRectF(0, self.height() - 30, self.width(), 30)
             p.fillRect(faixa, QColor(0, 0, 0, 150))
-            self._texto(p, faixa, self.dica, QColor("#ffffff"))
+            self._texto(p, faixa, self.dica, QColor(tema.TEXTO))
         p.end()
 
     @staticmethod
     def _texto(p: QPainter, area: QRectF, texto: str, cor: QColor | None = None) -> None:
         if not texto:
             return
-        p.setPen(cor or QColor("#e6e6e6"))
+        p.setPen(cor or QColor(tema.APAGADO))
         p.drawText(QRectF(area), int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), texto)
 
     def _para_tela(self, quadro: QRectF, pontos) -> list[QPointF]:
@@ -150,7 +152,7 @@ class Tela(QWidget):
         fora.addRect(quadro)
         dentro = QPainterPath()
         dentro.addPolygon(QPolygonF(cantos + [cantos[0]]))
-        p.fillPath(fora.subtracted(dentro), QColor(0, 0, 0, 150))
+        p.fillPath(fora.subtracted(dentro), QColor(0, 0, 0, ESCURECER_FORA))
         # Regra dos terços.
         tl, tr, br, bl = cantos
         p.setPen(QPen(QColor(255, 255, 255, 110), 1.0))
@@ -159,7 +161,7 @@ class Tela(QWidget):
             p.drawLine(tl + (bl - tl) * f, tr + (br - tr) * f)
         # Rostos detectados.
         if self.mostrar_rostos:
-            p.setPen(QPen(QColor("#66ff99"), 1.5))
+            p.setPen(QPen(QColor(tema.OK), 1.5))
             k = quadro.width() / self.imagem.width()
             for x, y, w, h in self.rostos:
                 p.drawRect(QRectF(quadro.left() + x * k, quadro.top() + y * k, w * k, h * k))
@@ -248,53 +250,69 @@ class Editor(QWidget):
         self.tela.rolado.connect(self._ao_rolar)
         self.tela.redimensionada.connect(self._agendar_previa)
 
-        self.botao_girar_esq = QPushButton(_("↺ 90°"))
-        self.botao_girar_esq.setToolTip(_("Girar 90° para a esquerda (Shift+R)"))
-        self.botao_girar_dir = QPushButton(_("↻ 90°"))
-        self.botao_girar_dir.setToolTip(_("Girar 90° para a direita (R)"))
+        self.botao_girar_esq = botao_plano("girar_esquerda", _("Girar 90° para a esquerda (Shift+R)"))
+        self.botao_girar_dir = botao_plano("girar_direita", _("Girar 90° para a direita (R)"))
         self.botao_girar_esq.clicked.connect(lambda: self.girar(-1))
         self.botao_girar_dir.clicked.connect(lambda: self.girar(+1))
+        self.botao_zoom_menos = botao_plano("zoom_menos", _("Afastar a foto (Ctrl+−)"))
+        self.botao_zoom_mais = botao_plano("zoom_mais", _("Aproximar a foto (Ctrl++)"))
+        self.botao_zoom_menos.clicked.connect(lambda: self.aproximar(1 / PASSO_ZOOM))
+        self.botao_zoom_mais.clicked.connect(lambda: self.aproximar(PASSO_ZOOM))
 
-        self.slider_angulo = QSlider(Qt.Orientation.Horizontal)
-        self.slider_angulo.setRange(round(-ANGULO_MAX * 10), round(ANGULO_MAX * 10))
-        self.slider_angulo.setToolTip(_("Endireitar a foto"))
-        self.spin_angulo = QDoubleSpinBox()
-        self.spin_angulo.setRange(-ANGULO_MAX, ANGULO_MAX)
-        self.spin_angulo.setDecimals(1)
-        self.spin_angulo.setSingleStep(0.1)
-        self.spin_angulo.setSuffix("°")
-        self.slider_angulo.valueChanged.connect(lambda v: self.endireitar(v / 10.0))
-        self.spin_angulo.valueChanged.connect(self.endireitar)
+        self.slider_angulo = Slider(_("Endireitar"), -ANGULO_MAX, ANGULO_MAX, 0.1, 0.0, "°", horizontal=True,
+                                    dica=_("Endireitar a foto (duplo clique volta a 0°)"))
+        self.slider_angulo.valor_mudou.connect(self.endireitar)
 
-        self.botao_auto = QPushButton(_("Enquadrar pelos rostos"))
-        self.botao_auto.setToolTip(_("Volta ao enquadramento automático (A)"))
+        self.botao_auto = botao_plano("recorte", _("Volta ao enquadramento automático (A)"),
+                                      _("Enquadrar pelos rostos"))
         self.botao_auto.clicked.connect(self.enquadrar_pelos_rostos)
-        self.caixa_rostos = QCheckBox(_("Mostrar rostos"))
+        self.caixa_rostos = botao_plano("rosto", _("Mostrar os rostos detectados"), _("Rostos"), marcavel=True,
+                                        cor=tema.APAGADO, cor_marcado=tema.DESTAQUE_HI)
         self.caixa_rostos.toggled.connect(self.mostrar_rostos)
-        self.botao_previa = QPushButton(_("Ver como sai"))
-        self.botao_previa.setCheckable(True)
-        self.botao_previa.setToolTip(_("Mostra o resultado como será revelado (\\)"))
-        self.botao_previa.toggled.connect(self.definir_previa)
+        self.modo_vista = Segmented([
+            ("moldura", _("Moldura"), _("A foto inteira com a moldura do papel")),
+            ("resultado", _("Resultado"), _("Mostra o resultado como será revelado")),
+        ])
+        self.modo_vista.definir_atual("moldura")
+        self.modo_vista.mudou.connect(lambda chave: self.definir_previa(chave == "resultado"))
+        self.botao_previa = self.modo_vista.botoes["resultado"]   # os botões do seletor "Moldura | Resultado"
+        self.botao_moldura = self.modo_vista.botoes["moldura"]
 
         self.rotulo_info = QLabel()
         self.rotulo_info.setObjectName("info_editor")
         self.rotulo_info.setWordWrap(True)
 
-        barra = QHBoxLayout()
+        controles = BarraAdaptavel("Controles")
+        barra = QHBoxLayout(controles)
+        barra.setContentsMargins(0, 0, 0, 0)
+        barra.setSpacing(4)
         for w in (self.botao_girar_esq, self.botao_girar_dir):
             barra.addWidget(w)
-        barra.addSpacing(8)
-        barra.addWidget(QLabel(_("Endireitar")))
-        barra.addWidget(self.slider_angulo, 1)
-        barra.addWidget(self.spin_angulo)
-        barra.addSpacing(8)
-        for w in (self.botao_auto, self.caixa_rostos, self.botao_previa):
+        barra.addSpacing(10)
+        for w in (self.botao_zoom_menos, self.botao_zoom_mais):
             barra.addWidget(w)
+        barra.addSpacing(10)
+        barra.addWidget(self.caixa_rostos)
+        barra.addWidget(self.botao_auto)
+        barra.addStretch(1)
+        barra.addWidget(self.modo_vista)
+        controles.definir_adaptacao(compactos=[self.caixa_rostos, self.botao_auto],
+                                    opcionais=[self.botao_zoom_menos, self.botao_zoom_mais])
+
+        self.rodape = QWidget()
+        self.rodape.setObjectName("Rodape")
+        self.rodape.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        coluna = QVBoxLayout(self.rodape)
+        coluna.setContentsMargins(14, 10, 14, 12)
+        coluna.setSpacing(8)
+        coluna.addWidget(self.rotulo_info)
+        coluna.addWidget(controles)
+        coluna.addWidget(self.slider_angulo)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(self.tela, 1)
-        layout.addWidget(self.rotulo_info)
-        layout.addLayout(barra)
+        layout.addWidget(self.rodape)
 
     def _atalhos(self) -> None:
         def atalho(chave, slot) -> None:
@@ -303,7 +321,6 @@ class Editor(QWidget):
         atalho("R", lambda: self.girar(+1))
         atalho("Shift+R", lambda: self.girar(-1))
         atalho("A", self.enquadrar_pelos_rostos)
-        atalho("\\", lambda: self.botao_previa.toggle())
         atalho(QKeySequence.StandardKey.ZoomIn, lambda: self.aproximar(PASSO_ZOOM))
         atalho(QKeySequence.StandardKey.ZoomOut, lambda: self.aproximar(1 / PASSO_ZOOM))
 
@@ -437,10 +454,8 @@ class Editor(QWidget):
         self.tela.update()
 
     def definir_previa(self, sim: bool) -> None:
-        """Liga/desliga "Ver como sai" (a prévia pela receita no tamanho do visor)."""
-        if self.botao_previa.isChecked() != sim:
-            self.botao_previa.setChecked(sim)
-            return
+        """Liga/desliga o "Resultado" (a prévia pela receita no tamanho do visor); desligado, volta à "Moldura"."""
+        self.modo_vista.definir_atual("resultado" if sim else "moldura")
         self.mostrar_previa = sim
         self._atualizar()
         self._agendar_previa()
@@ -567,7 +582,7 @@ class Editor(QWidget):
         t.moldura, t.rostos, t.margem_rel, t.dica = None, [], 0.0, ""
         t.imagem, t.mostrar_rostos = None, self.caixa_rostos.isChecked()
         info = ""
-        aviso = False
+        qualidade = None
         if foto is None:
             t.mensagem = _("Escolha uma foto na grade para enquadrar")
         elif self._erro:
@@ -581,17 +596,18 @@ class Editor(QWidget):
             if imp is None:
                 t.dica = _("Marque a foto para revelar e escolha o tamanho")
             else:
-                info, aviso = self._preencher_moldura(foto, imp)
+                info, qualidade = self._preencher_moldura(foto, imp)
         t.mostrar_previa = self.mostrando_previa and self.previa is not None
         t.previa = self.previa
         t.definir_arrastavel(self._editavel() is not None)
         self.rotulo_info.setText(info)
-        self.rotulo_info.setStyleSheet("color: #ffb74d;" if aviso else "")
+        cor = {"baixa": tema.PERIGO, "aceitavel": tema.AVISO}.get(qualidade or "")
+        self.rotulo_info.setStyleSheet(f"color: {cor};" if cor else "")
         self._sincronizar_controles(imp)
         t.update()
 
-    def _preencher_moldura(self, foto: Foto, imp: Impressao) -> tuple[str, bool]:
-        """Dá à tela a moldura, a margem e os rostos; devolve o texto de resolução e se há aviso de qualidade."""
+    def _preencher_moldura(self, foto: Foto, imp: Impressao) -> tuple[str, str | None]:
+        """Dá à tela a moldura, a margem e os rostos; devolve o texto de resolução e a qualidade ("boa" etc. ou None)."""
         t = self.tela
         largura, altura = self._dims()
         orient = receita.orientacao(imp, largura, altura)
@@ -603,7 +619,7 @@ class Editor(QWidget):
         t.margem_rel = max(0.0, self.estado.trabalho.margem_corte_mm) / papel_l
         texto = f"{nome} · {_(orient)}"
         if imp.modo == receita.MODO_CABER:
-            return texto + " · " + _("foto inteira com borda branca"), False
+            return texto + " · " + _("foto inteira com borda branca"), None
         W, H = receita.dimensoes_giradas(imp, largura, altura)
         r = self._retangulo(imp)
         t.moldura = r
@@ -611,30 +627,25 @@ class Editor(QWidget):
             t.rostos = [(c.x * W, c.y * H, c.w * W, c.h * H)
                         for c in enquadramento.girar_rostos(foto.rostos, imp.recorte.giro)]
         info = self.estado.info.get(foto.id)
-        aviso = False
+        qualidade = None
         if info is not None:
             largura_orig = info.altura if imp.recorte.giro % 2 else info.largura   # largura da imagem girada
             px_recorte = r.w / W * largura_orig
             dpi = tamanhos.resolucao_efetiva(round(px_recorte), imp.tamanho, orient, imp.papel_mm)
             q = tamanhos.qualidade(dpi)
-            aviso = q == "baixa"
+            qualidade = q
             texto += f" · {dpi:.0f} dpi ({_(QUALIDADES[q])})"
-        return texto, aviso
+        return texto, qualidade
 
     def _sincronizar_controles(self, imp: Impressao | None) -> None:
         ativo = self._editavel() is not None
-        for w in (self.slider_angulo, self.spin_angulo):
+        com_foto = self._contexto() is not None
+        for w in (self.slider_angulo, self.botao_zoom_menos, self.botao_zoom_mais):
             w.setEnabled(ativo)
-        self.botao_girar_esq.setEnabled(self._contexto() is not None)
-        self.botao_girar_dir.setEnabled(self._contexto() is not None)
-        self.botao_auto.setEnabled(self._contexto() is not None)
-        self.botao_previa.setEnabled(self._contexto() is not None)
+        for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_auto, self.modo_vista):
+            w.setEnabled(com_foto)
         angulo = imp.recorte.angulo if imp is not None else 0.0
-        for w, valor in ((self.slider_angulo, round(angulo * 10)), (self.spin_angulo, round(angulo, 1))):
-            if w.value() != valor:
-                w.blockSignals(True)
-                w.setValue(valor)
-                w.blockSignals(False)
+        self.slider_angulo.definir_valor(round(angulo, 1))
 
     # ------------------------------------------------------------ encerramento
     def encerrar(self) -> None:

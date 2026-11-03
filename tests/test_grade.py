@@ -91,9 +91,9 @@ assert e.trabalho.fotos[1].selecionada and e.trabalho.fotos[1].impressoes
 QTest.keyClick(g.lista, Qt.Key.Key_Right)
 assert e.atual is e.trabalho.fotos[2]
 # filtro
-j.filtro_mostrar.setCurrentIndex(1)
+j.filtro_mostrar.botoes["selecionadas"].click()
 assert g.total() == 1
-j.filtro_mostrar.setCurrentIndex(0)
+j.filtro_mostrar.botoes["todas"].click()
 assert g.total() == 4
 # delete
 alvo = e.trabalho.fotos[2]

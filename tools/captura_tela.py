@@ -2,7 +2,11 @@
 
 Gera, em SAIDA (padrão ``saida/``):
 
-- ``janela.png``: a janela principal em 1440x900, com fotos de teste importadas (a menos de ``--sem-fotos``);
+- ``janela.png``: a janela principal em 1440x900, com fotos de teste importadas, quatro delas marcadas para
+  revelar (uma com dois tamanhos) e a foto do rosto no editor (a menos de ``--sem-fotos``);
+- ``janela_estreita.png``: a mesma janela em 1000x700; ``janela_resultado.png``: o editor no modo "Resultado";
+  ``janela_vazia.png``: sem fotos; ``resumo.png``, ``precos.png`` e ``personalizado.png``: os diálogos do pedido;
+  ``menu_projeto.png`` e ``menu_engrenagem.png``: os menus da barra superior;
 - ``catalogo.png``: uma folha com os componentes do tema (botões, seletor, chave, sliders, cartões, campos, tabela,
   lista, ícones e cores de estado).
 
@@ -98,31 +102,108 @@ def _grab(widget, caminho: Path) -> tuple[int, int]:
     return pm.width(), pm.height()
 
 
-def capturar_janela(app, fotos: list[Path], caminho: Path) -> tuple[int, int]:
+def _gravar(widget, caminho: Path) -> tuple[int, int]:
+    pm = widget.grab()
+    if pm.isNull() or not pm.save(str(caminho), "PNG"):
+        raise RuntimeError(f"não consegui gravar {caminho}")
+    return pm.width(), pm.height()
+
+
+def _janela(app, largura: int, altura: int):
     from PySide6.QtCore import Qt
 
     from revelador.ui.main_window import MainWindow
 
     janela = MainWindow()
-    janela.resize(*TAMANHO_JANELA)
+    janela.resize(largura, altura)
     janela.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     janela.show()
     app.processEvents()
+    return janela
+
+
+def _fechar(janela) -> None:
+    janela.salvar_estado = lambda: None   # não grava a geometria da captura nas preferências
+    janela.editor.encerrar()
+    janela.close()
+
+
+def _esperar_ate(app, condicao, maximo: float = 15.0) -> bool:
+    inicio = time.monotonic()
+    while time.monotonic() - inicio < maximo:
+        app.processEvents()
+        if condicao():
+            return True
+        time.sleep(0.03)
+    return False
+
+
+def capturar_janelas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int, int]]:
+    """Grava os PNGs da janela (veja o topo do arquivo); devolve (nome, largura, altura) de cada um."""
+    from PySide6.QtCore import Qt
+
+    from revelador.ui.precos_dialog import PrecosDialog, salvar_tabela_precos
+    from revelador.ui.resumo import ResumoDialog
+
+    salvar_tabela_precos({"10x15": 150, "13x18": 280, "15x21": 500})   # preços de exemplo (só nas prefs temporárias)
+    feitos: list[tuple[str, int, int]] = []
+
+    def gravar(widget, nome: str) -> None:
+        for _ in range(4):   # layouts adaptativos precisam de algumas rodadas de eventos para assentar
+            app.processEvents()
+            time.sleep(0.02)
+        feitos.append((nome, *_gravar(widget, saida / nome)))
+
+    vazia = _janela(app, *TAMANHO_JANELA)
+    gravar(vazia, "janela_vazia.png")
+    _fechar(vazia)
+
+    janela = _janela(app, *TAMANHO_JANELA)
     if fotos:
         novas = janela.estado.adicionar(fotos)
         esperar_workers(app)
-        if novas:
-            janela.estado.definir_atual(novas[0])
-            esperar_workers(app)
+        # marca algumas fotos para revelar; a última (a do rosto, se houver) fica como foto atual
+        alvo = novas[-1]
+        for foto in (novas[1], novas[2], novas[4], alvo):
+            janela.estado.selecionar(foto)
+        janela.estado.definir_atual(novas[1])
+        janela.painel_impressoes.adicionar_impressao("13x18")
+        janela.estado.definir_atual(alvo)
+        _esperar_ate(app, lambda: janela.editor.proxy is not None and alvo.id in janela.estado.info)
+        esperar_workers(app)
+    gravar(janela, "janela.png")
+    janela.resize(1000, 700)
     app.processEvents()
+    gravar(janela, "janela_estreita.png")
     janela.resize(*TAMANHO_JANELA)
-    app.processEvents()
-    pm = janela.grab()
-    if pm.isNull() or not pm.save(str(caminho), "PNG"):
-        raise RuntimeError(f"não consegui gravar {caminho}")
-    janela.salvar_estado = lambda: None   # não grava a geometria da captura nas preferências
-    janela.close()
-    return pm.width(), pm.height()
+    janela.editor.definir_previa(True)
+    _esperar_ate(app, lambda: janela.editor.previa is not None, 8.0)
+    gravar(janela, "janela_resultado.png")
+    resumo = ResumoDialog(janela.estado, janela)
+    resumo.resize(640, 420)
+    resumo.atualizar()
+    resumo.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    resumo.show()
+    gravar(resumo, "resumo.png")
+    precos = PrecosDialog(janela.estado, janela)
+    precos.resize(460, 560)
+    precos.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    precos.show()
+    gravar(precos, "precos.png")
+    from revelador.ui.painel_impressoes import PersonalizadoDialog
+
+    personalizado = PersonalizadoDialog(100.0, 150.0, 350, janela)
+    personalizado.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    personalizado.show()
+    gravar(personalizado, "personalizado.png")
+    for nome, botao in (("menu_projeto.png", janela.botao_projeto), ("menu_engrenagem.png", janela.botao_menu)):
+        menu = botao.menu()
+        menu.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        menu.popup(botao.mapToGlobal(botao.rect().bottomLeft()))
+        gravar(menu, nome)
+        menu.hide()
+    _fechar(janela)
+    return feitos
 
 
 # ------------------------------------------------------------------ catálogo de componentes
@@ -384,10 +465,10 @@ def main(argv: list[str] | None = None) -> int:
                 fotos = sorted(p for p in args.pasta.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
             else:
                 fotos = gerar_fotos(temporario / "fotos")
-        largura, altura = capturar_janela(app, fotos, args.saida / "janela.png")
-        print(f"janela.png   {largura}x{altura}")
+        for nome, largura, altura in capturar_janelas(app, fotos, args.saida):
+            print(f"{nome:<22}{largura}x{altura}")
         largura, altura = capturar_catalogo(app, args.saida / "catalogo.png")
-        print(f"catalogo.png {largura}x{altura}")
+        print(f"{'catalogo.png':<22}{largura}x{altura}")
         return 0
     finally:
         shutil.rmtree(temporario, ignore_errors=True)

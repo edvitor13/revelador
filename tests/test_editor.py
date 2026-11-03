@@ -255,7 +255,7 @@ assert "Escolha uma foto" in ed.tela.mensagem and ed.tela.imagem is None
 for gesto in (lambda: ed.mover(0.1, 0), lambda: ed.aproximar(2), lambda: ed.girar(1), lambda: ed.endireitar(5),
               ed.enquadrar_pelos_rostos):
     assert gesto() is False
-assert not ed.botao_previa.isEnabled() and not ed.slider_angulo.isEnabled()
+assert not ed.botao_previa.isEnabled() and not ed.slider_angulo.isEnabled() and not ed.modo_vista.isEnabled()
 ed.tela.grab()
 
 estado, foto, ed = montar(selecionar=False)
@@ -361,7 +361,7 @@ ed.tela.arrastado.emit(30.0, 0.0)
 assert receita.retangulo_da_impressao(imp, *ed._dims()).cx < r0.cx            # a foto acompanha o mouse
 ed.tela.rolado.emit(1.0, QPointF(ed.tela.quadro().center()))
 dentro(ed, imp)
-ed.botao_previa.click()
+ed.botao_moldura.click()
 assert not ed.mostrando_previa
 print("ok")
 """)
@@ -415,18 +415,22 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtTest import QTest
 estado, foto, ed = montar()
 imp = estado.impressao_atual
-ed.spin_angulo.setValue(5.5)
-assert imp.recorte.angulo == 5.5 and ed.slider_angulo.value() == 55 and imp.recorte.origem == "manual"
-ed.slider_angulo.setValue(-120)
-assert imp.recorte.angulo == -12.0 and ed.spin_angulo.value() == -12.0
-assert ed.slider_angulo.minimum() == -450 and ed.slider_angulo.maximum() == 450 and ed.spin_angulo.singleStep() == 0.1
+ed.slider_angulo.trilho.definir_valor(5.5, emitir=True)       # como se arrastasse o slider
+assert imp.recorte.angulo == 5.5 and ed.slider_angulo.valor() == 5.5 and imp.recorte.origem == "manual"
+ed.slider_angulo.campo.setText("-12")                          # ou digitasse o valor
+ed.slider_angulo.campo.editingFinished.emit()
+assert imp.recorte.angulo == -12.0 and ed.slider_angulo.valor() == -12.0 and ed.slider_angulo.campo.text() == "-12,0°"
+assert ed.slider_angulo.trilho.minimo == -45.0 and ed.slider_angulo.trilho.maximo == 45.0 and ed.slider_angulo.trilho.passo == 0.1
+ed.slider_angulo.restaurar()                                   # duplo clique no trilho
+assert imp.recorte.angulo == 0.0
+ed.botao_zoom_mais.click(); ed.botao_zoom_menos.click()
 ed.botao_girar_dir.click(); assert imp.recorte.giro == 1
 ed.botao_girar_esq.click(); ed.botao_girar_esq.click(); assert imp.recorte.giro == 3
 ed.caixa_rostos.click(); assert ed.tela.mostrar_rostos
 # mudança externa do recorte (outra parte da interface) atualiza os controles
 imp.recorte = Recorte(angulo=20.0, origem="manual")
 estado.alterar(foto)
-assert ed.spin_angulo.value() == 20.0 and ed.slider_angulo.value() == 200
+assert ed.slider_angulo.valor() == 20.0
 # atalhos de janela (a janela precisa estar ativa; o QShortcut responde a QTest.keyClick no editor)
 ed.activateWindow(); app.processEvents()
 giro = imp.recorte.giro

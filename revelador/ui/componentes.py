@@ -6,16 +6,50 @@ Todos usam só as cores e os nomes de objeto de ``tema.py`` e o texto vem de que
 - ``Segmented``: botões lado a lado, um só marcado; sinal ``mudou(chave)``.
 - ``Card``: cartão com título, subtítulo e botão de restaurar opcionais; o corpo recolhe ao clicar no cabeçalho.
 - ``Slider``: rótulo, valor editável e trilho; duplo clique volta ao padrão; sinal ``valor_mudou(float)``.
+- ``Pilula``: botão arredondado cujo texto encurta no meio (com "…") quando falta lugar.
+- ``BarraAdaptavel``: barra de uma linha que encolhe em etapas (só ícones, depois some o que é opcional).
+- ``botao_plano``: botão ``Flat`` com ícone (e texto opcional).
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Property, QEasingCurve, QPointF, QPropertyAnimation, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QTransform
-from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QSizePolicy,
-                               QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import (Property, QEasingCurve, QEvent, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer,
+                            Signal)
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QTransform
+from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit,
+                               QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 
 from . import icones, tema
+
+
+def botao_plano(icone: str, dica: str = "", texto: str = "", marcavel: bool = False, tamanho: int = 18,
+                cor: str = tema.TEXTO, cor_marcado: str | None = None) -> QToolButton:
+    """Botão ``Flat`` com o ícone `icone` (de ``icones.py``) e, se `texto`, o texto ao lado.
+
+    Com `marcavel`, o ícone muda para `cor_marcado` (se dado) quando o botão está marcado."""
+    b = QToolButton()
+    b.setObjectName("Flat")
+    if cor_marcado:
+        b.setIcon(icones.icone_dois_estados(icone, cor, cor_marcado, tamanho))
+    else:
+        b.setIcon(icones.icone(icone, cor, tamanho))
+    b.setIconSize(QSize(tamanho, tamanho))
+    b.setToolTip(dica)
+    b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setCheckable(marcavel)
+    if texto:
+        b.setText(texto)
+        b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    return b
+
+
+def com_menu(botao: QToolButton, menu) -> QToolButton:
+    """Liga `menu` ao botão (abre ao clicar) e liga a setinha de menu do tema."""
+    botao.setMenu(menu)
+    botao.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    botao.setProperty("menu", True)
+    return botao
 
 
 def _mistura(a: str, b: str, t: float) -> QColor:
@@ -151,8 +185,9 @@ class Card(QFrame):
         cab.setContentsMargins(0, 0, 0, 0)
         cab.setSpacing(8)
         self._seta = QLabel()
+        self._seta.setContentsMargins(0, 3, 0, 0)
         self._seta.setFixedSize(16, 16)
-        cab.addWidget(self._seta)
+        cab.addWidget(self._seta, 0, Qt.AlignmentFlag.AlignTop)
         textos = QVBoxLayout()
         textos.setSpacing(0)
         self.titulo = QLabel(titulo)
@@ -348,35 +383,45 @@ class Slider(QWidget):
     soltou = Signal()
 
     def __init__(self, rotulo: str, minimo: float, maximo: float, passo: float, padrao: float, unidade: str = "",
-                 casas: int | None = None, escala: float = 1.0, dica: str = "", parent: QWidget | None = None) -> None:
-        """`escala`: o valor mostrado é ``valor * escala`` (ex.: 100 para exibir 0..1 como porcentagem)."""
+                 casas: int | None = None, escala: float = 1.0, dica: str = "", horizontal: bool = False,
+                 parent: QWidget | None = None) -> None:
+        """`escala`: o valor mostrado é ``valor * escala`` (ex.: 100 para exibir 0..1 como porcentagem).
+        `horizontal`: tudo numa linha só (rótulo, trilho, valor), para barras; senão o trilho fica sob o rótulo."""
         super().__init__(parent)
         self.unidade = unidade
         self.escala = escala
         self.casas = casas if casas is not None else self._casas(passo * escala)
         if dica:
             self.setToolTip(dica)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 2, 0, 2)
-        lay.setSpacing(0)
-        topo = QHBoxLayout()
-        topo.setSpacing(4)
         self.rotulo = QLabel(rotulo)
         self.rotulo.setObjectName("Muted")
-        topo.addWidget(self.rotulo)
-        topo.addStretch(1)
         self.campo = QLineEdit()
         self.campo.setObjectName("Value")
         self.campo.setFixedWidth(72)
         self.campo.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.campo.editingFinished.connect(self._editado)
-        topo.addWidget(self.campo)
-        lay.addLayout(topo)
         self.trilho = Trilho(minimo, maximo, passo, padrao)
         self.trilho.valor_mudou.connect(self._moveu)
         self.trilho.padrao_pedido.connect(self.restaurar)
         self.trilho.soltou.connect(self.soltou)
-        lay.addWidget(self.trilho)
+        if horizontal:
+            lay = QHBoxLayout(self)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(10)
+            lay.addWidget(self.rotulo)
+            lay.addWidget(self.trilho, 1)
+            lay.addWidget(self.campo)
+        else:
+            lay = QVBoxLayout(self)
+            lay.setContentsMargins(0, 2, 0, 2)
+            lay.setSpacing(0)
+            topo = QHBoxLayout()
+            topo.setSpacing(4)
+            topo.addWidget(self.rotulo)
+            topo.addStretch(1)
+            topo.addWidget(self.campo)
+            lay.addLayout(topo)
+            lay.addWidget(self.trilho)
         self._mostrar()
 
     @staticmethod
@@ -428,3 +473,123 @@ class Slider(QWidget):
         if self.trilho.valor() != antes:
             self.valor_mudou.emit(self.trilho.valor())
             self.soltou.emit()
+
+
+# ------------------------------------------------------------------ pílula
+class Pilula(QPushButton):
+    """Botão em pílula (``objectName`` "Pilula") que mostra o texto inteiro se couber e, senão, o encurta no meio.
+
+    ``text()`` devolve sempre o texto completo; o tamanho ideal é o do texto inteiro, mas ela aceita encolher."""
+
+    FOLGA = 2 * 16 + 2 + 24      # padding lateral + borda + ícone (com respiro)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Pilula")
+        self._completo = ""
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+    def setText(self, texto: str) -> None:  # noqa: N802 - nome do Qt
+        self._completo = texto
+        self._encurtar()
+        self.updateGeometry()
+
+    def text(self) -> str:
+        return self._completo
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        base = super().sizeHint()
+        largura = QFontMetrics(self.font()).horizontalAdvance(self._completo) + self.FOLGA
+        return QSize(max(largura, 120), base.height())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(120, super().minimumSizeHint().height())
+
+    def _encurtar(self) -> None:
+        disponivel = max(20, self.width() - self.FOLGA)
+        elidido = QFontMetrics(self.font()).elidedText(self._completo, Qt.TextElideMode.ElideMiddle, disponivel)
+        super().setText(elidido)
+
+    def resizeEvent(self, evento) -> None:  # noqa: N802
+        super().resizeEvent(evento)
+        self._encurtar()
+
+
+# ------------------------------------------------------------------ barra adaptável
+class BarraAdaptavel(QWidget):
+    """Barra de uma linha que encolhe em etapas para caber na largura (como a barra superior do Pelicula).
+
+    Etapa 0: tudo como foi montado. Etapa 1: somem os ``rotulos`` (textos de apoio). Etapa 2: os botões de
+    ``compactos`` ficam só com o ícone (o texto vira dica). Etapa 3: somem os ``opcionais``.
+    O layout da barra tem de ser um ``QHBoxLayout``.
+    """
+
+    ETAPAS = 4
+
+    def __init__(self, nome: str = "TopBar", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName(nome)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.rotulos: list[QWidget] = []
+        self.compactos: list[QToolButton] = []
+        self.opcionais: list[QWidget] = []
+        self.nivel = 0
+        self._ocupado = False
+        self._ultimo_hint = -1
+        self.setMinimumWidth(1)   # o mínimo vem da etapa mais compacta, não do layout inteiro
+
+    def definir_adaptacao(self, compactos: list[QToolButton] = (), opcionais: list[QWidget] = (),
+                          rotulos: list[QWidget] = ()) -> None:
+        self.rotulos = [w for w in rotulos if w is not None]
+        self.compactos = [b for b in compactos if b is not None]
+        self.opcionais = [w for w in opcionais if w is not None]
+        for b in self.compactos:
+            if b.text() and not b.toolTip():
+                b.setToolTip(b.text())
+        lay = self.layout()
+        if lay is not None:
+            lay.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self._adaptar()
+
+    @staticmethod
+    def _mostrar(w: QWidget, mostrar: bool) -> None:
+        if bool(w.property("adaptativo_oculto")) == mostrar:
+            w.setProperty("adaptativo_oculto", not mostrar)
+            w.setVisible(mostrar)
+
+    def _aplicar(self, nivel: int) -> None:
+        estilo = Qt.ToolButtonStyle.ToolButtonIconOnly if nivel >= 2 else Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        for b in self.compactos:
+            if b.text() and b.toolButtonStyle() != estilo:
+                b.setToolButtonStyle(estilo)
+        for w in self.rotulos:
+            self._mostrar(w, nivel < 1)
+        for w in self.opcionais:
+            self._mostrar(w, nivel < 3)
+
+    def _adaptar(self) -> None:
+        lay = self.layout()
+        if self._ocupado or lay is None:
+            return
+        self._ocupado = True
+        try:
+            for nivel in range(self.ETAPAS):
+                self._aplicar(nivel)
+                lay.invalidate()
+                if lay.sizeHint().width() <= self.width():
+                    break
+            self.nivel = nivel
+            self._ultimo_hint = lay.sizeHint().width()
+        finally:
+            self._ocupado = False
+
+    def resizeEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        super().resizeEvent(evento)
+        self._adaptar()
+
+    def event(self, evento) -> bool:
+        if evento.type() == QEvent.Type.LayoutRequest and not self._ocupado:
+            lay = self.layout()   # um filho mudou de tamanho (ex.: o texto do custo): adapta de novo
+            if lay is not None and lay.sizeHint().width() != self._ultimo_hint:
+                QTimer.singleShot(0, self._adaptar)
+        return super().event(evento)

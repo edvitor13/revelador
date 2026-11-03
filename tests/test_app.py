@@ -12,8 +12,9 @@ from PySide6.QtWidgets import QApplication
 app = QApplication(sys.argv[:1])
 from revelador import __version__
 from revelador.app import pasta_assets
-from revelador.ui.main_window import MainWindow, aplicar_tema
-aplicar_tema(app)
+from revelador.ui import tema
+from revelador.ui.main_window import MainWindow
+tema.instalar(app)
 janela = MainWindow()
 janela.show()
 app.processEvents()
