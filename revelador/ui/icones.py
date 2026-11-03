@@ -2,7 +2,8 @@
 
 ``icone(nome, cor, tamanho)`` devolve um ``QIcon`` nítido em telas comuns e em telas de alta densidade (1x e 2x).
 Traço de 1,8 unidade com pontas e junções arredondadas; formas cheias só onde o ícone pede (pontos, setas).
-``NOMES`` lista os ícones disponíveis; ``icone_app()`` devolve o ícone do programa (``assets/logo-*.png``).
+``NOMES`` lista os ícones disponíveis; ``icone_app()`` devolve o ícone do programa (``assets/logo-*.png``) e
+``bolinha(cor)`` um círculo cheio (a cor de uma pasta de tamanho, #32, em menus e rótulos).
 """
 
 from __future__ import annotations
@@ -214,6 +215,11 @@ def desenhar(nome: str, p: QPainter, c: QColor) -> None:
         p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 2.4, 2.4)
         _poli(p, [(4, 17), (9.5, 11.5), (13, 15), (15.5, 12.5), (20, 17)])
         p.drawEllipse(QPointF(15.5, 8.8), 1.4, 1.4)
+    elif nome == "opcoes":
+        # "⋯": três pontos na horizontal (menu de opções de um item, como uma pasta de tamanho).
+        _cheio(p, c)
+        for x in (5.5, 12, 18.5):
+            p.drawEllipse(QPointF(x, 12), 1.9, 1.9)
     else:
         raise KeyError(nome)
 
@@ -221,7 +227,7 @@ def desenhar(nome: str, p: QPainter, c: QColor) -> None:
 NOMES = (
     "importar", "pasta", "exportar", "salvar", "abrir", "configuracoes", "check", "mais", "fechar", "lixeira",
     "girar_esquerda", "girar_direita", "endireitar", "zoom_mais", "zoom_menos", "rosto", "recorte", "grade",
-    "filtro", "dinheiro", "info", "aviso", "chevron", "reset", "foto", "copiar", "colar", "comparar",
+    "filtro", "dinheiro", "info", "aviso", "chevron", "reset", "foto", "copiar", "colar", "comparar", "opcoes",
 )
 
 
@@ -252,6 +258,31 @@ def icone_dois_estados(nome: str, desmarcado: str, marcado: str, tamanho: int = 
     for estado, cor in ((QIcon.State.Off, desmarcado), (QIcon.State.On, marcado)):
         for escala in (1, 2):
             ic.addPixmap(_pixmap(nome, cor, tamanho, escala), QIcon.Mode.Normal, estado)
+    return ic
+
+
+@lru_cache(maxsize=64)
+def bolinha(cor: str, tamanho: int = 12, anel: bool = False) -> QIcon:
+    """Círculo cheio na cor `cor` ("#rrggbb") num quadrado de `tamanho` px (com folga de 1 px), em 1x e 2x.
+
+    ``anel``: a bolinha menor dentro de um anel claro (a opção escolhida num menu, onde o ícone esconde o visto)."""
+    ic = QIcon()
+    for escala in (1, 2):
+        pm = QPixmap(tamanho * escala, tamanho * escala)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(escala, escala, (tamanho - 2) * escala, (tamanho - 2) * escala)
+        if anel:
+            _pen(p, QColor(tema.TEXTO), 1.4 * escala)
+            p.drawEllipse(r.adjusted(0.7 * escala, 0.7 * escala, -0.7 * escala, -0.7 * escala))
+            r = r.adjusted(3 * escala, 3 * escala, -3 * escala, -3 * escala)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(cor))
+        p.drawEllipse(r)
+        p.end()
+        pm.setDevicePixelRatio(escala)
+        ic.addPixmap(pm)
     return ic
 
 

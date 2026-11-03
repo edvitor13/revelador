@@ -63,6 +63,17 @@ class Impressao:
     recorte: Recorte = field(default_factory=Recorte)
     papel_mm: tuple[float, float] | None = None  # só no tamanho "personalizado" (seção 4)
     preco_centavos: int | None = None            # só no personalizado: valor por cópia (seção 13)
+    pasta: str | None = None # id da Pasta de tamanho de onde veio; None = impressão avulsa
+
+@dataclass
+class Pasta:                 # pasta de tamanho (#32): grupo virtual do trabalho, nada muda no disco
+    id: str                  # "p" + 11 hexadecimais, nunca muda
+    nome: str
+    cor: str                 # chave da paleta de ui/tema.py (CORES_PASTA), não um hexadecimal
+    tamanho: str = "10x15"   # o tamanho de TODAS as impressões da pasta
+    copias: int = 1          # cópias das impressões novas
+    papel_mm: tuple[float, float] | None = None  # só no personalizado
+    preco_centavos: int | None = None            # só no personalizado
 
 @dataclass
 class Foto:
@@ -81,12 +92,28 @@ class Trabalho:
     dpi: int = 300
     margem_corte_mm: float = 2.0
     caminho: Path | None = None  # o .revelador, quando salvo
+    pastas: list[Pasta] = field(default_factory=list)  # na ordem da tela
 ```
 
 - Os **ajustes são da foto** (valem para todas as impressões dela); o **recorte é da impressão** (cada papel tem
   a sua proporção). Selecionar uma foto cria uma impressão no tamanho padrão com o recorte automático.
-- Toda mudança do modelo passa por comandos do `QUndoStack` (desfazer/refazer cobre seleção, impressões,
-  recortes e ajustes) e marca o trabalho como modificado.
+- **Pastas de tamanho** (#32): estar numa pasta = ter **uma** impressão com `pasta = <id>`, no tamanho (e no papel e
+  preço do personalizado) da pasta; a foto pode estar em várias pastas e ainda ter impressões avulsas. Cópias,
+  orientação, modo e recorte continuam por foto. Mudar o tamanho da pasta muda as impressões dela (recorte automático
+  refeito, manual reencaixado); mudar as cópias da pasta só atualiza as impressões que ainda tinham as cópias antigas
+  dela; tirar a foto da pasta remove aquela impressão e, sem nenhuma sobrando, a foto deixa de estar marcada; apagar a
+  pasta tira só as impressões dela. Ao entrar numa pasta, uma impressão avulsa do mesmo tamanho vira a da pasta
+  (mantém cópias e recorte), em vez de a foto sair revelada duas vezes; uma foto desmarcada descarta as avulsas que
+  guardava e entra só no tamanho da pasta. Tudo pela API do `Estado` (seção 10), nunca mexendo nas listas à mão.
+- **Desfazer/refazer** (#5, `ui/desfazer.py`): um `QUndoStack` por trabalho (`Estado.pilha`). O `Estado` guarda uma
+  *fotografia* do que é editável em cada foto (`selecionada`, `impressoes`, `ajustes`) e de `trabalho.pastas`;
+  `alterar`, `alterar_pastas` e `remover` comparam com ela e empilham o antes/depois. Entram marcar/desmarcar,
+  impressões (tamanho, cópias, orientação, modo, adicionar/remover), recortes, ajustes, pastas e tirar fotos do
+  trabalho (desfazer põe a foto de volta no mesmo lugar, com metadados e miniatura). Mudanças do sistema (importação,
+  metadados, rostos, trabalho aberto) não viram passo: só atualizam a fotografia (`absorver`). Ao desfazer, os
+  recortes automáticos são recalculados com os metadados e rostos do momento; um passo de uma foto só a torna a atual.
+  Trocar de trabalho limpa a pilha; desfazer sempre marca o trabalho como modificado. Detalhes da junção de gestos na
+  seção 10.
 
 ## 3. Carregar fotos
 
@@ -176,6 +203,17 @@ proxy reduzido a lado maior 1280 px. Devolve `Rosto` normalizado (caixa, olhos, 
 largura < 1,5% do lado menor da imagem. Roda uma vez por foto, num trabalhador, e o resultado vai para
 `Foto.rostos`.
 
+**Aos poucos** (#36, `ui/tarefas.FilaRostos`, em `Importacao.rostos`): a detecção tem um `QThreadPool` só dela com
+`limite_rostos()` trabalhadores (1; 2 em máquinas com 8 núcleos ou mais). A fila fica na thread principal e entrega ao
+pool uma foto por trabalhador livre, escolhida na hora: (a) as pedidas (`Estado.pedir_rostos`, usado por "Enquadrar
+pelos rostos" numa foto sem detecção), a foto atual e as recém-marcadas para revelar, que furam a fila e não esperam
+as miniaturas; (b) depois que as miniaturas terminam, as fotos visíveis no viewport da grade (`Estado.na_tela`,
+publicadas com espera de 150 ms); (c) a ordem da grade (`Estado.visiveis`) e o resto. Pausa enquanto a exportação
+roda (`Estado.exportando`, avisado pelo diálogo). Progresso discreto na barra de status ("Rostos: 12 de 80"), que
+volta a "Pronto." no fim. Rostos já guardados no `.revelador` não são detectados de novo; foto alterada no disco
+(`bytes`/`mtime` diferentes dos guardados) volta a `rostos = None` em `definir_info` e é detectada de novo. Foto que
+não abre para a detecção não é tentada de novo sozinha (só se for religada ou pedida pelo editor).
+
 Política (`enquadramento.recorte_automatico(W, H, proporcao, rostos, margem=0.0) → Recorte`, pura):
 
 1. **Sem rostos** → centro (`cx = cy = 0,5`, `zoom = 1`, `origem = "centro"`).
@@ -188,13 +226,15 @@ Política (`enquadramento.recorte_automatico(W, H, proporcao, rostos, margem=0.0
    depois sem ela. `margem` é a fração do lado menor do papel (2 mm num 10x15 = 2/102): quando há folga, nenhum
    rosto fica dentro dela.
 5. Recorte com `zoom = 1` (o maior recorte, sem ângulo) na proporção do papel.
-6. **Horizontal**: centraliza no **centróide dos rostos ponderado pela importância**, mantendo a ROI inteira dentro
-   do recorte (o rosto principal fica mais perto do centro).
+6. **Horizontal**: centraliza na **média simples dos centros dos rostos principais** (#36: todos contam igual, como
+   o autor pediu), mantendo a ROI inteira dentro do recorte (cabeças inteiras). A confiança só conta no limite
+   `PRINCIPAL`, que continua tirando os rostos pequenos ou de fundo.
 7. **Vertical**: põe a linha dos olhos (média ponderada pela importância; sem pontos dos olhos, 40% da altura da
    caixa) a 1/3 do topo do recorte; depois garante o topo da ROI dentro (cabeça nunca cortada) e, se couber, a
    base também.
 8. Se a ROI não couber nem com a expansão mais justa, **descarta** um rosto principal e repete. Entre os
-   **empatados** (importância até 1,25× a menor, `EMPATE`) sai o mais distante do centro do grupo (o da ponta).
+   **empatados** (importância até 1,25× a menor, `EMPATE`) sai o mais distante do centro do grupo (a média simples
+   dos centros; o da ponta).
    Com um rosto só e maior que o papel, centra nele e prioriza o topo da cabeça.
 9. Limita à imagem. `origem = "auto"` e `giro = 0` (quem chama põe o giro da impressão).
 
@@ -311,6 +351,13 @@ vibração, nitidez) **não é** a ordem de aplicação; esta é fixa em `aplica
   fotos selecionadas sem impressão; a pessoa pode voltar ou seguir.
 - **Destino**: pasta escolhida (lembra a última; padrão: Imagens) + subpasta `Revelação AAAA-MM-DD` (nome livre:
   ` (2)`...). Uma subpasta **por tamanho** com o nome do laboratório (`10x15`, `15x21`, `A4`...).
+- **Organizar por** (#32; `planejar(..., organizar="tamanho"|"pasta")`, `ORGANIZAR_TAMANHO`/`ORGANIZAR_PASTA`,
+  lembrado em `exportar/organizar`; a opção só aparece no diálogo quando o trabalho tem pastas): **por tamanho** (o
+  padrão) como acima; **por pasta**, cada pasta de tamanho vira uma subpasta com o nome dela (`nome_subpasta()`: tira
+  os caracteres proibidos do Windows, trata `CON`, `COM1` e afins, corta em 80 caracteres) e as impressões avulsas
+  continuam em subpastas por tamanho. As pastas escolhem o nome primeiro; nomes repetidos sem diferenciar maiúsculas
+  ganham ` (2)`. Dentro de cada subpasta vale o mesmo esquema de cópias. `Item` ganha `grupo` e `pasta`; `Plano`
+  ganha `organizar`. O custo não muda (continua por tamanho).
 - **Cópias** (opção, padrão *pastas por quantidade*):
   - `pastas`: `10x15/1 cópia/…`, `10x15/2 cópias/…` (sem subpasta se todas forem 1 cópia);
   - `nome`: `IMG_1234 (2 cópias).jpg`;
@@ -324,11 +371,14 @@ vibração, nitidez) **não é** a ordem de aplicação; esta é fixa em `aplica
   progressivo), `dpi=(dpi, dpi)`, perfil sRGB embutido, EXIF mínimo: só a data original (sem GPS, sem orientação,
   sem miniatura). Gravação em `*.tmp` na mesma pasta + `os.replace`.
 - **Resumo** `pedido.txt` na raiz da exportação: data, dpi, por tamanho o número de fotos e de cópias, o valor por
-  cópia e o subtotal (quando houver preço; seção 13), o total estimado e a lista de arquivos com cópias. É o que a
+  cópia e o subtotal (quando houver preço; seção 13), o total estimado e a lista de arquivos com cópias. Organizado
+  por pasta, ganha a seção "Pastas" (subpasta, tamanho, fotos e cópias), porque o laboratório não deduz o tamanho
+  por um nome como "Família". É o que a
   pessoa mostra ou envia ao laboratório.
 - **Execução**: fila num `QThreadPool` (até `min(4, núcleos − 1)` em paralelo), cada tarefa
   `receita(original) → JPEG`; progresso por arquivo; erro de um item não derruba os outros (fica em
-  `Resultado.erros` e no `pedido.txt`); cancelar termina o arquivo atual, apaga os `*.tmp` e informa o que ficou
+  `Resultado.erros` e no `pedido.txt`); enquanto roda, a detecção de rostos fica pausada (seção 5.2); cancelar
+  termina o arquivo atual, apaga os `*.tmp` e informa o que ficou
   pronto. No fim: "Abrir a pasta" (`system.reveal`). `exportar.py` é puro (sem Qt); o diálogo é testável sem modal
   (`definir_destino`, `iniciar`, `aguardar`, `cancelar`).
 - Testes: px e dpi exatos, perfil sRGB presente, sem orientação/GPS, nomes e pastas para cada modo de cópias,
@@ -346,6 +396,7 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   "formato": 1,
   "versao_app": "0.1.0",
   "padrao": {"tamanho": "10x15", "dpi": 300, "margem_corte_mm": 2.0},
+  "pastas": [{"id": "p3f9a0c1b2d4", "nome": "Família", "cor": "azul", "tamanho": "15x21", "copias": 2}],
   "fotos": [
     {
       "id": "f1",
@@ -360,7 +411,8 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
       "impressoes": [
         {"tamanho": "10x15", "copias": 2,
          "recorte": {"cx": 0.45, "cy": 0.38, "zoom": 1.0, "angulo": 0.0, "giro": 0, "origem": "auto"}},
-        {"tamanho": "20x30", "orientacao": "paisagem", "modo": "caber"}
+        {"tamanho": "20x30", "orientacao": "paisagem", "modo": "caber"},
+        {"tamanho": "15x21", "copias": 2, "pasta": "p3f9a0c1b2d4"}
       ]
     }
   ]
@@ -371,9 +423,36 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   caminho absoluto; `caminho_absoluto` fica como reserva. Foto não encontrada: o app oferece "Procurar…" e
   reaproveita a pasta para as outras. Foto sem caminho é ignorada, com aviso.
 - O tamanho `"personalizado"` é sempre aceito, mesmo com a lista de tamanhos válidos passada a `abrir()`.
-- Gravação segura por `projeto.gravar_texto_seguro()` (`.tmp` na mesma pasta + `os.replace`). **Recuperação**:
-  autossalvamento a cada 2 min em `%LOCALAPPDATA%\Revelador\recuperacao\<nome>.revelador` (ou
-  `sem-nome.revelador`), com caminhos absolutos; na abertura depois de uma falha, oferece recuperar.
+- **Pastas** (#32, ainda no formato 1): `pastas` (antes de `fotos`) só é gravado quando há pastas; cada uma com `id`,
+  `nome`, `cor`, `tamanho` e, quando usados, `copias`, `papel_mm` e `preco_centavos`. A impressão ganha `pasta` só
+  quando não é avulsa. Na leitura, com aviso: tamanho desconhecido vira o padrão (personalizado sem medida também);
+  cor vazia ou que não é texto vira `COR_PASTA_PADRAO` (`"azul"`), e uma chave desconhecida é mantida (a interface
+  mostra a primeira cor); `id` ausente ou repetido ganha um novo (as impressões do repetido ficam com a primeira
+  pasta); impressão com uma pasta que não existe, ou a segunda da mesma pasta na mesma foto, vira avulsa; o tamanho de
+  uma impressão de pasta é sempre o da pasta. Arquivo antigo sem pastas abre igual; `tests/data/exemplo_pastas.revelador`
+  é o exemplo do formato com pastas.
+- Gravação segura por `projeto.gravar_texto_seguro()` (`.tmp` na mesma pasta + `os.replace`).
+- **Salvamento automático** (#34, `ui/autosalvar.py`, `AutoSalvar`, na janela como `autosalvar`): a cada intervalo
+  (padrão **1 min**), se o trabalho tem alterações, ele é gravado sozinho, sem perguntar: o texto é montado na thread
+  principal (rápido) e gravado em segundo plano; a interface nunca trava. Trabalho com arquivo → no próprio
+  `.revelador`. Trabalho novo → nome automático "Revelação AAAA-MM-DD HH-MM" (ou o nome da primeira pasta importada:
+  a janela avisa o `AutoSalvar` antes de importar), em `Imagens\Revelador\Trabalhos\` (trocável nas
+  Configurações; com `REVELADOR_SETTINGS_DIR`, `<essa pasta>/Trabalhos`, para os testes nunca gravarem nas Imagens de
+  verdade), nome livre sem sobrescrever, e entra nos recentes. Trabalho novo vazio (sem fotos) nunca vira arquivo.
+  O app sabe quais arquivos ele mesmo criou pela preferência `autosalvar/automaticos` (lista JSON), sem mudar o
+  formato: "Salvar" num arquivo automático pergunta onde salvar, como um trabalho sem nome (escolher o mesmo caminho o
+  torna da pessoa, sem apagar nada); "Salvar como…" grava no lugar novo e **apaga o arquivo automático antigo** (só
+  ele). Indicador discreto na barra de status ("Salvo às 14:32" / "Salvando…"); falha → faixa de aviso não modal, o
+  trabalho continua modificado e nada se perde. Com o automático ligado, fechar o app e trocar de trabalho (Novo,
+  Abrir, recuperar) **salvam sem perguntar**; se a gravação falhar, a pergunta volta. Desligado, vale o
+  `perguntar_salvar` de sempre. Um salvamento manual espera o automático em andamento terminar (`ProjetoUi.salvo`
+  avisa as gravações manuais). Preferências: `autosalvar/ligado` (padrão ligado), `autosalvar/intervalo_min` (1 a 60,
+  padrão 1) e `autosalvar/pasta` (vazio = a pasta padrão).
+- **Recuperação** (rede de segurança, mantida): autossalvamento a cada 2 min em
+  `%LOCALAPPDATA%\Revelador\recuperacao\<nome>.revelador` (ou `sem-nome.revelador`), com caminhos absolutos; na
+  abertura depois de uma falha, oferece recuperar. Um salvamento automático bem-sucedido apaga as cópias de
+  recuperação, então na prática ela só guarda o que mudou desde o último salvamento — e continua valendo por inteiro
+  quando o automático está desligado ou falhando. Por isso não foi simplificada.
 - O `.msi` associa `.revelador` ao app (recurso opcional `AssociacaoRevelador` no `.wxs`, ProgId `Revelador.Trabalho`,
   só em `HKCU\Software\Classes`).
 - **Interface** (`ui/projeto_ui.py`, `ProjetoUi`, na janela como `projeto_ui`): liga `acao_novo`, `acao_abrir`,
@@ -383,7 +462,10 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   **religar fotos** ("Procurar…": escolhe uma pasta, procura pelo nome nas subpastas e reaproveita o achado para as
   outras fotos que faltam; teto de 300 mil arquivos olhados) aparecem em **faixas não modais** (`PilhaFaixas`) logo
   abaixo da barra superior; só as escolhas de arquivo/pasta e a pergunta de salvar abrem diálogo (os testes as
-  substituem). Foto que falta fica na grade com erro, sem derrubar o resto. **Linha de comando**:
+  substituem). "Procurar…" também está no menu de contexto da grade quando alguma foto escolhida falta no disco.
+  Foto que falta fica na grade com erro, sem derrubar o resto. **Arrastar um `.revelador`** para a janela abre o
+  primeiro solto por `projeto_ui.abrir` (adiado por um `QTimer`, para a pergunta de salvar não travar o Explorer); as
+  fotos e pastas soltas junto entram depois no trabalho aberto (se a pessoa cancelar, nada entra). **Linha de comando**:
   `app.separar_argumentos` manda o primeiro `.revelador` para `projeto_ui.abrir` e o resto (fotos e pastas) para a
   importação.
 
@@ -398,8 +480,8 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
 │ Revelador [Importar ▾] [Projeto ▾]  Mostrar [Todas|Selecionadas]  Tamanho [10x15 ▾]  (R$ 34,40) [Exportar]  ⚙ │
 ├─ faixas não modais (avisos, recuperação, "Procurar…") ───────────────────────────────────────┤
 ├────────────────┬───────────────────────────────────────────────┬──────────────────────────┤
-│ Grade de        │  Editor: a foto com a moldura do papel          │ Painel em cartões        │
-│ miniaturas      │  · fora do papel escurecido                     │ ▸ Impressões             │
+│ ▾ PASTAS  + Nova│  Editor: a foto com a moldura do papel          │ Painel em cartões        │
+│ ● Família 10x15 │  · fora do papel escurecido                     │ ▸ Impressões             │
 │ ☑ marca         │  · margem de corte tracejada                    │   10x15 ×2  (retrato) ✎  │
 │ 10x15 ×2        │  · aviso de resolução                           │   + Adicionar tamanho    │
 │ ⚠ resolução     │  rodapé: ícones · Automático · Moldura|Resultado │ ▸ Luz  ▸ Cor  ▸ Detalhe │
@@ -410,10 +492,11 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
 ```
 
 - **Barra superior** (`MainWindow`, `BarraAdaptavel`: some rótulos e botões opcionais quando a janela estreita):
-  logo e nome; **Importar ▾** (arquivos, pasta); **Projeto ▾** (Novo, Abrir, Abrir recente, Salvar, Salvar como);
-  **Mostrar** (Todas | Selecionadas, `filtro_mostrar`); **tamanho padrão** (`SeletorTamanhoPadrao`); a **pílula de
-  custo** (`Pilula`: total estimado do pedido); **Exportar para revelação** (botão `Primary`); e a **engrenagem**
-  (Preços do laboratório…, Resumo do pedido, Verificar atualizações…, Sobre).
+  logo e nome; **Importar ▾** (arquivos, pasta); **Projeto ▾** (Novo, Abrir, Abrir recente, Salvar, Salvar como,
+  Desfazer, Refazer); **Mostrar** (Todas | Selecionadas, `filtro_mostrar`); **tamanho padrão**
+  (`SeletorTamanhoPadrao`); a **pílula de custo** (`Pilula`: total estimado do pedido); **Exportar para revelação**
+  (botão `Primary`); e a **engrenagem** (Preços do laboratório…, Resumo do pedido, Configurações…, Tela de
+  boas-vindas, Verificar atualizações…, Sobre).
 - **Grade** (`ui/grade.py`, `QListView` em modo ícone + modelo e delegate próprios, miniaturas sob demanda do
   cache em disco): cartão por foto com marca de seleção (clique na marca ou Espaço), etiqueta de tamanho(s) e
   cópias, aviso de resolução baixa e de erro; Delete tira do trabalho (nunca do disco). Seleção múltipla
@@ -428,15 +511,59 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
     (`grade.largura_duas_colunas`), recalculada quando o tamanho muda (`Grade.tamanho_mudou`); ao abrir, uma largura
     de divisória salva menor que isso (como os 260 px da primeira versão) é corrigida e o editor cede o que falta
     (`MainWindow._corrigir_largura_grade`).
+  - **Menu de contexto** (#5, #9; `Grade.menu_contexto(fotos) -> QMenu`, montado sem `exec()`, itens identificados
+    pelo `objectName`): Marcar / Desmarcar para revelação, **Tamanho ▸** (os tamanhos da tabela), **Cópias ▸** (1, 2,
+    3, 5, 10, uma a mais, uma a menos), **Procurar…** (só quando alguma escolhida falta no disco: `procurar_pedido` →
+    `projeto_ui.procurar_faltando`) e Remover do trabalho. Vale para todas as fotos escolhidas (Ctrl/Shift) e cada
+    ação é **um passo só** do desfazer (`estado.lote`), como Espaço em várias fotos. Tamanho: marca a foto se preciso
+    e troca a **primeira impressão avulsa** (recorte automático refeito, manual reencaixado), sem mexer nas outras
+    avulsas nem nas de pastas; se alguma avulsa já está nesse tamanho, nada muda; foto só com impressões de pastas
+    ganha uma avulsa. Cópias: todas as impressões da foto, limitadas a 1..999. **Adicionar à pasta ▸** (as pastas
+    + "Nova pasta…"; a pasta em que todas as escolhidas já estão aparece desligada, com um anel na bolinha) e **Tirar
+    da pasta ▸** (quando alguma escolhida está numa pasta) vêm logo depois de "Cópias ▸".
+  - **Pastas de tamanho** (#32, `ui/pastas.py`, `SecaoPastas`, ligada em `_ligar_pastas()`): seção no topo da grade,
+    acima da lista, que aparece e some com ela. Cabeçalho "PASTAS" com "+ Nova pasta", recolhível (lembrado em
+    `grade/pastas_recolhidas`; recolhida, mostra o nome da pasta filtrada); "Todas" e uma linha por pasta com a
+    bolinha da cor, o nome, o tamanho, o número de fotos e o botão "⋯". Sem pastas, só o cabeçalho; a partir de 5
+    pastas a lista rola (`MAX_LINHAS`). Com a grade estreita o nome é cortado com "…" e o tamanho some antes da
+    contagem; a seção não aumenta a largura mínima da grade. **Nova pasta** (`PastaDialog`, testável sem `exec()`):
+    nome, tamanho (o padrão já escolhido, inclusive personalizado) e cor (`SeletorCor`, a paleta `CORES_PASTA`, já na
+    próxima cor livre). **Menu da pasta** (clique direito ou "⋯"): renomear, cor, tamanho (inclusive personalizado),
+    cópias padrão, mover para cima/baixo e apagar (com confirmação substituível em teste). **Clicar numa pasta filtra
+    a grade** (`Grade.definir_pasta`) em conjunto com "Mostrar": a grade mostra as fotos que passam nos dois (pasta
+    "Natal" + Selecionadas = as fotos marcadas da "Natal"); clicar de novo na pasta, ou em "Todas", tira o filtro de
+    pasta sem mexer na barra superior; se a pasta filtrada some (apagada ou desfeita), volta a "Todas".
+    **Arrastar fotos da grade para uma pasta** (várias de uma vez) usa o mime próprio `application/x-revelador-fotos`
+    (`MIME_FOTOS`, só os ids, sem URLs: soltar no Explorer nunca copia nem move o original). Na miniatura, o **chip do
+    tamanho ganha a cor da pasta** (`layout_chips(..., pastas=)` devolve `Chip`, uma tupla de 4 com `.cor`; no modo
+    compacto, a cor da primeira impressão de pasta). Nomes de objeto novos no tema: `SecaoPastas` e `SecaoTitulo`;
+    ícone `opcoes` e `icones.bolinha(cor, anel=)`.
+  - A grade publica no `Estado` a ordem visível (`definir_visiveis`, com o filtro aplicado: navegação ←/→ do
+    editor) e, com espera de 150 ms ao rolar ou redimensionar, as fotos que aparecem no viewport (`definir_na_tela`:
+    prioridade dos rostos, seção 5.2).
 - **Editor** (`ui/editor.py`, widget próprio): seletor **Moldura | Resultado**. Moldura: a foto inteira com a
   moldura do papel na proporção exata, fora do papel escurecido, margem de corte tracejada, opção de mostrar os
   rostos; arrastar move o recorte, a roda dá zoom, tudo passa por `enquadramento.reencaixar`. Resultado: a prévia
   pela receita. Rodapé (`Rodape`) com a informação do tamanho e da resolução, ícones de girar 90°, **Girar papel**
-  (retrato ↔ paisagem, `O`), zoom −/+, rostos, "Enquadrar pelos rostos" e o slider de endireitar. Impressão em modo *caber* mostra sempre o resultado.
+  (retrato ↔ paisagem, `O`), zoom −/+, rostos, "Enquadrar pelos rostos" (numa foto ainda sem detecção, pede os
+  rostos na hora e refaz o recorte quando chegam) e o slider de endireitar.
+  - **Alças nos cantos** (#6): um "L" em cada canto do papel, laranja sob o mouse. Arrastar uma alça muda só o zoom
+    com o **canto oposto parado** (o tamanho acompanha o mouse ao longo da diagonal do papel, zoom de 1 a
+    `ZOOM_MAXIMO`), com a proporção exata e o recorte sempre dentro da imagem (empurrado para dentro quando o canto
+    oposto não pode ficar parado); o cursor de redimensionar acompanha o endireitar; o recorte vira `"manual"`.
+    Durante o arrasto só a moldura é redesenhada. Sem alças no modo *caber* e no Resultado. Gesto chamável direto:
+    `Editor.puxar_canto(canto, ponto)`.
+  - **←/→ entre as fotos** (#6): com o foco no visor ou no rodapé do editor (o editor aceita foco por clique), ← e →
+    vão para a foto anterior/seguinte entre as visíveis na grade (respeita o filtro, para nas pontas;
+    `estado.vizinha`), Home/End para a primeira/última (`Editor.navegar(passo)`, `Editor.ir_para_ponta(ultima)`). O
+    slider de endireitar continua usando as setas e a grade continua navegando quando o foco está nela. Impressão em modo *caber* mostra sempre o resultado.
 - **Painel lateral**: coluna rolável de **cartões** (`Card`): **Impressões** (`ui/painel_impressoes.py`: tamanhos
   com cópias, orientação, modo preencher/caber, "+ Adicionar tamanho", remover, tamanho personalizado), **Luz**,
   **Cor** e **Detalhe** (`ui/painel_ajustes.py`, gerados de `ajustes.PARAMS`/`GRUPOS`; duplo clique no controle volta
   ao padrão, o botão do cartão restaura o grupo) e botões de comparar, copiar, colar e restaurar todos.
+  - **Impressão de pasta** (#32): mostra o nome e a cor da pasta; o combo de tamanho fica desligado, com a dica de
+    mudar pelo menu da pasta (vale para todas as fotos dela); remover essa impressão tira a foto da pasta
+    (`tirar_da_pasta`), mesmo sendo a última — e aí a foto fica desmarcada.
   - **Orientação explícita** (#33): no lugar de um combo com "Automática", um `Segmented` **Retrato | Paisagem**. Com
     `orientacao = "auto"`, vem marcada a opção resolvida pela forma da foto (`tamanhos.orientacao_efetiva` sobre a
     imagem já girada), com o indicador discreto "auto" (dica: "escolhida pela forma da foto"); clicar numa opção fixa
@@ -449,16 +576,60 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
     atualizam na hora (`estado.alterar(foto, pedido=True)`).
 - **Atalhos** (os que existem hoje): Ctrl+I importar fotos · Ctrl+Shift+I importar pasta · Ctrl+E exportar · Ctrl+N
   novo · Ctrl+O abrir · Ctrl+S salvar · Ctrl+Shift+S salvar como · Ctrl+Q sair · Espaço marca/desmarca ·
-  Delete remove da grade · R / Shift+R gira 90° (horário / anti-horário) · O gira o papel (retrato ↔ paisagem) ·
+  Delete remove da grade · Ctrl+Z desfazer · Ctrl+Y / Ctrl+Shift+Z refazer · ← / → foto anterior / seguinte e
+  Home / End primeira / última (foco no editor) · R / Shift+R gira 90° (horário / anti-horário) · O gira o papel
+  (retrato ↔ paisagem) ·
   A recorte automático (pelos rostos) · `+` / `−` uma cópia a mais / a menos na impressão atual · Ctrl++ / Ctrl+−
   zoom · Ctrl + roda do mouse sobre a grade muda o tamanho das miniaturas · **segurar `\`** mostra o antes/depois ·
   Ctrl+Shift+C / Ctrl+Shift+V copiar/colar ajustes.
-  Desfazer/refazer e ←/→ entre fotos **no editor** ainda não existem (as setas navegam na grade).
-- **Arrastar e soltar** fotos e pastas na janela importa (recursivo, só formatos suportados).
+- **Arrastar e soltar** fotos e pastas na janela importa (recursivo, só formatos suportados); um `.revelador` solto
+  abre o trabalho (seção 9).
+- **Importar pasta** (#32, `MainWindow.escolher_pasta`): depois de escolher a pasta do disco, um passo curto
+  (`PassoImportarPasta`, testável sem `exec()`): "Criar pasta de tamanho" já marcado, nome = o da pasta do disco
+  (editável), tamanho = o padrão, cor = a próxima da paleta. Marcado, todas as fotos daquela pasta do disco entram
+  marcadas para revelação na pasta de tamanho (inclusive as que já estavam no trabalho), num passo só do desfazer
+  ("Desfazer importação da pasta “X”"; a importação em si fica fora do desfazer); sem nenhuma foto, nenhuma pasta é
+  criada. Desmarcado, só importa; cancelar não importa nada. Vale para "Importar pasta…" da barra e da tela de
+  boas-vindas; uma pasta arrastada do Explorer continua só importando.
+- **Desfazer/refazer** (#5; modelo na seção 2): `acao_desfazer`/`acao_refazer` ligadas em `_ligar_desfazer()`,
+  habilitadas por `canUndo`/`canRedo`, com o texto "Desfazer {o quê}" deduzido da mudança ("Desfazer tamanho 15x21",
+  "Desfazer cópias em 3 fotos"). Gestos contínuos viram um passo só: `alterar(foto, *, pedido=False, juntar=None)` —
+  chamadas seguidas com a mesma chave (`recorte:<i>`, `endireitar:<i>`, `ajuste:<chave>`), na mesma foto e sem outro
+  passo no meio, se juntam até `fim_gesto()` (soltar o mouse ou o slider), cerca de 1 s parado (`JUNTAR_MS`, para a
+  roda do mouse) ou um desfazer/refazer; `comecar_gesto()` segura a junção durante um arrasto (pausar no meio não
+  divide o passo). O giro de 90° é sempre um passo próprio. O filtro que marca começo e fim dos gestos do editor
+  (visor e slider de endireitar) é instalado pela janela (`desfazer.ligar_gestos(estado, *widgets)`), sem mexer nos
+  eventos do editor. `lote(texto)` junta tudo o que acontece dentro dele num passo (aninha, vale o texto de fora,
+  lote vazio não empilha).
+- **Configurações** (#34, `ui/configuracoes.py`, `ConfiguracoesDialog`, engrenagem → Configurações…, ligada em
+  `_ligar_autosalvar()`): diálogo em seções (subclasses de `Secao`, identificadas por `id_secao`), por enquanto com o
+  salvamento automático (ligado, intervalo em minutos, pasta dos trabalhos automáticos); ao aplicar, emite `aplicado`
+  e o `AutoSalvar` relê as preferências. Testável sem `exec()`.
+- **Barra de status**: à esquerda o resumo do pedido e as mensagens de progresso (importação, "Rostos: 12 de 80");
+  à direita, o indicador permanente do salvamento automático ("Salvo às 14:32" / "Salvando…").
+- **Tela de boas-vindas** (#35, `ui/boas_vindas.py`, `BoasVindas`, na janela como `boas_vindas`, ligada em
+  `_ligar_boas_vindas()`): uma página que toma o lugar das três áreas (abaixo da barra superior e das faixas), com a
+  mesma largura mínima delas, e funciona em janela estreita. Aparece ao abrir o app **sem arquivos na linha de
+  comando** (`app.main` chama `janela.boas_vindas.ao_abrir()` depois de tratar os argumentos; testes e capturas que
+  criam a `MainWindow` direto não a veem) se `boas_vindas/mostrar_ao_abrir` estiver ligada (padrão; interruptor na
+  própria tela), e também pela engrenagem (`acao_boas_vindas`). Sai sozinha quando a lista de fotos muda (trabalho
+  novo, aberto ou recuperado, importação), pelo "Fechar" e pelo Esc. Tem: ações grandes **Novo trabalho**,
+  **Importar fotos**, **Importar pasta** e **Abrir trabalho…** (disparam as ações do contrato); **Trabalhos
+  recentes** (`projeto_ui.recentes()`, salvos à mão ou automaticamente), cada um com nome e data, número de fotos e de
+  selecionadas, tamanhos e 3–4 miniaturas do cache (lidos em segundo plano), abertos com um clique, removíveis da lista
+  (`projeto_ui.esquecer_recente`), e os que não existem mais somem; o trabalho **recuperável** em destaque, com
+  Recuperar e Descartar (enquanto a tela está aberta, a faixa de recuperação vira esse cartão; ao fechar, a faixa
+  volta se a cópia ainda existir); **Novidades desta versão** (`revelador/novidades/release_v{versão}.md`, o mesmo
+  arquivo das notas da release); **Atualizações** ("Versão X disponível" com o botão que abre o diálogo da seção 11,
+  ou "Você está na versão mais recente"); e a dica do fluxo Importar → Marcar e enquadrar → Exportar. As novidades
+  abrem sozinhas (diálogo) **uma vez depois de cada atualização**: `boas_vindas/versao_vista` guarda a última versão
+  vista; na primeira execução só é gravada.
 - **Preferências** (`ui/prefs.settings()`): `QSettings` no registro (`HKCU\Software\Revelador\Revelador`) ou, com
   `REVELADOR_SETTINGS_DIR`, num `.ini`. Guarda geometria e divisórias da janela, últimas pastas, tamanho padrão, dpi,
-  modo de cópias, preços, o tamanho das miniaturas (`grade/miniatura`), `projeto/recentes` e as chaves
-  `atualizacao/*` (seção 11).
+  modo de cópias, a organização da exportação (`exportar/organizar`), preços, o tamanho das miniaturas
+  (`grade/miniatura`), a seção de pastas recolhida (`grade/pastas_recolhidas`), `projeto/recentes`, o salvamento automático (`autosalvar/ligado`, `autosalvar/intervalo_min`,
+  `autosalvar/pasta`, `autosalvar/automaticos`; seção 9), a tela de boas-vindas (`boas_vindas/mostrar_ao_abrir`,
+  `boas_vindas/versao_vista`) e as chaves `atualizacao/*` (seção 11).
 - **Erros**: `crashlog.py` instala `sys.excepthook` e `threading.excepthook`, grava em
   `%LOCALAPPDATA%\Revelador\logs\erro-<data>.txt` (até 20 arquivos de 256 KB cada) e mostra uma mensagem curta
   com "Abrir registro".
@@ -471,7 +642,8 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
   tem fontes).
 - **`MainWindow`** (`ui/main_window.py`) e o **contrato das ações**: a janela cria `acao_importar`,
   `acao_importar_pasta`, `acao_exportar`, `acao_novo`, `acao_abrir`, `acao_salvar`, `acao_salvar_como`,
-  `menu_recentes`, `acao_verificar_atualizacoes`, `acao_precos`, `acao_resumo`, `acao_sobre` e `acao_sair`, com
+  `menu_recentes`, `acao_desfazer`, `acao_refazer`, `acao_configuracoes`, `acao_boas_vindas`,
+  `acao_verificar_atualizacoes`, `acao_precos`, `acao_resumo`, `acao_sobre` e `acao_sair`, com
   atalho valendo na janela inteira; a barra superior só as posiciona. As que ainda não têm dono ficam desligadas;
   **cada parte conecta e liga as suas** num `_ligar_<parte>()` chamado no fim do `__init__`. Ninguém cria menu ou
   botão de barra por conta própria. `arquivos_iniciais` guarda os caminhos da linha de comando.
@@ -479,18 +651,25 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
   modelo por ele e reagem aos sinais. Só a thread principal o toca; workers devolvem por sinal.
   - Sinais: `fotos_mudaram()` (lista mudou), `atual_mudou(foto | None)`, `impressao_mudou(indice)` (impressão do
     editor), `foto_mudou(id)` (qualquer mudança numa foto), `pedido_mudou()` (muda orçamento ou exportação),
-    `modificado_mudou(bool)`, `comparando_mudou(bool)`.
+    `modificado_mudou(bool)`, `comparando_mudou(bool)`, `pastas_mudaram()` (pastas de tamanho), `rostos_pedidos(id)`
+    (alguém quer os rostos desta foto já) e `exportando_mudou(bool)`.
   - Atributos: `trabalho`, `atual`, `indice_impressao`, `info` (`InfoFoto` por id), `miniaturas` (JPEG do cache por
     id), `erros` (mensagem amigável das fotos que não abriram, por id), `comparando` (antes/depois; não vai para o
-    arquivo), `modificado`, `impressao_atual`.
+    arquivo), `modificado`, `impressao_atual`, `visiveis` (ids visíveis na grade, na ordem dela), `na_tela` (ids no
+    viewport da grade), `exportando` e `pilha` (o `QUndoStack`).
   - Métodos: `por_id`, `definir_trabalho`, `adicionar`, `remover`, `definir_atual`, `definir_impressao`,
     `definir_info`, `definir_miniatura`, `definir_erro`, `definir_rostos`, `definir_comparando`, `selecionar` (a
     primeira seleção cria uma impressão no tamanho padrão), `refazer_recortes_auto` (usa `recorte_sugerido` nas
-    impressões não manuais), `alterar(foto, pedido=False)` e `marcar_modificado`. Mexeu no modelo →
-    `estado.alterar(foto, pedido=...)`.
-- **Pendências conhecidas**: desfazer/refazer (`QUndoStack`), alças de canto no editor, ←/→ entre fotos no editor,
-  arrastar um `.revelador` para a janela, "Procurar…" no menu de contexto da grade, miniatura da grade com os
-  ajustes, aplicar o tamanho a várias fotos de uma vez e o aviso inofensivo do OpenCV no stderr.
+    impressões não manuais), `alterar(foto, *, pedido=False, juntar=None)`, `marcar_modificado`, `definir_visiveis`,
+    `vizinha(passo)`, `definir_na_tela`, `pedir_rostos(foto)`, `definir_exportando`; desfazer: `lote(texto)`,
+    `desfazer`, `refazer`, `comecar_gesto`, `fim_gesto`, `absorver(foto)`; pastas de tamanho: `pasta_por_id`,
+    `impressao_da_pasta`, `fotos_da_pasta`, `pastas_da_foto`, `criar_pasta`, `alterar_pasta`, `mover_pasta`,
+    `apagar_pasta`, `adicionar_a_pasta`, `tirar_da_pasta` e `alterar_pastas`. Mexeu no modelo →
+    `estado.alterar(foto, pedido=...)` (várias fotos: dentro de um `lote`); mudança que vem do sistema e não deve
+    virar passo do desfazer → `absorver(foto)`.
+- **Pendências conhecidas**: miniatura da grade com os ajustes, os títulos dos grupos (Comuns, Ampliações,
+  Quadrados) no submenu "Tamanho ▸" (o estilo do Qt só desenha separadores) e o aviso inofensivo do OpenCV no
+  stderr.
 
 ## 11. Atualização automática
 
@@ -517,6 +696,10 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
   release sem o pacote), mostra só o link. "Verificar atualizações…" (engrenagem) sempre responde, inclusive com
   "já está na versão mais recente". **`REVELADOR_SEM_REDE`** (qualquer valor) desliga a consulta ao abrir: testes e
   capturas de tela a definem.
+- Para a tela de boas-vindas (#35), o `Verificador` tem também o sinal `verificado(release, erro)`, o atributo
+  `ultimo` (o último resultado), `consultar_silencioso()` (consulta sem caixa nem diálogo, que não conta como a
+  verificação do dia), `deve_verificar_ao_abrir()` e `mostrar_dialogo(release)`. Ao abrir o app, a tela espera a
+  verificação do dia se ela for rodar; com `REVELADOR_SEM_REDE`, mostra só a versão atual, sem consultar.
 
 ## 12. Empacotamento
 

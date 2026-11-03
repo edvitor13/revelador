@@ -60,3 +60,25 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 - Orientação e cópias mais diretas: seletor Retrato | Paisagem que já mostra a orientação escolhida pela forma da foto
   (com "auto" e "Voltar ao automático"), botão "Girar papel" no painel e no editor (atalho `O`), botões − e + nas
   cópias, atalhos `+` e `−` e clique no chip da grade para somar uma cópia (Shift+clique tira uma) (#33).
+- Desfazer e refazer (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z, no menu Projeto) para marcar, tamanhos, cópias, orientação,
+  recortes, ajustes, pastas e fotos tiradas do trabalho; um arrasto ou um controle deslizante vira um passo só (#5, #6).
+- Menu de contexto da grade: marcar, tamanho e cópias de várias fotos de uma vez, "Procurar…" para fotos que mudaram
+  de lugar e remover do trabalho (#5, #9).
+- Editor: alças nos cantos da moldura para aproximar com o canto oposto parado e ← / → (Home / End) para ir à foto
+  anterior / seguinte sem sair do editor (#6).
+- Soltar um `.revelador` na janela abre o trabalho (#9).
+- Pastas de tamanho: seção Pastas no topo da grade, com nome, cor, tamanho e cópias padrão; uma foto arrastada para
+  a pasta "10x15" (ou pelo menu "Adicionar à pasta ▸") já fica marcada para revelar em 10x15, com o chip na cor da
+  pasta; clicar na pasta filtra a grade; "Importar pasta…" já cria a pasta com o nome da pasta do disco e as fotos
+  marcadas; gravadas no `.revelador` e exportação organizada por pasta, com a seção "Pastas" no `pedido.txt` (#32).
+- Salvamento automático a cada minuto: o trabalho com arquivo grava no próprio `.revelador` e o trabalho novo ganha
+  nome e lugar em `Imagens\Revelador\Trabalhos`; indicador "Salvo às…" na barra de status, aviso se a gravação
+  falhar e fechar sem a pergunta de salvar; tudo ajustável em engrenagem → Configurações (#34).
+- Tela de boas-vindas ao abrir: novo trabalho, importar, abrir, trabalhos recentes com miniaturas, recuperação,
+  novidades desta versão (abertas sozinhas uma vez depois de cada atualização) e aviso de versão nova (#35).
+- Rostos detectados aos poucos, numa fila leve que não pesa a máquina: a foto aberta, a recém-marcada e as visíveis
+  vêm primeiro, a fila pausa durante a exportação e o progresso aparece na barra de status (#36).
+
+### Mudado
+- Enquadramento automático com vários rostos: o centro horizontal é a média simples dos rostos principais (antes,
+  ponderada pelo tamanho), sempre com todas as cabeças inteiras (#36).

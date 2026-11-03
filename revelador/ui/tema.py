@@ -17,7 +17,8 @@ Decisões de design:
 Nomes de objeto da folha de estilo: ``TopBar``, ``Panel``, ``Card``, ``Primary``, ``Danger``, ``Flat``, ``Seg``,
 ``SegBox``, ``Muted``, ``Faint``, ``PanelTitle``, ``Kicker``, ``Value``, ``Mono``, ``Canvas`` (fundo do editor), ``Rodape``
 (barra de controles do editor), ``Pilula`` (botão arredondado do custo do pedido), ``LinhaImp`` (uma impressão no painel)
-e ``AppName`` (nome do app na barra superior). Botão com menu: ``setProperty("menu", True)`` mostra a setinha.
+``AppName`` (nome do app na barra superior), ``SecaoPastas`` (faixa das pastas de tamanho acima da grade) e
+``SecaoTitulo`` (título pequeno de uma seção, como "PASTAS"). Botão com menu: ``setProperty("menu", True)`` mostra a setinha.
 """
 
 from __future__ import annotations
@@ -175,6 +176,8 @@ QToolTip {{ background: {PAINEL3}; color: {TEXTO}; border: 1px solid {BORDA_FORT
 QWidget#Panel {{ background: {PAINEL}; }}
 QWidget#Canvas {{ background: {CANVAS_EDITOR}; }}
 QWidget#Rodape {{ background: {PAINEL}; border-top: 1px solid {BORDA}; }}
+QWidget#SecaoPastas {{ background: {PAINEL}; border-bottom: 1px solid {BORDA}; }}
+QLabel#SecaoTitulo {{ font-family: "{t}"; font-size: 8pt; font-weight: 600; color: {APAGADO}; letter-spacing: 1px; }}
 QLabel#AppName {{ font-family: "{t}"; font-size: 13pt; font-weight: 600; color: {TEXTO}; }}
 QWidget#TopBar {{ background: {PAINEL}; border-bottom: 1px solid {BORDA}; }}
 QFrame#Card {{ background: {PAINEL2}; border: 1px solid {BORDA}; border-radius: {RAIO_CARD}px; }}
