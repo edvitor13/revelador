@@ -1,6 +1,6 @@
 """Ponto de entrada da interface do Revelador.
 
-Instala o registro de erros, aplica o tema e abre a janela principal (``ui/main_window.py``); as fotos passadas
+Instala o registro de erros, aplica o tema (``ui/tema.py``) e abre a janela principal (``ui/main_window.py``); as fotos passadas
 na linha de comando ficam em ``janela.arquivos_iniciais`` para a importação. ``--diagnostico ARQUIVO.json``
 confere as dependências nativas e sai sem abrir janela
 (usado pelo CI no executável empacotado; veja ``diagnostico.py``).
@@ -58,7 +58,6 @@ def main(argv: list[str] | None = None) -> int:
 
         return diagnostico.main(Path(args[1]) if len(args) > 1 else None)
 
-    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     if sys.platform == "win32":
@@ -73,15 +72,13 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
     app.setApplicationVersion(__version__)
-    icone = pasta_assets() / "logo-256.png"
-    if icone.is_file():
-        app.setWindowIcon(QIcon(str(icone)))
 
     from . import crashlog
-    from .ui.main_window import MainWindow, aplicar_tema
+    from .ui import tema
+    from .ui.main_window import MainWindow
 
     crashlog.instalar()
-    aplicar_tema(app)
+    tema.instalar(app)  # Fusion + paleta escura + folha de estilo + fonte + ícone do app
     janela = MainWindow()
     janela.arquivos_iniciais = [a for a in args if not a.startswith("--")]  # a importação vem na #2
     _ligar_aviso_de_erro(janela)
