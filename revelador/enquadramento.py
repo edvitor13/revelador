@@ -19,7 +19,8 @@ import math
 from dataclasses import dataclass, replace
 from typing import Iterable, NamedTuple
 
-from .projeto import Recorte, Rosto
+from . import tamanhos
+from .projeto import Impressao, Recorte, Rosto
 
 # --- política (seção 5.2) -------------------------------------------------------------------------------------------
 
@@ -269,3 +270,23 @@ def recorte_automatico(W: float, H: float, proporcao: float, rostos: Iterable[Ro
             cy = min(cy, y0 + h / 2)       # a cabeça (topo) tem prioridade sobre o queixo
         cy = _intervalo(cy, h, H, y0, y1)
     return Recorte(cx=cx / W, cy=cy / H, zoom=1.0, angulo=0.0, giro=0, origem="auto")
+
+
+def recorte_sugerido(impressao: Impressao, largura: int, altura: int, rostos: Iterable[Rosto] | None,
+                     margem_corte_mm: float = 0.0) -> Recorte:
+    """Recorte automático de UMA impressão: o caminho único usado pela interface (ao selecionar, ao trocar o tamanho
+    ou a orientação de uma impressão não manual e quando os rostos chegam).
+
+    ``largura × altura`` e ``rostos`` são da imagem orientada SEM giro (como ``imagem.InfoFoto`` e ``Foto.rostos``).
+    Aplica o giro da impressão, resolve a orientação ("auto" segue a imagem girada) e a proporção do papel, converte a
+    margem de corte (mm) em fração do lado menor do papel e chama ``recorte_automatico``. O giro da impressão é
+    mantido. Quem chama só substitui o recorte quando ``origem != "manual"``.
+    """
+    giro = int(impressao.recorte.giro) % 4
+    W, H = (altura, largura) if giro % 2 else (largura, altura)
+    orientacao = tamanhos.orientacao_efetiva(impressao.orientacao, W, H)
+    prop = tamanhos.proporcao(impressao.tamanho, orientacao, impressao.papel_mm)
+    menor, _maior = tamanhos.papel_mm(impressao.tamanho, impressao.papel_mm)
+    margem = margem_corte_mm / menor if menor > 0 else 0.0
+    recorte = recorte_automatico(W, H, prop, girar_rostos(rostos or (), giro), margem)
+    return replace(recorte, giro=giro)

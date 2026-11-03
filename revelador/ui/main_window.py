@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QApplication, QLabel, QMainWindow, QMessageBox, Q
 from .. import APP_NAME, __version__
 from ..i18n import _
 from . import prefs
+from .estado import Estado
 
 CINZA_EDITOR = "#6b6b6b"  # cinza neutro: um fundo colorido enganaria a percepção de cor da foto
 TAMANHO_INICIAL = (1280, 800)
@@ -63,6 +64,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.arquivos_iniciais: list[str] = []
+        self.estado = Estado(self)   # trabalho aberto e foto atual; os widgets conversam por ele
 
         self._criar_acoes()
         self._criar_barra_de_ferramentas()
