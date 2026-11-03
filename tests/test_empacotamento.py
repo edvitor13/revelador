@@ -68,6 +68,15 @@ def test_guids_dos_componentes_sao_unicos():
     assert UPGRADE_CODE not in guids
 
 
+def test_msi_associa_revelador_por_usuario():
+    wxs = (ROOT / "packaging" / "windows" / "Revelador.wxs").read_text(encoding="utf-8")
+    assert 'Feature Id="AssociacaoRevelador"' in wxs
+    classes = re.findall(r'Root="(\w+)" Key="(Software[\\]Classes[^"]*)"', wxs)
+    assert len(classes) == 4 and {r for r, _k in classes} == {"HKCU"}   # nada em HKLM: instalação sem administrador
+    assert r'Key="Software\Classes\.revelador" Type="string" Value="Revelador.Trabalho"' in wxs
+    assert "&quot;%1&quot;" in wxs and "DefaultIcon" in wxs
+
+
 def test_nomes_dos_pacotes_batem_com_o_ci():
     # O atualizador escolhe o pacote da release por estes sufixos (updater.PATTERNS, #10).
     build = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")

@@ -126,6 +126,7 @@ def _janela(app, largura: int, altura: int):
 def _fechar(janela) -> None:
     janela.salvar_estado = lambda: None   # não grava a geometria da captura nas preferências
     janela.editor.encerrar()
+    janela.estado.marcar_modificado(False)   # sem a pergunta "Salvar alterações?" ao fechar
     janela.close()
 
 

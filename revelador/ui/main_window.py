@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         self._ligar_exportacao()
         self._ligar_atualizacao()
         self._ligar_ajustes()
+        self._ligar_projeto()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -406,6 +407,19 @@ class MainWindow(QMainWindow):
 
         self.painel_ajustes = PainelAjustes(self.estado, self.grade.fotos_escolhidas)
         self.coluna_painel.insertWidget(self.coluna_painel.count() - 1, self.painel_ajustes)
+
+    # ------------------------------------------------------------ salvar e abrir o trabalho (#9)
+    def _ligar_projeto(self) -> None:
+        """Novo/Abrir/Salvar, recentes, título, recuperação e fotos não encontradas (``ui/projeto_ui.py``).
+
+        As faixas de aviso (não modais) ficam entre a barra superior e as três áreas.
+        """
+        from .projeto_ui import PilhaFaixas, ProjetoUi
+
+        self.faixas = PilhaFaixas()
+        self.centralWidget().layout().insertWidget(1, self.faixas)   # logo abaixo da barra superior
+        self.projeto_ui = ProjetoUi(self, self.estado, self.importacao, self.faixas)
+        self.projeto_ui.oferecer_recuperacao()
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:

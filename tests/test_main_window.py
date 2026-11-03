@@ -48,7 +48,7 @@ assert barra.objectName() == "TopBar" and j.centralWidget().layout().itemAt(0).w
 assert j.botao_importar.menu().actions() == [j.acao_importar, j.acao_importar_pasta]
 nomes = [a.text() for a in j.botao_projeto.menu().actions() if not a.isSeparator()]
 assert nomes == ["Novo trabalho", "Abrir trabalho…", "Abrir recente", "Salvar", "Salvar como…"], nomes
-assert not j.menu_recentes.isEnabled() and not j.acao_salvar.isEnabled() and j.acao_importar.isEnabled()
+assert j.acao_salvar.isEnabled() and j.acao_abrir.isEnabled() and j.acao_importar.isEnabled()   # ligadas pela #9
 assert j.botao_projeto.menu().actions()[2].menu() is j.menu_recentes
 # engrenagem
 assert [a.text() for a in j.botao_menu.menu().actions() if not a.isSeparator()] == [

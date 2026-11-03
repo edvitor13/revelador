@@ -51,6 +51,13 @@ def _ligar_aviso_de_erro(janela) -> None:
     crashlog.ao_gravar = lambda caminho, _texto: ponte.erro.emit(str(caminho or ""))
 
 
+def separar_argumentos(args: list[str]) -> tuple[list[str], list[str]]:
+    """Separa os trabalhos ``.revelador`` (abrem o trabalho) do resto (fotos e pastas, que vão para a importação)."""
+    uteis = [a for a in args if not a.startswith("--")]
+    trabalhos = [a for a in uteis if a.lower().endswith(".revelador")]
+    return trabalhos, [a for a in uteis if a not in trabalhos]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "--diagnostico":
@@ -80,7 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     crashlog.instalar()
     tema.instalar(app)  # Fusion + paleta escura + folha de estilo + fonte + ícone do app
     janela = MainWindow()
-    janela.arquivos_iniciais = [a for a in args if not a.startswith("--")]  # a importação vem na #2
+    trabalhos, janela.arquivos_iniciais = separar_argumentos(args)
+    if trabalhos:
+        janela.projeto_ui.abrir(Path(trabalhos[0]))   # o primeiro .revelador; fotos e pastas entram depois
     _ligar_aviso_de_erro(janela)
     janela.show()
     return app.exec()
