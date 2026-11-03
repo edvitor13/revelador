@@ -7,15 +7,19 @@ orientação correspondente, ``orientacao_grade`` etc.). Geometria da janela e d
 
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Qt
+from pathlib import Path
+
+from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QPalette
-from PySide6.QtWidgets import (QApplication, QLabel, QMainWindow, QMessageBox, QSplitter, QToolBar, QVBoxLayout,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QLabel, QMainWindow, QMessageBox, QSplitter, QToolBar, QVBoxLayout,
                                QWidget)
 
-from .. import APP_NAME, __version__
+from .. import APP_NAME, __version__, imagem
 from ..i18n import _
 from . import prefs
 from .estado import Estado
+from .grade import Grade
+from .tarefas import Importacao
 
 CINZA_EDITOR = "#6b6b6b"  # cinza neutro: um fundo colorido enganaria a percepção de cor da foto
 TAMANHO_INICIAL = (1280, 800)
@@ -72,6 +76,7 @@ class MainWindow(QMainWindow):
         self._criar_areas()
         self.statusBar().showMessage(_("Pronto."))
         self.restaurar_estado()
+        self._ligar_grade()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -127,6 +132,76 @@ class MainWindow(QMainWindow):
         self.divisor.setSizes(PROPORCAO_INICIAL)
         self.setCentralWidget(self.divisor)
         self.setAcceptDrops(True)
+
+    # ------------------------------------------------------------ importação e grade (#2, #4)
+    def _ligar_grade(self) -> None:
+        """Grade de miniaturas, importação (botão, arrastar e soltar, linha de comando) e filtro "Mostrar"."""
+        self.grade = Grade(self.estado)
+        self.area_grade.layout().addWidget(self.grade)
+        self.importacao = Importacao(self.estado, self)
+        self.importacao.mensagem.connect(self.statusBar().showMessage)
+        self.estado.fotos_mudaram.connect(self._atualizar_orientacao_grade)
+
+        self.acao_importar_pasta = QAction(_("Importar pasta…"), self)
+        self.acao_importar_pasta.setShortcut("Ctrl+Shift+I")
+        self.acao_importar.triggered.connect(self.escolher_arquivos)
+        self.acao_importar_pasta.triggered.connect(self.escolher_pasta)
+        self.barra.insertAction(self.acao_exportar, self.acao_importar_pasta)
+        self.menu_arquivo.insertAction(self.acao_exportar, self.acao_importar_pasta)
+
+        self.filtro_mostrar = QComboBox()
+        self.filtro_mostrar.setObjectName("filtro_mostrar")
+        self.filtro_mostrar.addItem(_("Todas"), False)
+        self.filtro_mostrar.addItem(_("Selecionadas"), True)
+        self.filtro_mostrar.currentIndexChanged.connect(
+            lambda _i: self.grade.definir_filtro(bool(self.filtro_mostrar.currentData())))
+        self.barra.addSeparator()
+        self.barra.addWidget(QLabel(_("Mostrar:") + " "))
+        self.barra.addWidget(self.filtro_mostrar)
+
+    def _atualizar_orientacao_grade(self) -> None:
+        self.orientacao_grade.setVisible(not self.estado.trabalho.fotos)
+
+    def importar(self, caminhos) -> list:
+        """Importa arquivos e pastas (recursivo, só formatos aceitos); devolve as fotos novas."""
+        return self.estado.adicionar(imagem.listar_fotos(caminhos))
+
+    def escolher_arquivos(self) -> None:
+        s = prefs.settings()
+        formatos = " ".join(f"*{e}" for e in sorted(imagem.FORMATOS))
+        nomes, _filtro = QFileDialog.getOpenFileNames(
+            self, _("Importar fotos"), str(s.value("importar/ultima_pasta", "", str)),
+            _("Fotos") + f" ({formatos})")
+        if nomes:
+            s.setValue("importar/ultima_pasta", str(Path(nomes[0]).parent))
+            self.importar(nomes)
+
+    def escolher_pasta(self) -> None:
+        s = prefs.settings()
+        inicio = str(s.value("importar/ultima_pasta", "", str))
+        pasta = QFileDialog.getExistingDirectory(self, _("Importar pasta"), inicio)
+        if pasta:
+            s.setValue("importar/ultima_pasta", pasta)
+            self.importar([pasta])
+
+    def showEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        super().showEvent(evento)
+        if self.arquivos_iniciais:
+            QTimer.singleShot(0, self._importar_iniciais)
+
+    def _importar_iniciais(self) -> None:
+        iniciais, self.arquivos_iniciais = self.arquivos_iniciais, []
+        self.importar(iniciais)
+
+    def dragEnterEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        if evento.mimeData().hasUrls():
+            evento.acceptProposedAction()
+
+    def dropEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        caminhos = [u.toLocalFile() for u in evento.mimeData().urls() if u.isLocalFile()]
+        if caminhos:
+            self.importar(caminhos)
+            evento.acceptProposedAction()
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
