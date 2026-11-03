@@ -392,8 +392,7 @@ class Estado(QObject):
         - ``nome`` e ``cor`` só mudam a pasta.
         Valida como ``criar_pasta``. Sem mudança de fato, não faz nada (nem sinal).
         """
-        if pasta not in self.trabalho.pastas:
-            raise ValueError("pasta fora do trabalho")
+        pasta = self._viva(pasta)
         novo_nome = pasta.nome if nome is _MANTER else _nome_valido(nome)  # type: ignore[arg-type]
         nova_cor = pasta.cor if cor is _MANTER else _cor_valida(cor)  # type: ignore[arg-type]
         novas_copias = pasta.copias if copias is _MANTER else _copias_validas(copias)  # type: ignore[arg-type]
@@ -430,8 +429,7 @@ class Estado(QObject):
 
     def mover_pasta(self, pasta: Pasta, indice: int) -> None:
         """Muda a posição da pasta na lista (a ordem da tela); ``indice`` é limitado à lista."""
-        if pasta not in self.trabalho.pastas:
-            raise ValueError("pasta fora do trabalho")
+        pasta = self._viva(pasta)
         lista = self.trabalho.pastas
         indice = max(0, min(len(lista) - 1, int(indice)))
         if lista.index(pasta) == indice:
@@ -446,7 +444,8 @@ class Estado(QObject):
 
         A foto que fica sem nenhuma impressão deixa de estar marcada.
         """
-        if pasta not in self.trabalho.pastas:
+        pasta = self.pasta_por_id(pasta.id)
+        if pasta is None:
             return
         with self.lote(_("Apagar a pasta")):
             for foto in self.fotos_da_pasta(pasta):
@@ -466,8 +465,7 @@ class Estado(QObject):
         - a foto marcada já tem uma impressão avulsa no mesmo tamanho (e papel) da pasta: essa impressão passa a ser
           a da pasta (mantém cópias e recorte), para não revelar a mesma foto duas vezes sem querer.
         """
-        if pasta not in self.trabalho.pastas:
-            raise ValueError("pasta fora do trabalho")
+        pasta = self._viva(pasta)
         mudaram: list[Foto] = []
         with self.lote(_("Adicionar à pasta")):
             for foto in _sem_repetir(fotos):
@@ -514,6 +512,17 @@ class Estado(QObject):
         return mudaram
 
     # -- auxiliares das pastas
+    def _viva(self, pasta: Pasta) -> Pasta:
+        """O objeto da pasta que está no trabalho agora, achado pelo id (ValueError se ela não está mais nele).
+
+        Nunca compare por valor (``pasta in trabalho.pastas``): o desfazer restaura cópias das pastas, e uma ``Pasta``
+        antiga igual em valor passaria na conferência e receberia a mudança no lugar da pasta de verdade.
+        """
+        viva = self.pasta_por_id(pasta.id)
+        if viva is None:
+            raise ValueError("pasta fora do trabalho")
+        return viva
+
     def _novo_id_pasta(self) -> str:
         usados = {p.id for p in self.trabalho.pastas}
         while True:

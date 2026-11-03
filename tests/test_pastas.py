@@ -137,7 +137,7 @@ def _rodar(corpo: str) -> None:
     p = rodar_python("""
 from pathlib import Path
 from revelador.imagem import InfoFoto
-from revelador.projeto import Impressao, Recorte, Rosto
+from revelador.projeto import Impressao, Pasta, Recorte, Rosto
 from revelador.ui.estado import Estado
 from revelador.ui import tema
 
@@ -428,3 +428,31 @@ print("ok")
 """, timeout=120)
     assert p.returncode == 0, p.stderr
     assert p.stdout.strip().endswith("ok"), p.stdout
+
+
+def test_pasta_antiga_depois_do_desfazer_muda_a_pasta_viva():
+    # o desfazer restaura cópias das pastas: um objeto antigo, igual em valor, não pode receber a mudança
+    _rodar("""
+f, = e.adicionar([Path("a.jpg")])
+info(f)
+p = e.criar_pasta("Festa", "10x15")
+e.alterar_pasta(p, nome="Natal")
+e.desfazer()                                   # volta a "Festa": a pasta viva agora é outro objeto
+viva = e.pasta_por_id(p.id)
+assert viva is not p and viva.nome == "Festa" and p.nome == "Natal"
+velha = Pasta(**{**p.__dict__, "nome": "Festa"})   # igual em valor à viva, mas fora do trabalho
+e.alterar_pasta(velha, nome="Ano novo")
+assert e.pasta_por_id(p.id).nome == "Ano novo"
+e.adicionar_a_pasta([f], velha)
+assert e.fotos_da_pasta(viva) == [f] and f.impressoes[-1].pasta == p.id
+e.mover_pasta(velha, 0)
+e.apagar_pasta(velha)
+assert e.trabalho.pastas == [] and not f.selecionada
+try:
+    e.alterar_pasta(velha, nome="x")
+except ValueError:
+    pass
+else:
+    raise AssertionError("pasta apagada devia dar ValueError")
+"""
+)
