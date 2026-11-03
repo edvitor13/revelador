@@ -1,0 +1,645 @@
+"""Editor de enquadramento: a foto com a moldura do papel, mover, zoom, girar, endireitar e "Ver como sai".
+
+Conversa só pelo ``Estado`` (``docs/ARQUITETURA.md``, seções 5.1, 6 e 10): lê a foto atual e a impressão atual
+(``estado.impressao_atual``), altera o ``Recorte`` dela e avisa com ``estado.alterar(foto)``. Qualquer gesto da
+pessoa marca o recorte como ``"manual"`` (nunca mais refeito sozinho); "Enquadrar pelos rostos" volta a ``"auto"``.
+
+Geometria: tudo vem de ``enquadramento.retangulo`` e de ``receita.poligono`` (a moldura desenhada é exatamente o que
+a receita vai amostrar). O recorte só entra no modelo depois de passar por ``enquadramento.reencaixar``, então fica
+sempre dentro da imagem. Os gestos têm métodos públicos (``mover``, ``aproximar``, ``girar``, ``endireitar``,
+``enquadrar_pelos_rostos``) que o mouse e os atalhos só chamam; os testes chamam direto.
+
+Dois modos de ver (``definir_previa``): a foto inteira com a moldura do papel (padrão) e "Ver como sai", a prévia
+pela receita no tamanho do visor, calculada num trabalhador com *debounce* de ~60 ms e contador de geração
+(resultado velho é descartado). Impressão no modo *caber* mostra sempre a prévia (a moldura não faz sentido).
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import replace
+
+import numpy as np
+from PySide6.QtCore import QPointF, QRectF, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QShortcut
+from PySide6.QtWidgets import (QCheckBox, QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSlider,
+                               QVBoxLayout, QWidget)
+
+from .. import enquadramento, receita, tamanhos
+from ..i18n import N_, _
+from ..projeto import Foto, Impressao, Recorte
+from .estado import Estado
+from .previa import CarregarProxy, RenderizarPrevia, Sinais, para_qimage
+
+FUNDO = "#6b6b6b"            # o mesmo cinza neutro da janela (``main_window.CINZA_EDITOR``)
+ZOOM_MAXIMO = 10.0
+PASSO_ZOOM = 1.1             # fator por clique da roda (e por atalho)
+DEBOUNCE_MS = 60
+ANGULO_MAX = 45.0
+MARGEM_TELA = 14             # px lógicos entre a moldura e a borda do visor
+
+QUALIDADES = {
+    "boa": N_("qualidade boa"),
+    "aceitavel": N_("qualidade aceitável"),
+    "baixa": N_("resolução baixa para este tamanho"),
+}
+
+
+class Tela(QWidget):
+    """O visor: desenha a foto (ou a prévia) e a moldura; traduz mouse em sinais. Não conhece o modelo."""
+
+    arrastado = Signal(float, float)       # deslocamento do mouse (px lógicos) desde o último evento
+    rolado = Signal(float, QPointF)        # passos da roda (1 = um clique) e a posição do mouse
+    redimensionada = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("tela_editor")
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setMinimumSize(240, 180)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.imagem: QImage | None = None                  # a foto inteira, já girada
+        self.moldura: enquadramento.Retangulo | None = None  # recorte em px da imagem girada
+        self.margem_rel = 0.0                              # margem de corte ÷ largura do papel
+        self.rostos: list[tuple[float, float, float, float]] = []   # caixas em px da imagem girada
+        self.mostrar_rostos = False
+        self.previa: QImage | None = None
+        self.mostrar_previa = False
+        self.mensagem = ""                                 # texto no centro (carregando, erro, nada escolhido)
+        self.dica = ""                                     # faixa de texto embaixo
+        self.arrastavel = False
+        self._ultimo: QPointF | None = None
+
+    # ------------------------------------------------------------ geometria do visor
+    def area_util(self) -> QRectF:
+        return QRectF(self.rect()).adjusted(MARGEM_TELA, MARGEM_TELA, -MARGEM_TELA, -MARGEM_TELA)
+
+    def quadro(self) -> QRectF | None:
+        """Onde a foto (ou a prévia) é desenhada, em px lógicos do visor."""
+        area = self.area_util()
+        if self.mostrar_previa and self.previa is not None:
+            dpr = self.previa.devicePixelRatio() or 1.0
+            w, h = self.previa.width() / dpr, self.previa.height() / dpr
+        elif self.imagem is not None and not self.mostrar_previa:
+            k = min(area.width() / self.imagem.width(), area.height() / self.imagem.height())
+            w, h = self.imagem.width() * k, self.imagem.height() * k
+        else:
+            return None
+        return QRectF(area.center().x() - w / 2, area.center().y() - h / 2, w, h)
+
+    def escala_imagem(self) -> float:
+        """Px lógicos do visor por px da imagem girada (modo moldura)."""
+        q = self.quadro()
+        if q is None or self.imagem is None:
+            return 1.0
+        return q.width() / self.imagem.width()
+
+    # ------------------------------------------------------------ desenho
+    def paintEvent(self, _evento) -> None:  # noqa: N802 - nome do Qt
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.fillRect(self.rect(), QColor(FUNDO))
+        quadro = self.quadro()
+        if quadro is None:
+            self._texto(p, self.rect(), self.mensagem)
+        elif self.mostrar_previa and self.previa is not None:
+            p.drawImage(quadro, self.previa)
+            if self.margem_rel > 0:
+                m = self.margem_rel * quadro.width()
+                self._tracejado(p, [QPointF(quadro.left() + m, quadro.top() + m),
+                                    QPointF(quadro.right() - m, quadro.top() + m),
+                                    QPointF(quadro.right() - m, quadro.bottom() - m),
+                                    QPointF(quadro.left() + m, quadro.bottom() - m)])
+        else:
+            p.drawImage(quadro, self.imagem)
+            if self.moldura is not None:
+                self._moldura(p, quadro)
+        if self.dica and quadro is not None:
+            faixa = QRectF(0, self.height() - 30, self.width(), 30)
+            p.fillRect(faixa, QColor(0, 0, 0, 150))
+            self._texto(p, faixa, self.dica, QColor("#ffffff"))
+        p.end()
+
+    @staticmethod
+    def _texto(p: QPainter, area: QRectF, texto: str, cor: QColor | None = None) -> None:
+        if not texto:
+            return
+        p.setPen(cor or QColor("#e6e6e6"))
+        p.drawText(QRectF(area), int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), texto)
+
+    def _para_tela(self, quadro: QRectF, pontos) -> list[QPointF]:
+        k = quadro.width() / self.imagem.width()
+        return [QPointF(quadro.left() + x * k, quadro.top() + y * k) for x, y in pontos]
+
+    @staticmethod
+    def _tracejado(p: QPainter, pontos: list[QPointF]) -> None:
+        poligono = QPolygonF(pontos + [pontos[0]])
+        claro = QPen(QColor(255, 255, 255, 230), 1.2, Qt.PenStyle.DashLine)
+        escuro = QPen(QColor(0, 0, 0, 200), 1.2, Qt.PenStyle.DashLine)
+        escuro.setDashOffset(3)
+        for caneta in (claro, escuro):
+            p.setPen(caneta)
+            p.drawPolyline(poligono)
+
+    def _moldura(self, p: QPainter, quadro: QRectF) -> None:
+        ret = self.moldura
+        cantos = self._para_tela(quadro, receita.poligono(ret))
+        # Fora do papel escurecido.
+        fora = QPainterPath()
+        fora.addRect(quadro)
+        dentro = QPainterPath()
+        dentro.addPolygon(QPolygonF(cantos + [cantos[0]]))
+        p.fillPath(fora.subtracted(dentro), QColor(0, 0, 0, 150))
+        # Regra dos terços.
+        tl, tr, br, bl = cantos
+        p.setPen(QPen(QColor(255, 255, 255, 110), 1.0))
+        for f in (1 / 3, 2 / 3):
+            p.drawLine(tl + (tr - tl) * f, bl + (br - bl) * f)
+            p.drawLine(tl + (bl - tl) * f, tr + (br - tr) * f)
+        # Rostos detectados.
+        if self.mostrar_rostos:
+            p.setPen(QPen(QColor("#66ff99"), 1.5))
+            k = quadro.width() / self.imagem.width()
+            for x, y, w, h in self.rostos:
+                p.drawRect(QRectF(quadro.left() + x * k, quadro.top() + y * k, w * k, h * k))
+        # Borda do papel e margem de corte tracejada.
+        p.setPen(QPen(QColor("#ffffff"), 1.6))
+        p.drawPolyline(QPolygonF(cantos + [cantos[0]]))
+        if self.margem_rel > 0:
+            interno = receita.encolher(ret, self.margem_rel * ret.w)
+            self._tracejado(p, self._para_tela(quadro, receita.poligono(interno)))
+
+    # ------------------------------------------------------------ mouse
+    def mousePressEvent(self, e) -> None:  # noqa: N802
+        if e.button() == Qt.MouseButton.LeftButton and self.arrastavel:
+            self._ultimo = e.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            self.setFocus()
+
+    def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        if self._ultimo is not None:
+            d = e.position() - self._ultimo
+            self._ultimo = e.position()
+            if d.x() or d.y():
+                self.arrastado.emit(d.x(), d.y())
+
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
+        if e.button() == Qt.MouseButton.LeftButton and self._ultimo is not None:
+            self._ultimo = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor if self.arrastavel else Qt.CursorShape.ArrowCursor)
+
+    def wheelEvent(self, e) -> None:  # noqa: N802
+        passos = e.angleDelta().y() / 120.0
+        if passos and self.arrastavel:
+            self.rolado.emit(passos, e.position())
+            e.accept()
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
+        self.redimensionada.emit()
+
+    def definir_arrastavel(self, sim: bool) -> None:
+        self.arrastavel = sim
+        self.setCursor(Qt.CursorShape.OpenHandCursor if sim else Qt.CursorShape.ArrowCursor)
+
+
+class Editor(QWidget):
+    """Área central: o visor e os controles do enquadramento da impressão atual."""
+
+    proxy_carregado = Signal()      # o proxy da foto atual chegou
+    previa_atualizada = Signal()    # chegou uma prévia nova (não descartada)
+
+    def __init__(self, estado: Estado, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("editor")
+        self.estado = estado
+        self.proxy: np.ndarray | None = None        # proxy da foto atual (float32, sem giro); somente leitura
+        self.previa: QImage | None = None           # a última prévia recebida
+        self.previa_geracao = 0
+        self.mostrar_previa = False
+        self._caminho: str | None = None
+        self._imagens: dict[int, QImage] = {}       # foto inteira girada, por giro
+        self._ger_proxy = 0
+        self._erro = ""
+        self._dpr_previa = 1.0
+        self._pool = QThreadPool(self)
+        self._pool.setMaxThreadCount(2)
+        self._sinais = Sinais(self)
+        self._sinais.proxy_pronto.connect(self._proxy_pronto)
+        self._sinais.proxy_erro.connect(self._proxy_erro)
+        self._sinais.previa_pronta.connect(self._previa_pronta)
+        self._sinais.previa_erro.connect(self._previa_erro)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(DEBOUNCE_MS)
+        self._timer.timeout.connect(self._disparar_previa)
+        self._montar()
+        self._atalhos()
+        for sinal, slot in ((estado.atual_mudou, self._atual_mudou), (estado.foto_mudou, self._foto_mudou),
+                            (estado.impressao_mudou, self._impressao_mudou)):
+            sinal.connect(slot)
+        self._atualizar()
+
+    # ------------------------------------------------------------ montagem
+    def _montar(self) -> None:
+        self.tela = Tela(self)
+        self.tela.arrastado.connect(self._ao_arrastar)
+        self.tela.rolado.connect(self._ao_rolar)
+        self.tela.redimensionada.connect(self._agendar_previa)
+
+        self.botao_girar_esq = QPushButton(_("↺ 90°"))
+        self.botao_girar_esq.setToolTip(_("Girar 90° para a esquerda (Shift+R)"))
+        self.botao_girar_dir = QPushButton(_("↻ 90°"))
+        self.botao_girar_dir.setToolTip(_("Girar 90° para a direita (R)"))
+        self.botao_girar_esq.clicked.connect(lambda: self.girar(-1))
+        self.botao_girar_dir.clicked.connect(lambda: self.girar(+1))
+
+        self.slider_angulo = QSlider(Qt.Orientation.Horizontal)
+        self.slider_angulo.setRange(round(-ANGULO_MAX * 10), round(ANGULO_MAX * 10))
+        self.slider_angulo.setToolTip(_("Endireitar a foto"))
+        self.spin_angulo = QDoubleSpinBox()
+        self.spin_angulo.setRange(-ANGULO_MAX, ANGULO_MAX)
+        self.spin_angulo.setDecimals(1)
+        self.spin_angulo.setSingleStep(0.1)
+        self.spin_angulo.setSuffix("°")
+        self.slider_angulo.valueChanged.connect(lambda v: self.endireitar(v / 10.0))
+        self.spin_angulo.valueChanged.connect(self.endireitar)
+
+        self.botao_auto = QPushButton(_("Enquadrar pelos rostos"))
+        self.botao_auto.setToolTip(_("Volta ao enquadramento automático (A)"))
+        self.botao_auto.clicked.connect(self.enquadrar_pelos_rostos)
+        self.caixa_rostos = QCheckBox(_("Mostrar rostos"))
+        self.caixa_rostos.toggled.connect(self.mostrar_rostos)
+        self.botao_previa = QPushButton(_("Ver como sai"))
+        self.botao_previa.setCheckable(True)
+        self.botao_previa.setToolTip(_("Mostra o resultado como será revelado (\\)"))
+        self.botao_previa.toggled.connect(self.definir_previa)
+
+        self.rotulo_info = QLabel()
+        self.rotulo_info.setObjectName("info_editor")
+        self.rotulo_info.setWordWrap(True)
+
+        barra = QHBoxLayout()
+        for w in (self.botao_girar_esq, self.botao_girar_dir):
+            barra.addWidget(w)
+        barra.addSpacing(8)
+        barra.addWidget(QLabel(_("Endireitar")))
+        barra.addWidget(self.slider_angulo, 1)
+        barra.addWidget(self.spin_angulo)
+        barra.addSpacing(8)
+        for w in (self.botao_auto, self.caixa_rostos, self.botao_previa):
+            barra.addWidget(w)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.tela, 1)
+        layout.addWidget(self.rotulo_info)
+        layout.addLayout(barra)
+
+    def _atalhos(self) -> None:
+        def atalho(chave, slot) -> None:
+            QShortcut(QKeySequence(chave), self, activated=slot, context=Qt.ShortcutContext.WindowShortcut)
+
+        atalho("R", lambda: self.girar(+1))
+        atalho("Shift+R", lambda: self.girar(-1))
+        atalho("A", self.enquadrar_pelos_rostos)
+        atalho("\\", lambda: self.botao_previa.toggle())
+        atalho(QKeySequence.StandardKey.ZoomIn, lambda: self.aproximar(PASSO_ZOOM))
+        atalho(QKeySequence.StandardKey.ZoomOut, lambda: self.aproximar(1 / PASSO_ZOOM))
+
+    # ------------------------------------------------------------ consulta
+    def _contexto(self) -> tuple[Foto, Impressao] | None:
+        """(foto, impressão) editáveis agora: com proxy pronto e a moldura fazendo sentido (modo preencher)."""
+        foto, imp = self.estado.atual, self.estado.impressao_atual
+        if foto is None or imp is None or self.proxy is None:
+            return None
+        return foto, imp
+
+    def _editavel(self) -> tuple[Foto, Impressao] | None:
+        ctx = self._contexto()
+        return None if ctx is None or ctx[1].modo == receita.MODO_CABER else ctx
+
+    def _dims(self) -> tuple[int, int]:
+        """(largura, altura) do proxy, sem giro."""
+        return self.proxy.shape[1], self.proxy.shape[0]
+
+    def _retangulo(self, imp: Impressao) -> enquadramento.Retangulo:
+        return receita.retangulo_da_impressao(imp, *self._dims())
+
+    @property
+    def recorte_atual(self) -> Recorte | None:
+        imp = self.estado.impressao_atual
+        return None if imp is None else imp.recorte
+
+    @property
+    def mostrando_previa(self) -> bool:
+        """Verdadeiro se o visor está mostrando a prévia (pedida pela pessoa ou imposta pelo modo *caber*)."""
+        ctx = self._contexto()
+        return self.mostrar_previa or (ctx is not None and ctx[1].modo == receita.MODO_CABER)
+
+    # ------------------------------------------------------------ gestos (públicos)
+    def _aplicar(self, foto: Foto, imp: Impressao, novo: Recorte) -> bool:
+        """Grava o recorte como manual e avisa. Sem mudança real, não faz nada (e não vira manual)."""
+        a = imp.recorte
+        if (novo.cx, novo.cy, novo.zoom, novo.angulo, novo.giro) == (a.cx, a.cy, a.zoom, a.angulo, a.giro):
+            return False
+        imp.recorte = replace(novo, origem="manual")
+        self.estado.alterar(foto)
+        return True
+
+    def _limitado(self, imp: Impressao, recorte: Recorte) -> Recorte:
+        """O recorte reencaixado na proporção da impressão (centro e ângulo limitados à imagem)."""
+        temp = replace(imp, recorte=recorte)
+        W, H = receita.dimensoes_giradas(temp, *self._dims())
+        return enquadramento.reencaixar(recorte, W, H, receita.proporcao(temp, *self._dims()))
+
+    def mover(self, dx: float, dy: float) -> bool:
+        """Desloca o recorte ``(dx, dy)`` em frações da imagem girada (+x direita, +y baixo). Limitado à imagem."""
+        ctx = self._editavel()
+        if ctx is None or not (dx or dy):
+            return False
+        foto, imp = ctx
+        W, H = receita.dimensoes_giradas(imp, *self._dims())
+        r = self._retangulo(imp)
+        novo = replace(imp.recorte, cx=r.cx / W + dx, cy=r.cy / H + dy)
+        return self._aplicar(foto, imp, self._limitado(imp, novo))
+
+    def aproximar(self, fator: float, ancora: tuple[float, float] | None = None) -> bool:
+        """Multiplica o zoom por ``fator`` (> 1 aproxima, < 1 afasta), de 1 a ``ZOOM_MAXIMO``.
+
+        ``ancora`` = ponto da imagem girada (frações) que fica parado; sem ela, o centro do recorte.
+        """
+        if fator <= 0:
+            raise ValueError("o fator de zoom precisa ser positivo")
+        ctx = self._editavel()
+        if ctx is None:
+            return False
+        foto, imp = ctx
+        W, H = receita.dimensoes_giradas(imp, *self._dims())
+        prop = receita.proporcao(imp, *self._dims())
+        r = self._retangulo(imp)
+        zoom = min(ZOOM_MAXIMO, max(1.0, enquadramento.zoom_efetivo(imp.recorte, W, H, prop) * fator))
+        rec = replace(imp.recorte, zoom=zoom)
+        novo_w = enquadramento.retangulo(rec, W, H, prop).w
+        cx, cy = r.cx / W, r.cy / H
+        if ancora is not None:
+            k = novo_w / r.w
+            cx, cy = ancora[0] + (cx - ancora[0]) * k, ancora[1] + (cy - ancora[1]) * k
+        return self._aplicar(foto, imp, self._limitado(imp, replace(rec, cx=cx, cy=cy)))
+
+    def girar(self, sentido: int) -> bool:
+        """Gira 90° (``+1`` horário, ``-1`` anti-horário), sem perda. A proporção acompanha a imagem girada."""
+        ctx = self._contexto()
+        if ctx is None or sentido == 0:
+            return False
+        foto, imp = ctx
+        W, H = receita.dimensoes_giradas(imp, *self._dims())
+        r = self._retangulo(imp) if imp.modo != receita.MODO_CABER else None
+        cx, cy = (r.cx / W, r.cy / H) if r else (imp.recorte.cx, imp.recorte.cy)
+        if sentido > 0:
+            cx, cy = 1.0 - cy, cx
+        else:
+            cx, cy = cy, 1.0 - cx
+        giro = (imp.recorte.giro + (1 if sentido > 0 else -1)) % 4
+        novo = replace(imp.recorte, cx=cx, cy=cy, giro=giro)
+        return self._aplicar(foto, imp, self._limitado(imp, novo))
+
+    def endireitar(self, graus: float) -> bool:
+        """Define o ângulo de endireitar (−45 a 45, passo 0,1). Mantém o centro e o zoom escolhidos."""
+        ctx = self._editavel()
+        if ctx is None:
+            return False
+        foto, imp = ctx
+        graus = round(max(-ANGULO_MAX, min(ANGULO_MAX, float(graus))), 1)
+        return self._aplicar(foto, imp, replace(imp.recorte, angulo=graus))
+
+    def enquadrar_pelos_rostos(self) -> bool:
+        """Volta ao recorte automático (``origem = "auto"``): o mesmo caminho de ``Estado.refazer_recortes_auto``."""
+        ctx = self._contexto()
+        if ctx is None:
+            return False
+        foto, imp = ctx
+        imp.recorte = replace(imp.recorte, origem="auto")
+        if foto.id in self.estado.info:
+            self.estado.refazer_recortes_auto(foto)
+        else:    # metadados ainda não chegaram: as proporções do proxy bastam (o recorte é normalizado)
+            largura, altura = self._dims()
+            imp.recorte = enquadramento.recorte_sugerido(imp, largura, altura, foto.rostos,
+                                                         self.estado.trabalho.margem_corte_mm)
+        self.estado.alterar(foto)
+        return True
+
+    def mostrar_rostos(self, sim: bool) -> None:
+        if self.caixa_rostos.isChecked() != sim:
+            self.caixa_rostos.setChecked(sim)
+            return
+        self.tela.mostrar_rostos = sim
+        self.tela.update()
+
+    def definir_previa(self, sim: bool) -> None:
+        """Liga/desliga "Ver como sai" (a prévia pela receita no tamanho do visor)."""
+        if self.botao_previa.isChecked() != sim:
+            self.botao_previa.setChecked(sim)
+            return
+        self.mostrar_previa = sim
+        self._atualizar()
+        self._agendar_previa()
+
+    # ------------------------------------------------------------ mouse -> gestos
+    def _ponto_da_tela(self, pos: QPointF) -> tuple[float, float] | None:
+        """A posição do visor como fração da imagem girada (nos dois modos de ver)."""
+        quadro = self.tela.quadro()
+        ctx = self._contexto()
+        if quadro is None or ctx is None:
+            return None
+        imp = ctx[1]
+        W, H = receita.dimensoes_giradas(imp, *self._dims())
+        if not self.mostrando_previa:
+            k = self.tela.escala_imagem()
+            return (pos.x() - quadro.left()) / k / W, (pos.y() - quadro.top()) / k / H
+        if imp.modo == receita.MODO_CABER:
+            return None
+        k = quadro.width()
+        u, v = (pos.x() - quadro.left()) / k, (pos.y() - quadro.top()) / quadro.height()
+        x, y = receita.ponto_da_fonte(self._retangulo(imp), (1.0, 1.0), u, v)
+        return x / W, y / H
+
+    def _ao_arrastar(self, dx: float, dy: float) -> None:
+        ctx = self._editavel()
+        quadro = self.tela.quadro()
+        if ctx is None or quadro is None:
+            return
+        imp = ctx[1]
+        W, H = receita.dimensoes_giradas(imp, *self._dims())
+        if not self.mostrando_previa:
+            k = self.tela.escala_imagem()
+            self.mover(dx / k / W, dy / k / H)
+            return
+        # Na prévia a foto acompanha o mouse: o recorte anda no sentido contrário, girado pelo ângulo.
+        r = self._retangulo(imp)
+        s = r.w / quadro.width()
+        t = math.radians(-r.angulo)
+        vx, vy = dx * math.cos(t) - dy * math.sin(t), dx * math.sin(t) + dy * math.cos(t)
+        self.mover(-vx * s / W, -vy * s / H)
+
+    def _ao_rolar(self, passos: float, pos: QPointF) -> None:
+        self.aproximar(PASSO_ZOOM ** passos, self._ponto_da_tela(pos))
+
+    # ------------------------------------------------------------ reação ao Estado
+    def _atual_mudou(self, foto: Foto | None) -> None:
+        self._ger_proxy += 1
+        self.proxy, self.previa, self._erro = None, None, ""
+        self._imagens.clear()
+        self._caminho = None
+        self._timer.stop()
+        self.previa_geracao += 1
+        if foto is not None:
+            self._caminho = str(foto.caminho)
+            self._pool.start(CarregarProxy(self._sinais, self._ger_proxy, foto.caminho))
+        self._atualizar()
+
+    def _foto_mudou(self, foto_id: str) -> None:
+        if self.estado.atual is not None and self.estado.atual.id == foto_id:
+            self._atualizar()
+            self._agendar_previa()
+
+    def _impressao_mudou(self, _indice: int) -> None:
+        self._atualizar()
+        self._agendar_previa()
+
+    def _proxy_pronto(self, geracao: int, caminho: str, proxy: object) -> None:
+        if geracao != self._ger_proxy:
+            return
+        self.proxy = proxy
+        self._imagens.clear()
+        self._atualizar()
+        self._agendar_previa()
+        self.proxy_carregado.emit()
+
+    def _proxy_erro(self, geracao: int, _caminho: str, mensagem: str) -> None:
+        if geracao != self._ger_proxy:
+            return
+        self._erro = mensagem
+        self._atualizar()
+
+    # ------------------------------------------------------------ prévia (receita num trabalhador)
+    def _agendar_previa(self) -> None:
+        """Invalida a prévia em andamento e recalcula depois do *debounce*."""
+        self.previa_geracao += 1
+        if self.mostrando_previa and self._contexto() is not None:
+            self._timer.start()
+        else:
+            self._timer.stop()
+
+    def _disparar_previa(self) -> None:
+        ctx = self._contexto()
+        if ctx is None or not self.mostrando_previa:
+            return
+        foto, imp = ctx
+        dpr = self.tela.devicePixelRatioF()
+        area = self.tela.area_util()
+        destino = receita.destino_na_caixa(imp, *self._dims(), int(area.width() * dpr), int(area.height() * dpr))
+        self._dpr_previa = dpr
+        self._pool.start(RenderizarPrevia(self._sinais, self.previa_geracao, self.proxy, imp, foto.ajustes, destino))
+
+    def _previa_pronta(self, geracao: int, imagem: object) -> None:
+        if geracao != self.previa_geracao:
+            return          # resultado velho: o recorte ou o visor mudou enquanto calculava
+        imagem.setDevicePixelRatio(self._dpr_previa)
+        self.previa = imagem
+        self._atualizar()
+        self.previa_atualizada.emit()
+
+    def _previa_erro(self, geracao: int, mensagem: str) -> None:
+        if geracao == self.previa_geracao:
+            self._erro = mensagem
+            self._atualizar()
+
+    # ------------------------------------------------------------ atualizar o visor e os controles
+    def _imagem_girada(self, giro: int) -> QImage:
+        if giro not in self._imagens:
+            self._imagens[giro] = para_qimage(receita.para_uint8(receita.girar(self.proxy, giro)))
+        return self._imagens[giro]
+
+    def _atualizar(self) -> None:
+        t = self.tela
+        foto, imp = self.estado.atual, self.estado.impressao_atual
+        t.moldura, t.rostos, t.margem_rel, t.dica = None, [], 0.0, ""
+        t.imagem, t.mostrar_rostos = None, self.caixa_rostos.isChecked()
+        info = ""
+        aviso = False
+        if foto is None:
+            t.mensagem = _("Escolha uma foto na grade para enquadrar")
+        elif self._erro:
+            t.mensagem = self._erro
+        elif self.proxy is None:
+            t.mensagem = _("Carregando a foto…")
+        else:
+            t.mensagem = ""
+            giro = imp.recorte.giro % 4 if imp is not None else 0
+            t.imagem = self._imagem_girada(giro)
+            if imp is None:
+                t.dica = _("Marque a foto para revelar e escolha o tamanho")
+            else:
+                info, aviso = self._preencher_moldura(foto, imp)
+        t.mostrar_previa = self.mostrando_previa and self.previa is not None
+        t.previa = self.previa
+        t.definir_arrastavel(self._editavel() is not None)
+        self.rotulo_info.setText(info)
+        self.rotulo_info.setStyleSheet("color: #ffb74d;" if aviso else "")
+        self._sincronizar_controles(imp)
+        t.update()
+
+    def _preencher_moldura(self, foto: Foto, imp: Impressao) -> tuple[str, bool]:
+        """Dá à tela a moldura, a margem e os rostos; devolve o texto de resolução e se há aviso de qualidade."""
+        t = self.tela
+        largura, altura = self._dims()
+        orient = receita.orientacao(imp, largura, altura)
+        try:
+            nome = _(tamanhos.obter(imp.tamanho).nome)
+        except KeyError:
+            nome = _("Personalizado")
+        papel_l, _papel_a = receita.papel_orientado_mm(imp, largura, altura)
+        t.margem_rel = max(0.0, self.estado.trabalho.margem_corte_mm) / papel_l
+        texto = f"{nome} · {_(orient)}"
+        if imp.modo == receita.MODO_CABER:
+            return texto + " · " + _("foto inteira com borda branca"), False
+        W, H = receita.dimensoes_giradas(imp, largura, altura)
+        r = self._retangulo(imp)
+        t.moldura = r
+        if foto.rostos:
+            t.rostos = [(c.x * W, c.y * H, c.w * W, c.h * H)
+                        for c in enquadramento.girar_rostos(foto.rostos, imp.recorte.giro)]
+        info = self.estado.info.get(foto.id)
+        aviso = False
+        if info is not None:
+            largura_orig = info.altura if imp.recorte.giro % 2 else info.largura   # largura da imagem girada
+            px_recorte = r.w / W * largura_orig
+            dpi = tamanhos.resolucao_efetiva(round(px_recorte), imp.tamanho, orient, imp.papel_mm)
+            q = tamanhos.qualidade(dpi)
+            aviso = q == "baixa"
+            texto += f" · {dpi:.0f} dpi ({_(QUALIDADES[q])})"
+        return texto, aviso
+
+    def _sincronizar_controles(self, imp: Impressao | None) -> None:
+        ativo = self._editavel() is not None
+        for w in (self.slider_angulo, self.spin_angulo):
+            w.setEnabled(ativo)
+        self.botao_girar_esq.setEnabled(self._contexto() is not None)
+        self.botao_girar_dir.setEnabled(self._contexto() is not None)
+        self.botao_auto.setEnabled(self._contexto() is not None)
+        self.botao_previa.setEnabled(self._contexto() is not None)
+        angulo = imp.recorte.angulo if imp is not None else 0.0
+        for w, valor in ((self.slider_angulo, round(angulo * 10)), (self.spin_angulo, round(angulo, 1))):
+            if w.value() != valor:
+                w.blockSignals(True)
+                w.setValue(valor)
+                w.blockSignals(False)
+
+    # ------------------------------------------------------------ encerramento
+    def encerrar(self) -> None:
+        """Espera os trabalhadores terminarem (chamado ao fechar o aplicativo)."""
+        self._timer.stop()
+        self._ger_proxy += 1
+        self.previa_geracao += 1
+        self._pool.waitForDone(3000)
