@@ -6,8 +6,13 @@ Delete tira do trabalho (nunca do disco, sem confirmação); setas navegam. A mi
 sob demanda, só das células visíveis, com um cache pequeno de ``QPixmap``.
 
 Clique direito abre o menu de contexto das fotos escolhidas (``Grade.menu_contexto``): marcar/desmarcar, tamanho e
-cópias para todas de uma vez, "Procurar…" (se alguma falta no disco; sinal ``procurar_pedido``) e remover. Cada ação
-em várias fotos é um passo só do desfazer (``estado.lote``).
+cópias para todas de uma vez, "Adicionar à pasta ▸"/"Tirar da pasta ▸" (pastas de tamanho, #32), "Procurar…" (se
+alguma falta no disco; sinal ``procurar_pedido``) e remover. Cada ação em várias fotos é um passo só do desfazer
+(``estado.lote``).
+
+Pastas de tamanho (#32): ``definir_pasta(id)`` filtra a grade pela pasta (junto com o filtro Todas | Selecionadas: a
+grade mostra as fotos que passam nos DOIS); arrastar as fotos escolhidas leva os ids delas (``pastas.MIME_FOTOS``)
+para uma linha da seção Pastas; o chip de uma impressão de pasta ganha a cor dela (``layout_chips(..., pastas=)``).
 """
 
 from __future__ import annotations
@@ -16,17 +21,18 @@ from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QDrag, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QListView, QMenu, QStyle, QStyledItemDelegate,
                                QStyleOptionViewItem, QVBoxLayout, QWidget)
 
 from .. import tamanhos
 from ..i18n import _
-from ..projeto import Foto, Impressao
+from ..projeto import Foto, Impressao, Pasta
 from . import icones, prefs, tema
 from .componentes import Slider
 from .estado import Estado
 from .painel_impressoes import LIMITE_COPIAS, NOMES_GRUPOS, refazer_enquadramento
+from .pastas import MIME_FOTOS, dialogo_nova_pasta, mime_das_fotos, nome_tamanho
 
 MINIATURA_PADRAO = 150  # lado da miniatura (o tamanho com que a grade sempre abriu)
 MINIATURA_MINIMA = 80
@@ -49,6 +55,7 @@ PAPEL_FOTO = Qt.ItemDataRole.UserRole
 CHAVE_PREF = "grade/miniatura"
 ATRASO_NA_TELA_MS = 150    # debounce da publicação das fotos na tela (rostos, #36)
 COPIAS_MENU = (1, 2, 3, 5, 10)   # atalhos do submenu "Cópias" do menu de contexto
+LADO_ARRASTO = 64                # miniatura que acompanha o mouse ao arrastar fotos para uma pasta
 
 
 def limitar_miniatura(lado: int) -> int:
@@ -117,20 +124,42 @@ def _fonte_chip() -> QFont:
     return tema.fonte(8, QFont.Weight.DemiBold)
 
 
-def layout_chips(area: QRect, foto: Foto, compacto: bool = False) -> list[tuple[QRect, int | None, str, bool]]:
-    """Chips da foto dentro de ``area``: (retângulo, índice da impressão ou None no "+N", texto, apagado).
+class Chip(tuple):
+    """Um chip: a tupla (retângulo, índice da impressão ou None no "+N", texto, apagado) e, em ``cor``, o hexadecimal
+    da pasta de tamanho da impressão (None: impressão avulsa ou "+N", no laranja/cinza de sempre)."""
 
-    Compacto: um único chip "×N" com o total de cópias; o clique nele age sobre a primeira impressão.
+    cor: str | None
+
+    def __new__(cls, retangulo: QRect, indice: int | None, texto: str, apagado: bool, cor: str | None = None):
+        chip = super().__new__(cls, (retangulo, indice, texto, apagado))
+        chip.cor = cor
+        return chip
+
+
+def _cor_da_impressao(imp: Impressao, pastas: dict[str, Pasta]) -> str | None:
+    pasta = pastas.get(imp.pasta) if imp.pasta is not None else None
+    return tema.cor_pasta(pasta.cor) if pasta is not None else None
+
+
+def layout_chips(area: QRect, foto: Foto, compacto: bool = False,
+                 pastas: list[Pasta] | dict[str, Pasta] | None = None) -> list[Chip]:
+    """Chips da foto dentro de ``area``: ``Chip`` = (retângulo, índice da impressão ou None no "+N", texto, apagado),
+    com ``cor`` = cor da pasta de tamanho da impressão (``pastas``: as do trabalho; sem elas, nenhuma cor).
+
+    Compacto: um único chip "×N" com o total de cópias; o clique nele age sobre a primeira impressão. A cor dele é a
+    da primeira impressão que está numa pasta (na ordem das impressões).
     """
     if not foto.impressoes:
         return []
+    por_id = pastas if isinstance(pastas, dict) else {p.id: p for p in (pastas or ())}
     medidas = QFontMetrics(_fonte_chip())
     if compacto:
         texto = f"×{sum(i.copias for i in foto.impressoes)}"
         largura = min(medidas.horizontalAdvance(texto) + 16, area.width())
-        return [(QRect(area.left(), area.top(), largura, ALTURA_CHIP), 0, texto, False)]
+        cor = next((c for c in (_cor_da_impressao(i, por_id) for i in foto.impressoes) if c), None)
+        return [Chip(QRect(area.left(), area.top(), largura, ALTURA_CHIP), 0, texto, False, cor)]
     textos = [rotulo_impressao(i.tamanho, i.copias) for i in foto.impressoes]
-    saida: list[tuple[QRect, int | None, str, bool]] = []
+    saida: list[Chip] = []
     x = area.left()
     for n, texto in enumerate(textos):
         largura = medidas.horizontalAdvance(texto) + 16
@@ -138,11 +167,12 @@ def layout_chips(area: QRect, foto: Foto, compacto: bool = False) -> list[tuple[
         reserva = medidas.horizontalAdvance(f"+{resto}") + 16 + 4 if resto else 0
         if x + largura + reserva > area.right() + 1 and n > 0:
             sobra = f"+{len(textos) - n}"
-            saida.append((QRect(x, area.top(), medidas.horizontalAdvance(sobra) + 16, ALTURA_CHIP), None, sobra, True))
+            saida.append(Chip(QRect(x, area.top(), medidas.horizontalAdvance(sobra) + 16, ALTURA_CHIP), None, sobra,
+                              True))
             return saida
         retangulo = QRect(x, area.top(), min(largura, area.right() - x + 1), ALTURA_CHIP)
-        saida.append((retangulo, n, medidas.elidedText(texto, Qt.TextElideMode.ElideRight, area.right() - x - 14),
-                      False))
+        saida.append(Chip(retangulo, n, medidas.elidedText(texto, Qt.TextElideMode.ElideRight, area.right() - x - 14),
+                          False, _cor_da_impressao(foto.impressoes[n], por_id)))
         x += largura + 4
     return saida
 
@@ -156,20 +186,31 @@ def chip_em(celula: QRect, foto: Foto, ponto: QPoint) -> int | None:
 
 
 class ModeloGrade(QAbstractListModel):
-    """Fotos visíveis (todas ou só as selecionadas), na ordem de importação."""
+    """Fotos visíveis, na ordem de importação: todas ou só as selecionadas e, com ``pasta``, só as dessa pasta de
+    tamanho (os dois filtros juntos). Arrastar leva os ids das fotos (``MIME_FOTOS``)."""
 
     def __init__(self, estado: Estado, parent=None) -> None:
         super().__init__(parent)
         self.estado = estado
         self.so_selecionadas = False
+        self.pasta: str | None = None   # id da pasta de tamanho filtrada (None = sem filtro de pasta)
         self._fotos: list[Foto] = []
         self._linha: dict[str, int] = {}
         self._pixmaps: OrderedDict[str, QPixmap] = OrderedDict()
         self.recarregar()
 
+    def filtrando(self) -> bool:
+        return self.so_selecionadas or self.pasta is not None
+
+    def passa(self, foto: Foto) -> bool:
+        """A foto passa nos filtros (selecionadas e pasta)?"""
+        if self.so_selecionadas and not foto.selecionada:
+            return False
+        return self.pasta is None or any(i.pasta == self.pasta for i in foto.impressoes)
+
     def _visiveis(self) -> list[Foto]:
         fotos = self.estado.trabalho.fotos
-        return [f for f in fotos if f.selecionada] if self.so_selecionadas else list(fotos)
+        return [f for f in fotos if self.passa(f)] if self.filtrando() else list(fotos)
 
     def recarregar(self) -> None:
         self.beginResetModel()
@@ -180,9 +221,10 @@ class ModeloGrade(QAbstractListModel):
         self.estado.definir_visiveis([f.id for f in self._fotos])
 
     def foto_mudou(self, foto_id: str) -> None:
-        if self.so_selecionadas:
-            novas = [f.id for f in self._visiveis()]
-            if novas != [f.id for f in self._fotos]:
+        if self.filtrando():
+            linha = self._linha.get(foto_id)
+            foto = self._fotos[linha] if linha is not None else self.estado.por_id(foto_id)
+            if foto is not None and self.passa(foto) != (linha is not None):
                 self.recarregar()
                 return
         linha = self._linha.get(foto_id)
@@ -215,6 +257,20 @@ class ModeloGrade(QAbstractListModel):
         return pm
 
     # ------------------------------------------------------------ interface do modelo
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        flags = super().flags(index)
+        return flags | Qt.ItemFlag.ItemIsDragEnabled if index.isValid() else flags
+
+    def mimeTypes(self) -> list[str]:  # noqa: N802
+        return [MIME_FOTOS]
+
+    def mimeData(self, indices):  # noqa: N802
+        fotos = [self.foto(i.row()) for i in sorted(indices, key=lambda i: i.row())]
+        return mime_das_fotos(f for f in fotos if f is not None)
+
+    def supportedDragActions(self) -> Qt.DropAction:  # noqa: N802
+        return Qt.DropAction.CopyAction
+
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
         return 0 if parent.isValid() else len(self._fotos)
 
@@ -333,18 +389,23 @@ class DelegadoGrade(QStyledItemDelegate):
         if not foto.impressoes:
             return
         p.setFont(_fonte_chip())
-        for retangulo, _indice, texto, apagado in layout_chips(area, foto, compacto):
-            self._pilula(p, retangulo, texto, apagado=apagado)
+        for chip in layout_chips(area, foto, compacto, self.modelo.estado.trabalho.pastas):
+            retangulo, _indice, texto, apagado = chip
+            self._pilula(p, retangulo, texto, apagado=apagado, cor=chip.cor)
 
     @staticmethod
-    def _pilula(p: QPainter, r: QRect, texto: str, apagado: bool = False) -> None:
-        fundo = QColor(tema.PAINEL3) if apagado else QColor(tema.DESTAQUE)
+    def _pilula(p: QPainter, r: QRect, texto: str, apagado: bool = False, cor: str | None = None) -> None:
+        """Pílula do chip: laranja (impressão avulsa), a cor da pasta (impressão de pasta) ou cinza ("+N")."""
+        fundo = QColor(tema.PAINEL3) if apagado else QColor(cor or tema.DESTAQUE)
         if not apagado:
-            fundo.setAlpha(46)
+            fundo.setAlpha(56 if cor else 46)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(fundo)
         p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-        p.setPen(QColor(tema.APAGADO if apagado else tema.DESTAQUE_HI))
+        if apagado:
+            p.setPen(QColor(tema.APAGADO))
+        else:
+            p.setPen(QColor(cor).lighter(135) if cor else QColor(tema.DESTAQUE_HI))
         p.drawText(r, Qt.AlignmentFlag.AlignCenter, texto)
 
 
@@ -376,6 +437,17 @@ class _Lista(QListView):
                 self.grade.clicar_chip(indice, n, bool(evento.modifiers() & Qt.KeyboardModifier.ShiftModifier))
                 return
         super().mousePressEvent(evento)
+
+    def startDrag(self, _acoes) -> None:  # noqa: N802
+        """Arrasta as fotos escolhidas (para uma pasta da seção Pastas), com uma miniatura e o número delas."""
+        fotos = self.grade.fotos_escolhidas()
+        if not fotos:
+            return
+        arrasto = QDrag(self)
+        arrasto.setMimeData(mime_das_fotos(fotos))
+        arrasto.setPixmap(self.grade.pixmap_arrasto(fotos))
+        arrasto.setHotSpot(QPoint(LADO_ARRASTO // 2, LADO_ARRASTO // 2))
+        arrasto.exec(Qt.DropAction.CopyAction, Qt.DropAction.CopyAction)
 
     def contextMenuEvent(self, evento) -> None:  # noqa: N802
         indice = self.indexAt(evento.pos())
@@ -425,6 +497,9 @@ class Grade(QWidget):
         self.lista.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.lista.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.lista.setFrameShape(QListView.Shape.NoFrame)
+        self.lista.setDragEnabled(True)        # arrastar fotos para uma pasta de tamanho (#32)
+        self.lista.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.lista.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.controle = Slider(_("Miniaturas"), MINIATURA_MINIMA, MINIATURA_MAXIMA, PASSO_MINIATURA, self.lado, "px",
                                casas=0, horizontal=True, dica=_("Tamanho das miniaturas (Ctrl + roda do mouse também)"))
         self.controle.valor_mudou.connect(lambda v: self.definir_miniatura(int(round(v))))
@@ -445,6 +520,7 @@ class Grade(QWidget):
         estado.fotos_mudaram.connect(self._ao_mudar_fotos)
         estado.foto_mudou.connect(self.modelo.foto_mudou)
         estado.atual_mudou.connect(self._ao_mudar_atual)
+        estado.pastas_mudaram.connect(self._ao_mudar_pastas)
         self._ligar_na_tela()
 
     # ------------------------------------------------------------ consulta
@@ -487,6 +563,54 @@ class Grade(QWidget):
     def definir_filtro(self, so_selecionadas: bool) -> None:
         self.modelo.so_selecionadas = so_selecionadas
         self._ao_mudar_fotos()
+
+    @property
+    def pasta_filtrada(self) -> str | None:
+        return self.modelo.pasta
+
+    def definir_pasta(self, pasta_id: str | None) -> None:
+        """Mostra só as fotos da pasta de tamanho ``pasta_id`` (None: sem filtro de pasta). Combina com o filtro
+        Todas | Selecionadas: com os dois, só as fotos marcadas da pasta."""
+        if pasta_id is not None and self.estado.pasta_por_id(pasta_id) is None:
+            pasta_id = None
+        if pasta_id == self.modelo.pasta:
+            return
+        self.modelo.pasta = pasta_id
+        self._ao_mudar_fotos()
+
+    def pixmap_arrasto(self, fotos: list[Foto]) -> QPixmap:
+        """Imagem que acompanha o mouse ao arrastar: a miniatura da primeira foto e, com várias, o número delas."""
+        pm = QPixmap(LADO_ARRASTO + 12, LADO_ARRASTO + 12)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        quadro = QRect(0, 8, LADO_ARRASTO, LADO_ARRASTO)
+        p.setPen(QPen(QColor(tema.BORDA_FORTE), 1))
+        p.setBrush(QColor(tema.PAINEL2))
+        p.drawRoundedRect(QRectF(quadro).adjusted(0.5, 0.5, -0.5, -0.5), RAIO_MINIATURA, RAIO_MINIATURA)
+        miniatura = self.modelo.pixmap(fotos[0]) if fotos else None
+        if miniatura is not None:
+            alvo = miniatura.size().scaled(quadro.size() - QSize(6, 6), Qt.AspectRatioMode.KeepAspectRatio)
+            r = QRect(quadro.center().x() - alvo.width() // 2 + 1, quadro.center().y() - alvo.height() // 2 + 1,
+                      alvo.width(), alvo.height())
+            recorte = QPainterPath()
+            recorte.addRoundedRect(QRectF(r), RAIO_MINIATURA - 3, RAIO_MINIATURA - 3)
+            p.setClipPath(recorte)
+            p.drawPixmap(r, miniatura)
+            p.setClipping(False)
+        if len(fotos) > 1:
+            texto = str(len(fotos))
+            p.setFont(tema.fonte(8.5, QFont.Weight.Bold))
+            largura = max(22, p.fontMetrics().horizontalAdvance(texto) + 12)
+            bolha = QRect(LADO_ARRASTO + 10 - largura, 0, largura, 22)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(tema.DESTAQUE))
+            p.drawRoundedRect(bolha, 11, 11)
+            p.setPen(QColor(tema.TEXTO_SOBRE_DESTAQUE))
+            p.drawText(bolha, Qt.AlignmentFlag.AlignCenter, texto)
+        p.end()
+        return pm
 
     def alternar(self, indice: QModelIndex) -> None:
         foto = self.modelo.foto(indice.row())
@@ -571,6 +695,7 @@ class Grade(QWidget):
         copias.addSeparator()
         self._item(copias, "copias_mais", _("Uma cópia a mais"), lambda: self.somar_copias(fotos, +1))
         self._item(copias, "copias_menos", _("Uma cópia a menos"), lambda: self.somar_copias(fotos, -1))
+        self._menu_pastas(menu, fotos)
 
         menu.addSeparator()
         if any(not f.caminho.exists() for f in fotos):
@@ -578,6 +703,58 @@ class Grade(QWidget):
         texto = _("Remover do trabalho") if n == 1 else _("Remover {n} fotos do trabalho").format(n=n)
         self._item(menu, "remover", texto, lambda: self.remover_fotos(fotos))
         return menu
+
+    def _menu_pastas(self, menu: QMenu, fotos: list[Foto]) -> None:
+        """"Adicionar à pasta ▸" (``adicionar_pasta``: ``adicionar:<id>`` por pasta e ``nova_pasta``) e, se alguma das
+        fotos está numa pasta, "Tirar da pasta ▸" (``tirar_pasta``: ``tirar:<id>``)."""
+        pastas = self.estado.trabalho.pastas
+        adicionar = menu.addMenu(_("Adicionar à pasta"))
+        adicionar.menuAction().setObjectName("adicionar_pasta")
+        for pasta in pastas:
+            texto = f"{pasta.nome}  ·  {nome_tamanho(pasta.tamanho, pasta.papel_mm)}"
+            acao = self._item(adicionar, f"adicionar:{pasta.id}", texto,
+                              lambda _c=False, p=pasta.id: self.adicionar_a_pasta(fotos, p))
+            ja_estao = all(f.selecionada and self.estado.impressao_da_pasta(f, pasta) for f in fotos)
+            acao.setCheckable(True)
+            acao.setChecked(ja_estao)
+            acao.setEnabled(not ja_estao)        # nada a fazer: já estão (marcadas) nessa pasta
+            acao.setIcon(icones.bolinha(tema.cor_pasta(pasta.cor), 14, anel=ja_estao))
+            acao.setData(pasta.id)
+        if pastas:
+            adicionar.addSeparator()
+        acao = self._item(adicionar, "nova_pasta", _("Nova pasta…"), lambda: self.nova_pasta_com(fotos))
+        acao.setIcon(icones.icone("mais", tema.APAGADO, 16))
+        presentes = [p for p in pastas if any(self.estado.impressao_da_pasta(f, p) for f in fotos)]
+        if presentes:
+            tirar = menu.addMenu(_("Tirar da pasta"))
+            tirar.menuAction().setObjectName("tirar_pasta")
+            for pasta in presentes:
+                acao = self._item(tirar, f"tirar:{pasta.id}", pasta.nome,
+                                  lambda _c=False, p=pasta.id: self.tirar_da_pasta(fotos, p))
+                acao.setIcon(icones.bolinha(tema.cor_pasta(pasta.cor), 14))
+                acao.setData(pasta.id)
+
+    def adicionar_a_pasta(self, fotos: list[Foto], pasta_id: str) -> list[Foto]:
+        """Põe as fotos na pasta de tamanho (marcadas), num passo só do desfazer."""
+        pasta = self.estado.pasta_por_id(pasta_id)
+        return self.estado.adicionar_a_pasta(list(fotos), pasta) if pasta is not None else []
+
+    def tirar_da_pasta(self, fotos: list[Foto], pasta_id: str) -> list[Foto]:
+        """Tira as fotos da pasta de tamanho, num passo só do desfazer."""
+        pasta = self.estado.pasta_por_id(pasta_id)
+        return self.estado.tirar_da_pasta(list(fotos), pasta) if pasta is not None else []
+
+    def criar_dialogo_nova_pasta(self, fotos: list[Foto]):
+        """Diálogo "Nova pasta" que, aceito, cria a pasta e põe nela as fotos (um passo só do desfazer)."""
+        return dialogo_nova_pasta(self.estado, self.window(), list(fotos))
+
+    def nova_pasta_com(self, fotos: list[Foto]) -> Pasta | None:
+        """"Nova pasta…" do menu de contexto: pede nome, tamanho e cor (modal) e põe as fotos na pasta nova."""
+        dialogo = self.criar_dialogo_nova_pasta(fotos)
+        dialogo.exec()
+        pasta = dialogo.pasta_criada
+        dialogo.deleteLater()
+        return pasta
 
     @staticmethod
     def _item(menu: QMenu, nome: str, texto: str, slot) -> QAction:
@@ -660,6 +837,17 @@ class Grade(QWidget):
             self.lista.scrollTo(indice)
         else:
             sm.clear()
+
+    def _ao_mudar_pastas(self) -> None:
+        """Pastas mudaram (cor, nome, apagada, desfeita, outro trabalho): a pasta filtrada que sumiu solta o filtro, a
+        lista filtrada é conferida e os chips são redesenhados com as cores novas."""
+        if self.modelo.pasta is not None:
+            if self.estado.pasta_por_id(self.modelo.pasta) is None:
+                self.modelo.pasta = None
+                self._ao_mudar_fotos()
+            elif [f.id for f in self.modelo._visiveis()] != [f.id for f in self.fotos_visiveis()]:
+                self._ao_mudar_fotos()
+        self.lista.viewport().update()
 
     def _ao_mudar_atual(self, foto) -> None:
         if self._sincronizando:

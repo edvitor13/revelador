@@ -4,6 +4,10 @@ Tudo conversa só pelo ``Estado``: selecionar a foto atual, listar/alterar/remov
 ``estado.alterar(foto, pedido=True)``. Trocar tamanho, orientação ou papel refaz o recorte automático ou reencaixa o
 manual (que continua "manual"). Os métodos públicos do painel (``trocar_tamanho`` etc.) são o que os controles
 chamam, então dá para testar sem clicar.
+
+Impressão de uma pasta de tamanho (#32): a linha mostra a bolinha da cor e o nome da pasta; o tamanho é o da pasta
+(o combo fica desligado; muda-se pelo menu da pasta, para todas as fotos dela) e remover a impressão é tirar a foto
+da pasta (``estado.tirar_da_pasta``), mesmo que seja a última impressão (a foto deixa de estar marcada).
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpin
 from .. import enquadramento, precos, tamanhos
 from ..i18n import N_, _
 from ..projeto import Foto, Impressao
-from . import prefs, tema
+from . import icones, prefs, tema
 from .componentes import Card, Segmented, ToggleSwitch, botao_plano
 from .estado import Estado
 
@@ -189,6 +193,7 @@ class LinhaImpressao(QFrame):
         self.painel = painel
         self.indice = indice
         self.qualidade: str | None = None
+        self.pasta = None   # a Pasta de tamanho da impressão (None: avulsa)
         self.setObjectName("LinhaImp")
         self.combo_tamanho = QComboBox()
         preencher_combo_tamanhos(self.combo_tamanho)
@@ -226,6 +231,19 @@ class LinhaImpressao(QFrame):
         self.ponto_qualidade.setFixedSize(8, 8)
         self.rotulo_qualidade = QLabel()
         self.botao_remover = botao_plano("lixeira", _("Remover este tamanho"), tamanho=16, cor=tema.APAGADO)
+        # pasta de tamanho (#32): bolinha da cor e nome, só nas impressões de pasta
+        self.caixa_pasta = QWidget()
+        linha_pasta = QHBoxLayout(self.caixa_pasta)
+        linha_pasta.setContentsMargins(2, 0, 0, 0)
+        linha_pasta.setSpacing(7)
+        self.bolinha_pasta = QLabel()
+        self.bolinha_pasta.setFixedSize(10, 10)
+        self.rotulo_pasta = QLabel()
+        self.rotulo_pasta.setObjectName("Muted")
+        self.rotulo_pasta.setMinimumWidth(0)
+        linha_pasta.addWidget(self.bolinha_pasta)
+        linha_pasta.addWidget(self.rotulo_pasta, 1)
+        self.caixa_pasta.hide()
         acao_orientacao = QHBoxLayout()
         acao_orientacao.setSpacing(6)
         acao_orientacao.addWidget(self.rotulo_auto)
@@ -235,18 +253,19 @@ class LinhaImpressao(QFrame):
         grade.setContentsMargins(10, 10, 10, 10)
         grade.setHorizontalSpacing(8)
         grade.setVerticalSpacing(8)
-        grade.addWidget(self.combo_tamanho, 0, 0, 1, 2)
-        grade.addWidget(self.botao_remover, 0, 2)
-        grade.addWidget(self.seg_orientacao, 1, 0, 1, 3)
-        grade.addWidget(caixa_copias, 2, 0)
-        grade.addWidget(self.combo_modo, 2, 1, 1, 2)
+        grade.addWidget(self.caixa_pasta, 0, 0, 1, 3)
+        grade.addWidget(self.combo_tamanho, 1, 0, 1, 2)
+        grade.addWidget(self.botao_remover, 1, 2)
+        grade.addWidget(self.seg_orientacao, 2, 0, 1, 3)
+        grade.addWidget(caixa_copias, 3, 0)
+        grade.addWidget(self.combo_modo, 3, 1, 1, 2)
         qualidade = QHBoxLayout()
         qualidade.setSpacing(7)
         qualidade.addWidget(self.ponto_qualidade)
         qualidade.addWidget(self.rotulo_qualidade, 1)
-        grade.addLayout(qualidade, 3, 0, 1, 3)
-        grade.addLayout(acao_orientacao, 4, 0, 1, 3)
-        grade.addWidget(self.botao_voltar, 5, 0, 1, 3, Qt.AlignmentFlag.AlignLeft)
+        grade.addLayout(qualidade, 4, 0, 1, 3)
+        grade.addLayout(acao_orientacao, 5, 0, 1, 3)
+        grade.addWidget(self.botao_voltar, 6, 0, 1, 3, Qt.AlignmentFlag.AlignLeft)
         grade.setColumnStretch(1, 1)
         self.combo_tamanho.currentIndexChanged.connect(self._ao_tamanho)
         self.botao_menos.clicked.connect(lambda: self.spin_copias.setValue(self.spin_copias.value() - 1))
@@ -318,7 +337,23 @@ class LinhaImpressao(QFrame):
         peso = "font-weight: 600;" if self.qualidade == "baixa" else ""
         self.rotulo_qualidade.setStyleSheet(f"color: {cor}; {peso}")
         self.ponto_qualidade.setStyleSheet(f"background: {cor}; border-radius: 4px;" if self.qualidade else "")
-        self.botao_remover.setEnabled(len(foto.impressoes) > 1)
+        pasta = estado.pasta_por_id(imp.pasta)
+        self.pasta = pasta
+        self.caixa_pasta.setVisible(pasta is not None)
+        if pasta is not None:
+            self.bolinha_pasta.setPixmap(icones.bolinha(tema.cor_pasta(pasta.cor), 10).pixmap(10, 10))
+            self.rotulo_pasta.setText(_("Pasta “{nome}”").format(nome=pasta.nome))
+            self.rotulo_pasta.setToolTip(tema.nome_cor_pasta(pasta.cor))
+            self.combo_tamanho.setEnabled(False)
+            self.combo_tamanho.setToolTip(_("O tamanho é o da pasta “{nome}”: mude pelo menu da pasta (vale para "
+                                            "todas as fotos dela).").format(nome=pasta.nome))
+            self.botao_remover.setEnabled(True)
+            self.botao_remover.setToolTip(_("Tirar da pasta “{nome}”").format(nome=pasta.nome))
+        else:
+            self.combo_tamanho.setEnabled(True)
+            self.combo_tamanho.setToolTip("")
+            self.botao_remover.setEnabled(len(foto.impressoes) > 1)
+            self.botao_remover.setToolTip(_("Remover este tamanho"))
         self.setProperty("ativa", "true" if ativa else "false")
         self.style().unpolish(self)
         self.style().polish(self)
@@ -365,6 +400,7 @@ class PainelImpressoes(Card):
         estado.atual_mudou.connect(lambda _foto: self.sincronizar())
         estado.foto_mudou.connect(self._foto_mudou)
         estado.impressao_mudou.connect(lambda _i: self.sincronizar())
+        estado.pastas_mudaram.connect(self.sincronizar)   # nome/cor/tamanho de uma pasta de tamanho (#32)
         # atalhos + e − (e = sem Shift) mudam as cópias da impressão atual
         for chave, delta in (("+", 1), ("=", 1), ("-", -1)):
             QShortcut(QKeySequence(chave), self, activated=lambda d=delta: self.mudar_copias_atual(d),
@@ -415,8 +451,9 @@ class PainelImpressoes(Card):
         return foto, foto.impressoes[indice]
 
     def trocar_tamanho(self, indice: int, tamanho_id: str) -> None:
+        """Troca o tamanho de uma impressão avulsa (a de pasta tem o tamanho da pasta: não muda por aqui)."""
         alvo = self._imp(indice)
-        if alvo is None:
+        if alvo is None or alvo[1].pasta is not None:
             return
         foto, imp = alvo
         tamanhos.obter(tamanho_id)   # valida (KeyError em id desconhecido)
@@ -426,7 +463,7 @@ class PainelImpressoes(Card):
     def definir_personalizado(self, indice: int, largura_mm: float, altura_mm: float,
                               preco_centavos: int | None = None) -> None:
         alvo = self._imp(indice)
-        if alvo is None:
+        if alvo is None or alvo[1].pasta is not None:
             return
         foto, imp = alvo
         tamanhos.papel_mm(tamanhos.PERSONALIZADO, (largura_mm, altura_mm))   # valida os limites
@@ -503,7 +540,13 @@ class PainelImpressoes(Card):
         self.estado.definir_impressao(len(foto.impressoes) - 1)
 
     def remover_impressao(self, indice: int) -> None:
+        """Remove a impressão avulsa (nunca a última) ou, se for de uma pasta de tamanho, tira a foto da pasta."""
         alvo = self._imp(indice)
+        if alvo is not None and alvo[1].pasta is not None:
+            pasta = self.estado.pasta_por_id(alvo[1].pasta)
+            if pasta is not None:
+                self.estado.tirar_da_pasta([alvo[0]], pasta)
+                return
         if alvo is None or len(alvo[0].impressoes) <= 1:
             return
         foto = alvo[0]

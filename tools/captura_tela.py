@@ -10,6 +10,10 @@ Gera, em SAIDA (padrão ``saida/``):
   alterados); ``resumo.png``, ``precos.png``, ``personalizado.png`` e ``exportar.png``: os diálogos do pedido;
   ``menu_projeto.png`` e ``menu_engrenagem.png``: os menus da barra superior; ``configuracoes.png``: o diálogo de
   Configurações; ``barra_status.png``: a barra de status com o indicador do salvamento automático ("Salvo às...");
+- pastas de tamanho (#32): ``janela_pastas.png`` (quatro pastas, fotos em duas delas), ``janela_pastas_filtrada.png``
+  (a grade filtrada por uma pasta), ``janela_pastas_estreita.png`` e ``grade_pastas_estreita.png`` (a grade com duas
+  colunas de 80 px), ``menu_pasta.png`` e ``menu_pasta_cor.png``, ``menu_grade_pastas.png`` e ``menu_adicionar_pasta.png`` (o menu de contexto
+  da grade e o submenu "Adicionar à pasta"), ``nova_pasta.png`` e ``importar_pasta.png`` (o passo de importar pasta);
 - ``boas_vindas.png`` e ``boas_vindas_estreita.png``: a tela de boas-vindas (1440x900 e a janela mais estreita), com
   três trabalhos recentes, um trabalho para recuperar e o aviso de atualização simulado; ``novidades.png``: o
   diálogo das novidades da versão;
@@ -237,6 +241,95 @@ def capturar_janelas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int
         menu.hide()
     janela.autosalvar.salvar_agora(sincrono=True)   # grava na pasta temporária (prefs): o indicador diz "Salvo às"
     gravar(janela.statusBar(), "barra_status.png")
+    _fechar(janela)
+    return feitos
+
+
+# ------------------------------------------------------------------ pastas de tamanho (#32)
+def capturar_pastas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int, int]]:
+    """Grava a seção Pastas (com a grade filtrada por uma pasta, larga e estreita), o menu da pasta, o menu de
+    contexto da grade com "Adicionar à pasta", o diálogo de nova pasta e o passo de importar pasta."""
+    from PySide6.QtCore import QPoint, Qt
+
+    feitos: list[tuple[str, int, int]] = []
+
+    def gravar(widget, nome: str) -> None:
+        for _ in range(4):
+            app.processEvents()
+            time.sleep(0.02)
+        feitos.append((nome, *_gravar(widget, saida / nome)))
+
+    def mostrar(widget) -> None:
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        widget.show()
+
+    if not fotos:
+        return feitos
+    janela = _janela(app, *TAMANHO_JANELA)
+    e = janela.estado
+    novas = e.adicionar(fotos)
+    esperar_workers(app)
+    familia = e.criar_pasta("Família", "10x15", "azul")
+    viagem = e.criar_pasta("Viagem a Paraty", "15x21", "verde", copias=2)
+    e.criar_pasta("Polaroides", "personalizado", "rosa", papel_mm=(88.0, 107.0))
+    e.criar_pasta("Presentes da vovó", "13x18", "amarelo")
+    e.adicionar_a_pasta(novas[:4], familia)
+    e.adicionar_a_pasta([novas[2], novas[5], novas[6]], viagem)
+    e.selecionar(novas[7])
+    e.definir_atual(novas[2])
+    esperar_workers(app)
+    gravar(janela, "janela_pastas.png")
+    janela.secao_pastas.clicar(viagem)
+    e.definir_atual(novas[5])
+    esperar_workers(app)
+    gravar(janela, "janela_pastas_filtrada.png")
+    janela.secao_pastas.clicar(None)
+    janela.grade.definir_miniatura(80)
+    janela.resize(1000, 700)
+    tamanhos = janela.divisor.sizes()
+    janela.divisor.setSizes([janela.area_grade.minimumWidth(), sum(tamanhos) - janela.area_grade.minimumWidth()
+                             - tamanhos[2], tamanhos[2]])
+    app.processEvents()
+    gravar(janela, "janela_pastas_estreita.png")
+    gravar(janela.area_grade, "grade_pastas_estreita.png")
+    janela.grade.definir_miniatura(150)
+    janela.resize(*TAMANHO_JANELA)
+    app.processEvents()
+
+    secao = janela.secao_pastas
+    linha = secao.linha_da_pasta(familia)
+    menu = secao.menu_pasta(familia)
+    mostrar(menu)
+    menu.popup(linha.mapToGlobal(QPoint(linha.width() - 30, linha.height())))
+    gravar(menu, "menu_pasta.png")
+    cores = next(a for a in menu.actions() if a.objectName() == "cor").menu()
+    mostrar(cores)
+    cores.popup(linha.mapToGlobal(QPoint(linha.width(), linha.height())))
+    gravar(cores, "menu_pasta_cor.png")
+    cores.hide()
+    menu.hide()
+    menu = janela.grade.menu_contexto([novas[0], novas[1]])
+    mostrar(menu)
+    menu.popup(janela.grade.mapToGlobal(QPoint(60, 120)))
+    gravar(menu, "menu_grade_pastas.png")
+    adicionar = next(a for a in menu.actions() if a.objectName() == "adicionar_pasta").menu()
+    mostrar(adicionar)
+    adicionar.popup(janela.grade.mapToGlobal(QPoint(300, 200)))
+    gravar(adicionar, "menu_adicionar_pasta.png")
+    adicionar.hide()
+    menu.hide()
+
+    dialogo = secao.criar_dialogo_nova_pasta()
+    dialogo.campo_nome.setText("Formatura")
+    mostrar(dialogo)
+    gravar(dialogo, "nova_pasta.png")
+    dialogo.reject()
+    pasta_disco = fotos[0].parent
+    passo = janela.criar_passo_importar_pasta(pasta_disco)
+    passo.campo_nome.setText("Casamento da Ana")
+    mostrar(passo)
+    gravar(passo, "importar_pasta.png")
+    passo.reject()
     _fechar(janela)
     return feitos
 
@@ -566,6 +659,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 fotos = gerar_fotos(temporario / "fotos")
         for nome, largura, altura in capturar_janelas(app, fotos, args.saida):
+            print(f"{nome:<22}{largura}x{altura}")
+        for nome, largura, altura in capturar_pastas(app, fotos, args.saida):
             print(f"{nome:<22}{largura}x{altura}")
         for nome, largura, altura in capturar_boas_vindas(app, fotos, temporario / "trabalhos", args.saida):
             print(f"{nome:<22}{largura}x{altura}")

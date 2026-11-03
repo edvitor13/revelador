@@ -86,6 +86,7 @@ class MainWindow(QMainWindow):
         self._ligar_menu_grade()
         self._ligar_autosalvar()
         self._ligar_boas_vindas()
+        self._ligar_pastas()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -314,12 +315,53 @@ class MainWindow(QMainWindow):
             self.importar(nomes)
 
     def escolher_pasta(self) -> None:
+        """"Importar pasta…": escolhe a pasta do disco e mostra o passo curto (criar ou não a pasta de tamanho, #32)."""
         s = prefs.settings()
         inicio = str(s.value("importar/ultima_pasta", "", str))
         pasta = QFileDialog.getExistingDirectory(self, _("Importar pasta"), inicio)
         if pasta:
             s.setValue("importar/ultima_pasta", pasta)
-            self.importar([pasta])
+            passo = self.criar_passo_importar_pasta(Path(pasta))
+            passo.exec()
+            passo.deleteLater()
+
+    def criar_passo_importar_pasta(self, pasta: Path):
+        """Passo "Importar pasta" (``pastas.PassoImportarPasta``) já ligado: aceitar importa a pasta e, com "Criar pasta
+        de tamanho" marcado, põe as fotos dela numa pasta de tamanho nova; cancelar não importa nada. Quem chama faz
+        ``exec()`` (ou ``accept()`` num teste)."""
+        from .pastas import PassoImportarPasta
+
+        pasta = Path(pasta)
+        caminhos = imagem.listar_fotos([pasta])
+        dialogo = PassoImportarPasta(self.estado, pasta, len(caminhos), self)
+        dialogo.accepted.connect(
+            lambda: self.importar_pasta(pasta, dialogo.valores() if dialogo.criar() else None, caminhos))
+        return dialogo
+
+    def importar_pasta(self, pasta: Path, pasta_tamanho: dict | None = None,
+                       caminhos: list[Path] | None = None) -> list:
+        """Importa a pasta do disco (como ``importar``) e devolve as fotos novas.
+
+        Com ``pasta_tamanho`` (os argumentos de ``Estado.criar_pasta``: nome, tamanho, cor...), cria essa pasta de
+        tamanho e põe nela, marcadas para revelação, todas as fotos daquela pasta do disco (inclusive as que já
+        estavam no trabalho). Criar a pasta e marcar as fotos é UM passo do desfazer (a importação em si não entra no
+        desfazer). Sem nenhuma foto na pasta do disco, nenhuma pasta de tamanho é criada.
+        """
+        from .pastas import fotos_dos_caminhos
+
+        if pasta_tamanho is None:
+            return self.importar([pasta])
+        caminhos = imagem.listar_fotos([pasta]) if caminhos is None else caminhos
+        nome = pasta_tamanho.get("nome") or Path(pasta).name
+        with self.estado.lote(_("importação da pasta “{nome}”").format(nome=nome)):
+            novas = self.importar([pasta])
+            fotos = fotos_dos_caminhos(self.estado, caminhos)
+            if fotos:
+                criada = self.estado.criar_pasta(**pasta_tamanho)
+                self.estado.adicionar_a_pasta(fotos, criada)
+                self.statusBar().showMessage(_("{fotos} na pasta “{nome}”, marcadas para revelação.").format(
+                    fotos=_("1 foto") if len(fotos) == 1 else _("{n} fotos").format(n=len(fotos)), nome=criada.nome))
+        return novas
 
     def showEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
         super().showEvent(evento)
@@ -536,6 +578,21 @@ class MainWindow(QMainWindow):
         from .boas_vindas import BoasVindas
 
         self.boas_vindas = BoasVindas(self)
+
+    # ------------------------------------------------------------ pastas de tamanho (#32)
+    def _ligar_pastas(self) -> None:
+        """Seção "Pastas" (``ui/pastas.py``) no topo da grade, acima da lista (aparece e some com ela).
+
+        Clicar numa pasta filtra a grade (``Grade.definir_pasta``), junto com "Mostrar: Todas | Selecionadas": a grade
+        mostra as fotos que passam nos dois (pasta "Natal" + Selecionadas = as fotos marcadas da pasta "Natal").
+        "Importar pasta…" mostra o passo de criar a pasta de tamanho (``escolher_pasta``); arrastar uma pasta do
+        Explorer para a janela continua só importando.
+        """
+        from .pastas import SecaoPastas
+
+        self.secao_pastas = SecaoPastas(self.estado)
+        self.grade.layout().insertWidget(0, self.secao_pastas)
+        self.secao_pastas.filtro_mudou.connect(self.grade.definir_pasta)
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
