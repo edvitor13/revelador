@@ -40,20 +40,23 @@ proporção certa e não precisa cortar nada além da margem de corte (sangria).
 Versão **0.1.0 em construção**. As fases A (núcleo), B (importação, grade, seleção, custo, editor) e C (ajustes,
 exportação, salvar/abrir, atualização) e o **visual novo** estão no `main`. O que cada issue já tem:
 
-- **#1, #2, #7, #8, #10, #13, #31, #33: feitas** (fechadas). Ajustes com painel e prévia rápida, exportação com
-  diálogo, atualização com diálogo e verificação ao abrir, preços e custo do pedido, tamanho das miniaturas da grade
-  ajustável (#31) e orientação Retrato | Paisagem explícita com "Girar papel" e cópias rápidas (#33).
+- **#1, #2, #7, #8, #10, #13, #31, #33, #34, #35, #36: feitas** (fechadas). Ajustes com painel e prévia rápida,
+  exportação com diálogo, atualização com diálogo e verificação ao abrir, preços e custo do pedido, tamanho das
+  miniaturas da grade ajustável (#31), orientação Retrato | Paisagem explícita com "Girar papel" e cópias rápidas
+  (#33), salvamento automático a cada minuto com Configurações (#34), tela de boas-vindas com recentes, novidades e
+  atualizações (#35) e rostos aos poucos, com prioridade para a foto aberta e centro na média dos rostos (#36).
 - **#3 (tamanhos)**: tabela, funções de px/qualidade e personalizado prontos e na interface (seletor, painel).
 - **#4 (rostos)**: YuNet, política do recorte e detecção em segundo plano depois da importação.
-- **#5 (seleção)**: marca na grade, filtro Todas | Selecionadas, painel de impressões, tamanho padrão, status. Falta
-  desfazer/refazer (`QUndoStack`) e aplicar o tamanho a várias fotos de uma vez.
-- **#6 (editor)**: receita única, moldura, mover, zoom, girar, endireitar, margem de corte, prévia. Faltam alças de
-  canto, ←/→ entre fotos e o desfazer.
-- **#9 (salvar/abrir)**: formato, recentes, recuperação, religar fotos, linha de comando e associação no `.wxs`.
-  Falta arrastar um `.revelador` para a janela e "Procurar…" no menu de contexto da grade.
+- **#5 (seleção)**, **#6 (editor)** e **#9 (salvar/abrir)**: completas — desfazer/refazer (`QUndoStack`) de tudo o
+  que a pessoa muda, menu de contexto da grade para aplicar tamanho e cópias a várias fotos e "Procurar…", alças nos
+  cantos da moldura, ←/→ entre as fotos no editor e soltar um `.revelador` na janela.
+- **#32 (pastas de tamanho)**: modelo, `.revelador`, API no `Estado`, paleta e exportação por pasta prontos; a
+  interface (seção Pastas junto da grade, arrastar para a pasta, chip com a cor, passo de "Importar pasta") vem no
+  PR da parte 2.
 - **#11 (release) e #12 (depois da 0.1.0)**: não começadas.
 
-Outras pendências pequenas: miniatura da grade sem os ajustes e um aviso inofensivo do OpenCV no stderr. As funções
+Outras pendências pequenas: miniatura da grade sem os ajustes, os títulos dos grupos no submenu "Tamanho ▸" da
+grade e um aviso inofensivo do OpenCV no stderr. As funções
 vieram pelas issues do marco **0.1.0**, nesta ordem sugerida:
 
 | Issue | Assunto | Módulos |
@@ -68,7 +71,13 @@ vieram pelas issues do marco **0.1.0**, nesta ordem sugerida:
 | #8 | Exportar para revelação | `exportar.py`, `ui/exportar_dialog.py` |
 | #13 | Previsão de custos: valor base por tamanho e total do pedido | `precos.py`, `ui/precos_dialog.py` |
 | #9 | Salvar e abrir o trabalho (`.revelador`) | `projeto.py`, `ui/projeto_ui.py` |
-| #10 | Atualização automática | `updater.py`, `ui/atualizar_dialog.py` |
+| #10 | Atualização automática | `updater.py`, `ui/atualizacao.py` |
+| #31 | Tamanho das miniaturas e duas colunas ao abrir | `ui/grade.py`, `ui/main_window.py` |
+| #33 | Orientação explícita e botões rápidos de orientação e cópias | `ui/painel_impressoes.py`, `ui/editor.py` |
+| #32 | Pastas de tamanho | `projeto.py`, `ui/estado.py`, `exportar.py`, `ui/pastas.py`, `ui/grade.py` |
+| #34 | Salvamento automático | `ui/autosalvar.py`, `ui/configuracoes.py`, `ui/projeto_ui.py` |
+| #35 | Tela de boas-vindas | `ui/boas_vindas.py`, `novidades/` |
+| #36 | Rostos aos poucos e centro na média dos rostos | `ui/tarefas.py`, `enquadramento.py` |
 | #11 | Roteiro da 0.1.0 (release) | — |
 
 Ideias para depois da 0.1.0 ficam na issue #12. Antes de começar uma issue, leia a seção correspondente de
@@ -103,11 +112,12 @@ revelador/
     main_window.py            janela: barra superior, áreas, contrato das ações acao_*, _ligar_<parte>() [existe]
     prefs.py                  settings(): única porta para as preferências (QSettings)               [existe]
     estado.py                 estado compartilhado da interface: os widgets conversam só por ele     [existe]
+    desfazer.py               desfazer/refazer: fotografias, passos e junção de gestos (QUndoStack)  [existe]
     tema.py                   cores, medidas e folha de estilo (tema escuro neutro, destaque laranja) [existe]
     icones.py                 ícones vetoriais desenhados com QPainter                               [existe]
     componentes.py            Card, Slider, Segmented, ToggleSwitch, Pilula, BarraAdaptavel          [existe]
     grade.py                  grade de miniaturas, seleção, tamanho e cópias                         [existe]
-    tarefas.py                importação em segundo plano: metadados, miniaturas e rostos            [existe]
+    tarefas.py                importação em segundo plano: metadados, miniaturas e a fila de rostos  [existe]
     painel_impressoes.py      cartão Impressões e seletor de tamanho padrão                          [existe]
     editor.py                 visor com a moldura do papel: mover, zoom, girar, endireitar, resultado [existe]
     previa.py                 trabalhadores do editor: proxy e prévia pela receita                   [existe]
@@ -116,9 +126,12 @@ revelador/
     precos_dialog.py          tabela de preços por tamanho                                           [existe]
     resumo.py                 texto da barra de status e janela do resumo/custo do pedido            [existe]
     projeto_ui.py             Novo/Abrir/Salvar, recentes, título, recuperação, religar fotos        [existe]
+    autosalvar.py             salvamento automático, nome e pasta automáticos, indicador de status   [existe]
+    configuracoes.py          diálogo de Configurações em seções                                     [existe]
+    boas_vindas.py            tela de boas-vindas: ações, recentes, recuperação, novidades, versão   [existe]
     atualizacao.py            verificação ao abrir e diálogo da atualização                          [existe]
   data/modelos/               face_detection_yunet_2023mar.onnx + LICENSE (MIT), SHA-256 em teste    [existe]
-  novidades/release_vX.Y.Z.md notas da release (lidas pelo CI na tag)
+  novidades/release_vX.Y.Z.md notas da release (CI na tag) e "Novidades" da tela de boas-vindas    [existe]
 packaging/
   install_marker.py           grava revelador-install.json {"kind": "msi"|"zip", "version"}          [existe]
   discord_notify.py           avisos do CI no Discord (release, falha, teste); só biblioteca padrão  [existe]

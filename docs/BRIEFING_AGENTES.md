@@ -17,7 +17,8 @@ github.com/edvitor13/revelador). Outros agentes trabalham em paralelo em outras 
   `recorte_sugerido`, `reencaixar`), `ajustes.py` (`PARAMS`, `aplicar`), `projeto.py` (também `salvar`/`abrir`),
   `updater.py`, `system.py`, `crashlog.py`, `ui/prefs.py`, `ui/main_window.py`, `receita.py` (`renderizar`,
   `tamanho_exportacao`, `carregar_fonte`, `para_uint8`), `ui/grade.py`, `ui/tarefas.py`, `ui/painel_impressoes.py`,
-  `ui/precos_dialog.py`, `ui/resumo.py`, `ui/editor.py`, `ui/previa.py`.
+  `ui/precos_dialog.py`, `ui/resumo.py`, `ui/editor.py`, `ui/previa.py`, `ui/desfazer.py`, `ui/autosalvar.py`,
+  `ui/configuracoes.py` (diálogo em seções: acrescente uma `Secao`), `ui/boas_vindas.py`.
 - **Visual** (o app tem identidade própria, escura e moderna): use os nomes de objeto da folha de estilo de
   `ui/tema.py` (`Primary`, `Flat`, `Danger`, `Card`, `PanelTitle`, `Muted`, `Faint`, `Kicker`...), os componentes
   de `ui/componentes.py` (`Card`, `Slider`, `Segmented`, `ToggleSwitch`) e os ícones de `ui/icones.py`. **Nenhuma
@@ -32,7 +33,9 @@ github.com/edvitor13/revelador). Outros agentes trabalham em paralelo em outras 
   publica por `definir_visiveis`) e `vizinha(passo)` (foto anterior/seguinte entre as visíveis); `lote(texto)`
   (*context manager*: agrupa mudanças em várias fotos num passo só do desfazer — use-o sempre que mexer em várias
   fotos de uma vez); `alterar_pastas()` + sinal `pastas_mudaram()` (quem muda `trabalho.pastas` chama;
-  entra no desfazer). Modelo: `projeto.Pasta`, `Trabalho.pastas` e `Impressao.pasta` (pastas de tamanho, #32).
+  entra no desfazer); mudança que vem do sistema e não deve virar passo do desfazer → `absorver(foto)`;
+  gestos contínuos → `alterar(foto, juntar="chave")`; pastas de tamanho só pela API da seção do `Estado`.
+  Modelo: `projeto.Pasta`, `Trabalho.pastas` e `Impressao.pasta` (pastas de tamanho, #32).
 - **Interface**: todo widget conversa só pelo `revelador/ui/estado.py` (`janela.estado`): leia a docstring dele
   antes de qualquer widget. Mexeu no modelo → chame `estado.alterar(foto, pedido=...)`; nunca um widget chama outro.
   Não mude a API do `Estado` (pode ACRESCENTAR métodos se precisar; descreva no relatório).
