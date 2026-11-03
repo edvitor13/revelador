@@ -12,6 +12,7 @@ Sinais:
 - ``pedido_mudou()``: algo que muda o orçamento ou a exportação (seleção, tamanhos, cópias, preços).
 - ``modificado_mudou(bool)``: o trabalho passou a ter (ou deixou de ter) alterações não salvas.
 - ``comparando_mudou(bool)``: antes/depois (``comparando``): enquanto verdadeiro, o editor mostra a foto sem ajustes.
+- ``pastas_mudaram()``: a lista de pastas de tamanho (``trabalho.pastas``) ou algo de uma pasta mudou (#32).
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ class Estado(QObject):
     pedido_mudou = Signal()
     modificado_mudou = Signal(bool)
     comparando_mudou = Signal(bool)
+    pastas_mudaram = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -80,6 +82,7 @@ class Estado(QObject):
         self.erros.clear()
         self.atual = None
         self.fotos_mudaram.emit()
+        self.pastas_mudaram.emit()
         self.atual_mudou.emit(None)
         self.pedido_mudou.emit()
         self.marcar_modificado(False)
@@ -212,6 +215,16 @@ class Estado(QObject):
         self.foto_mudou.emit(foto.id)
         if pedido:
             self.pedido_mudou.emit()
+        self.marcar_modificado()
+
+    def alterar_pastas(self) -> None:
+        """Avisa que ``trabalho.pastas`` mudou (criar, renomear, cor, tamanho, cópias, apagar uma pasta).
+
+        Quem mexe nas pastas chama isto (as impressões das fotos afetadas avisam por ``alterar``, de preferência
+        tudo dentro de um ``lote``). Entra no desfazer/refazer (#5).
+        """
+        self.pastas_mudaram.emit()
+        self.pedido_mudou.emit()
         self.marcar_modificado()
 
     @contextmanager

@@ -31,7 +31,8 @@ github.com/edvitor13/revelador). Outros agentes trabalham em paralelo em outras 
 - **Ganchos comuns do `Estado`** (já existem): `visiveis` (ids das fotos visíveis na grade, na ordem dela; a grade
   publica por `definir_visiveis`) e `vizinha(passo)` (foto anterior/seguinte entre as visíveis); `lote(texto)`
   (*context manager*: agrupa mudanças em várias fotos num passo só do desfazer — use-o sempre que mexer em várias
-  fotos de uma vez). Modelo: `projeto.Pasta`, `Trabalho.pastas` e `Impressao.pasta` (pastas de tamanho, #32).
+  fotos de uma vez); `alterar_pastas()` + sinal `pastas_mudaram()` (quem muda `trabalho.pastas` chama;
+  entra no desfazer). Modelo: `projeto.Pasta`, `Trabalho.pastas` e `Impressao.pasta` (pastas de tamanho, #32).
 - **Interface**: todo widget conversa só pelo `revelador/ui/estado.py` (`janela.estado`): leia a docstring dele
   antes de qualquer widget. Mexeu no modelo → chame `estado.alterar(foto, pedido=...)`; nunca um widget chama outro.
   Não mude a API do `Estado` (pode ACRESCENTAR métodos se precisar; descreva no relatório).
