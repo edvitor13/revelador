@@ -202,7 +202,7 @@ def test_grupo_largo_demais_descarta_as_pontas_e_nao_corta_ninguem_do_meio():
 
 
 def test_crianca_pequena_e_adulto_grande():
-    """Adulto perto e criança menor ao lado: os dois inteiros, e o adulto mais perto do centro que a criança."""
+    """Adulto perto e criança menor ao lado: os dois inteiros e o centro no meio dos dois (média simples, #36)."""
     W, H = 4000, 3000
     adulto = rosto(0.42, 0.3, 0.12, proporcao_imagem=W / H)
     crianca = rosto(0.58, 0.55, 0.05, proporcao_imagem=W / H)
@@ -211,8 +211,58 @@ def test_crianca_pequena_e_adulto_grande():
     c = confere_recorte(rec, W, H, RETRATO)
     assert dentro(cabeca_px(adulto, W, H), c)
     assert dentro(cabeca_px(crianca, W, H), c)
-    meio = (c[0] + c[2]) / 2
-    assert abs(adulto.x * W + adulto.w * W / 2 - meio) < abs(crianca.x * W + crianca.w * W / 2 - meio)
+    assert (c[0] + c[2]) / 2 == pytest.approx(0.5 * W, abs=1e-6)   # o maior não puxa o recorte para si
+
+
+def _centro_rosto(r: Rosto) -> float:
+    return r.x + r.w / 2
+
+
+def _media_ponderada(rostos: list[Rosto]) -> float:
+    pesos = [r.w * r.h * r.confianca for r in rostos]
+    return sum(_centro_rosto(r) * p for r, p in zip(rostos, pesos)) / sum(pesos)
+
+
+def test_dois_rostos_de_tamanhos_diferentes_centram_na_media_simples():
+    """Dois rostos principais de tamanhos bem diferentes: o centro horizontal é a média simples dos centros."""
+    W, H = 4000, 3000
+    rostos = [rosto(0.38, 0.32, 0.13, proporcao_imagem=W / H), rosto(0.60, 0.40, 0.06, proporcao_imagem=W / H)]
+    rec = recorte_automatico(W, H, RETRATO, rostos)
+    c = confere_recorte(rec, W, H, RETRATO)
+    media = sum(_centro_rosto(r) for r in rostos) / 2
+    assert (c[0] + c[2]) / 2 == pytest.approx(media * W, abs=1e-6)
+    assert abs(media - _media_ponderada(rostos)) * W > 50     # a ponderação daria outro centro
+    for r in rostos:
+        assert dentro(cabeca_px(r, W, H), c)
+
+
+def test_tres_rostos_de_tamanhos_diferentes_centram_na_media_simples():
+    """Três rostos principais (grande, médio, pequeno): média simples dos três centros, cabeças inteiras."""
+    W, H = 4000, 3000
+    rostos = [rosto(0.40, 0.30, 0.10, proporcao_imagem=W / H),
+              rosto(0.50, 0.36, 0.06, proporcao_imagem=W / H),
+              rosto(0.62, 0.33, 0.08, proporcao_imagem=W / H)]
+    rec = recorte_automatico(W, H, RETRATO, rostos)
+    c = confere_recorte(rec, W, H, RETRATO)
+    media = sum(_centro_rosto(r) for r in rostos) / 3
+    assert (c[0] + c[2]) / 2 == pytest.approx(media * W, abs=1e-6)
+    assert abs(media - _media_ponderada(rostos)) * W > 20
+    for r in rostos:
+        assert dentro(cabeca_px(r, W, H), c)
+
+
+def test_media_simples_respeita_as_cabecas_inteiras():
+    """Três rostos com a média puxada para um lado: o recorte sai da média só o necessário para caber as cabeças."""
+    W, H = 1920, 1080
+    rostos = [rosto(0.15, 0.35, 0.08, proporcao_imagem=W / H),
+              rosto(0.30, 0.35, 0.08, proporcao_imagem=W / H),
+              rosto(0.88, 0.35, 0.05, proporcao_imagem=W / H)]
+    rec = recorte_automatico(W, H, PAISAGEM, rostos)
+    c = confere_recorte(rec, W, H, PAISAGEM)
+    for r in rostos:
+        assert dentro(cabeca_px(r, W, H), c)
+    media = sum(_centro_rosto(r) for r in rostos) / 3 * W
+    assert (c[0] + c[2]) / 2 > media + 50                     # empurrado para a direita pela cabeça da ponta
 
 
 def test_rosto_pequeno_ao_fundo_e_ignorado():
@@ -225,16 +275,18 @@ def test_rosto_pequeno_ao_fundo_e_ignorado():
     assert (c[0] + c[2]) / 2 == pytest.approx(0.4 * W, abs=1e-6)
 
 
-def test_confianca_pesa_na_importancia():
-    """Um falso positivo de baixa confiança e mesmo tamanho pesa menos que o rosto certo."""
+@pytest.mark.parametrize("confianca,principal", [(0.98, True), (0.61, False)])
+def test_confianca_pesa_na_importancia(confianca, principal):
+    """A importância é área × confiança: um rosto pequeno e duvidoso fica abaixo do limite e não puxa o recorte;
+    com confiança alta, o mesmo rosto é principal e entra na média."""
     W, H = 4000, 3000
-    certo = rosto(0.35, 0.3, 0.1, confianca=0.98, proporcao_imagem=W / H)
-    duvidoso = rosto(0.6, 0.3, 0.1, confianca=0.61, proporcao_imagem=W / H)
-    rec = recorte_automatico(W, H, RETRATO, [duvidoso, certo])
+    certo = rosto(0.40, 0.3, 0.1, confianca=0.98, proporcao_imagem=W / H)
+    outro = rosto(0.62, 0.3, 0.045, confianca=confianca, proporcao_imagem=W / H)
+    rec = recorte_automatico(W, H, RETRATO, [outro, certo])
     c = confere_recorte(rec, W, H, RETRATO)
-    meio = (c[0] + c[2]) / 2
-    assert abs(0.35 * W - meio) < abs(0.6 * W - meio)
-    assert dentro(cabeca_px(certo, W, H), c) and dentro(cabeca_px(duvidoso, W, H), c)
+    esperado = (0.40 + 0.62) / 2 if principal else 0.40
+    assert (c[0] + c[2]) / 2 == pytest.approx(esperado * W, abs=1e-6)
+    assert dentro(cabeca_px(certo, W, H), c)
 
 
 def test_dois_rostos_que_nao_cabem_fica_o_mais_importante():
@@ -274,12 +326,12 @@ def test_foto_quadrada(cx, cy, proporcao):
 # --- margem de corte ------------------------------------------------------------------------------------------------
 
 def test_margem_de_corte_afasta_os_rostos_da_borda_quando_ha_folga():
-    """O adulto puxa o recorte para a esquerda e a criança encosta na borda direita; com a margem de corte da
+    """Dois rostos à esquerda puxam a média para lá e a criança encosta na borda direita; com a margem de corte da
     gráfica, ela sai de dentro da faixa que a guilhotina come."""
     W, H = 1920, 1080
-    adulto = rosto(0.2, 0.35, 0.12, proporcao_imagem=W / H)
-    crianca = rosto(0.85, 0.35, 0.05, proporcao_imagem=W / H)
-    rostos = [adulto, crianca]
+    crianca = rosto(0.88, 0.35, 0.05, proporcao_imagem=W / H)
+    rostos = [rosto(0.15, 0.35, 0.08, proporcao_imagem=W / H), rosto(0.30, 0.35, 0.08, proporcao_imagem=W / H),
+              crianca]
     margem = 0.04
     margem_px = margem * H              # lado menor do recorte deitado = altura da foto
     sem = confere_recorte(recorte_automatico(W, H, PAISAGEM, rostos), W, H, PAISAGEM)
