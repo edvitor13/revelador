@@ -7,6 +7,9 @@ O núcleo (consulta, SHA-256, script de instalação) está em ``updater.py``; a
   é oferecida de novo.
 - ``Verificador.verificar_manual()`` (Ajuda → "Verificar atualizações…"): sempre responde, inclusive com "você já
   está na versão mais recente" e com o erro.
+- ``Verificador.consultar_silencioso()`` (tela de boas-vindas, #35): consulta em segundo plano sem caixa nem diálogo e
+  sem contar como a verificação do dia; o resultado de toda consulta sai no sinal ``verificado(release | None, erro)``
+  e fica em ``ultimo``.
 - ``DialogoAtualizacao``: não modal (o app segue usável). Download numa thread, com progresso e cancelamento; antes
   de fechar o app para instalar, avisa se o trabalho tem alterações não salvas. Sem instalação automática (código-
   fonte, sistema sem suporte, release sem o pacote), mostra só a página da versão.
@@ -92,10 +95,13 @@ class _Ponte(QObject):
 class Verificador(QObject):
     """Consulta a release em segundo plano e mostra o resultado na thread principal (aviso, mensagem ou diálogo)."""
 
+    verificado = Signal(object, str)   # release | None, código de erro: toda consulta terminada (#35)
+
     def __init__(self, janela) -> None:
         super().__init__(janela)
         self.janela = janela
         self.consultando = False
+        self.ultimo: tuple[updater.Release | None, str] | None = None   # resultado da última consulta da sessão
         self.dialogo: DialogoAtualizacao | None = None
         self._ponte = _Ponte(self)
         self._ponte.resultado.connect(self._ao_resultado)
@@ -111,11 +117,28 @@ class Verificador(QObject):
             return
         self._consultar(manual=False)
 
-    def _consultar(self, manual: bool) -> None:
+    def consultar_silencioso(self) -> None:
+        """Consulta sem caixa nem diálogo (o resultado só sai em ``verificado``); não conta como a do dia."""
+        if not self.consultando:
+            self._consultar(manual=None)
+
+    def deve_verificar_ao_abrir(self) -> bool:
+        """True se ``verificar_ao_abrir`` vai consultar de fato (preferência ligada e mais de um dia desde a última)."""
+        ultima = float(prefs.settings().value(CHAVE_ULTIMA, 0) or 0)
+        return automatica_ligada() and time.time() - ultima >= INTERVALO
+
+    def mostrar_dialogo(self, rel: updater.Release) -> DialogoAtualizacao:
+        """Abre (não modal) o diálogo de atualização desta release."""
+        self.dialogo = DialogoAtualizacao(self.janela, rel, getattr(self.janela, "estado", None))
+        self.dialogo.show()
+        self.dialogo.raise_()
+        return self.dialogo
+
+    def _consultar(self, manual: bool | None) -> None:
         self.consultando = True
         threading.Thread(target=self._rodar, args=(manual,), daemon=True).start()
 
-    def _rodar(self, manual: bool) -> None:
+    def _rodar(self, manual: bool | None) -> None:
         try:
             payload = (updater.check(), "", manual)
         except updater.UpdateError as exc:
@@ -127,6 +150,10 @@ class Verificador(QObject):
     def _ao_resultado(self, payload) -> None:
         rel, erro, manual = payload
         self.consultando = False
+        self.ultimo = (rel, erro)
+        self.verificado.emit(rel, erro)
+        if manual is None:   # consulta silenciosa: só o sinal
+            return
         prefs.settings().setValue(CHAVE_ULTIMA, time.time())
         if rel is None:
             if manual:

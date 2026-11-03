@@ -82,6 +82,7 @@ class MainWindow(QMainWindow):
         self._ligar_atualizacao()
         self._ligar_ajustes()
         self._ligar_projeto()
+        self._ligar_boas_vindas()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -438,6 +439,17 @@ class MainWindow(QMainWindow):
         self.centralWidget().layout().insertWidget(1, self.faixas)   # logo abaixo da barra superior
         self.projeto_ui = ProjetoUi(self, self.estado, self.importacao, self.faixas)
         self.projeto_ui.oferecer_recuperacao()
+
+    # ------------------------------------------------------------ tela de boas-vindas (#35)
+    def _ligar_boas_vindas(self) -> None:
+        """Tela de boas-vindas (``ui/boas_vindas.py``): engrenagem → "Tela de boas-vindas" (``acao_boas_vindas``).
+
+        Ao abrir o app, ``app.main`` chama ``boas_vindas.ao_abrir()`` depois de tratar a linha de comando (a tela só
+        aparece sem arquivos nela). Precisa de ``projeto_ui``, ``faixas``, ``verificador`` e ``divisor``.
+        """
+        from .boas_vindas import BoasVindas
+
+        self.boas_vindas = BoasVindas(self)
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
