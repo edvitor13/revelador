@@ -22,6 +22,7 @@ for _var, _sub in (("REVELADOR_SETTINGS_DIR", "prefs"), ("LOCALAPPDATA", "locala
     (_BASE / _sub).mkdir(parents=True, exist_ok=True)
     os.environ[_var] = str(_BASE / _sub)
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["REVELADOR_SEM_REDE"] = "1"   # a janela não consulta atualizações durante os testes
 
 
 def rodar_python(codigo: str, timeout: float = 60.0) -> subprocess.CompletedProcess:

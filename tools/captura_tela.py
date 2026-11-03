@@ -449,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["REVELADOR_SETTINGS_DIR"] = str(temporario / "prefs")      # não mexe nas preferências do usuário
     os.environ["LOCALAPPDATA"] = str(temporario / "localappdata")         # cache de miniaturas e afins
     os.environ["APPDATA"] = str(temporario / "appdata")
+    os.environ["REVELADOR_SEM_REDE"] = "1"                                # captura não consulta atualizações
     for sub in ("prefs", "localappdata", "appdata"):
         (temporario / sub).mkdir(parents=True, exist_ok=True)
     args.saida.mkdir(parents=True, exist_ok=True)

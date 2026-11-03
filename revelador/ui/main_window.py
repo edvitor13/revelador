@@ -10,6 +10,8 @@ As áreas começam vazias, só com um texto de orientação; os widgets de verda
 
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSize, Qt, QTimer
@@ -32,6 +34,7 @@ TAMANHO_INICIAL = (1280, 800)
 PROPORCAO_INICIAL = [380, 580, 320]   # para a janela inicial de 1280 px
 LARGURA_MINIMA = (200, 400, 300)   # grade, editor, painel
 MARGEM_PAINEL = 14
+ATRASO_ATUALIZACAO_MS = 2000  # a verificação ao abrir começa depois que a janela aparece
 
 
 def _area(nome: str, texto: str, estilo: str | None = None) -> tuple[QWidget, QLabel]:
@@ -71,6 +74,7 @@ class MainWindow(QMainWindow):
         self._ligar_selecao()
         self._ligar_editor()
         self._ligar_exportacao()
+        self._ligar_atualizacao()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -382,6 +386,17 @@ class MainWindow(QMainWindow):
 
     def abrir_exportacao(self) -> None:
         self.criar_dialogo_exportacao().exec()
+
+    # ------------------------------------------------------------ atualização (#10)
+    def _ligar_atualizacao(self) -> None:
+        """Verificação ao abrir (em segundo plano, no máximo uma vez por dia) e "Verificar atualizações…" (Ajuda)."""
+        from .atualizacao import Verificador
+
+        self.verificador = Verificador(self)
+        self.acao_verificar_atualizacoes.setEnabled(True)
+        self.acao_verificar_atualizacoes.triggered.connect(self.verificador.verificar_manual)
+        if not os.environ.get("REVELADOR_SEM_REDE"):   # testes e capturas de tela: nenhuma consulta à rede
+            QTimer.singleShot(ATRASO_ATUALIZACAO_MS, self.verificador.verificar_ao_abrir)
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
