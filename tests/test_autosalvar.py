@@ -65,7 +65,7 @@ def janela(importar=None, n=2, rapido=True):
     if rapido:
         acelerar(j)
     if importar is not None or n:
-        j.importar(importar if importar is not None else [str(p) for p in fotos(n)])
+        j.importar(importar if importar is not None else [str(p) for p in fotos(n)], marcar=False)
         nf = len(j.estado.trabalho.fotos)
         assert esperar(lambda: len(j.estado.info) + len(j.estado.erros) >= nf and not j.importacao.ocupado)
         assert esperar(lambda: all(f.rostos is not None for f in j.estado.trabalho.fotos))

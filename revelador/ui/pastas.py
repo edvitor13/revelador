@@ -840,15 +840,22 @@ class SecaoPastas(QWidget):
         atual = self._atual(pasta)
         if atual is None:
             return
-        if self.confirmar_apagar(atual, len(self.estado.fotos_da_pasta(atual))):
+        fotos = self.estado.fotos_da_pasta(atual)
+        resposta = self.confirmar_apagar(atual, len(fotos))
+        if not resposta:
+            return
+        with self.estado.lote(_("apagar a pasta “{nome}”").format(nome=atual.nome)):
             self.estado.apagar_pasta(atual)
+            if resposta == REMOVER_FOTOS and fotos:
+                self.estado.remover(fotos)
 
     # ------------------------------------------------------------ perguntas modais (padrão)
     def _pedir_nome(self, pasta: Pasta) -> str | None:
         nome, ok = QInputDialog.getText(self.window(), _("Renomear a pasta"), _("Nome da pasta"), text=pasta.nome)
         return nome if ok else None
 
-    def _confirmar_apagar(self, pasta: Pasta, n_fotos: int) -> bool:
+    def _confirmar_apagar(self, pasta: Pasta, n_fotos: int) -> bool | str:
+        """Verdadeiro para apagar só a pasta; ``REMOVER_FOTOS`` se a pessoa marcou "remover as fotos também"."""
         caixa = QMessageBox(self.window())
         caixa.setIcon(QMessageBox.Icon.Question)
         caixa.setWindowTitle(_("Apagar a pasta"))
@@ -856,16 +863,26 @@ class SecaoPastas(QWidget):
         if n_fotos:
             caixa.setInformativeText(_("{fotos} continuam no trabalho; só deixam de ser reveladas no tamanho desta "
                                        "pasta. Dá para desfazer (Ctrl+Z).").format(fotos=texto_fotos(n_fotos)))
+        remover = None
+        if n_fotos:
+            remover = QCheckBox(_("Remover também as fotos do trabalho (os arquivos não são apagados)"))
+            remover.setChecked(False)
+            caixa.setCheckBox(remover)
         apagar = caixa.addButton(_("Apagar"), QMessageBox.ButtonRole.DestructiveRole)
         caixa.addButton(_("Cancelar"), QMessageBox.ButtonRole.RejectRole)
         caixa.exec()
-        return caixa.clickedButton() is apagar
+        if caixa.clickedButton() is not apagar:
+            return False
+        return REMOVER_FOTOS if remover is not None and remover.isChecked() else True
 
     def _pedir_personalizado(self, pasta: Pasta) -> tuple[float, float, int | None] | None:
         largura, altura = pasta.papel_mm or PAPEL_PADRAO_MM
         dialogo = PersonalizadoDialog(largura, altura, pasta.preco_centavos, self.window())
         aceito = dialogo.exec() == QDialog.DialogCode.Accepted
         return dialogo.valores() if aceito else None
+
+
+REMOVER_FOTOS = "remover_fotos"   # resposta de confirmar_apagar: apagar a pasta e tirar as fotos dela do trabalho
 
 
 def _recolhida_salva() -> bool:

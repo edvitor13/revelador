@@ -299,3 +299,40 @@ def test_repetidas_e_ima_do_trilho():
     assert imantar(24.2, 0.0, 200, 1.2) == 25.0
     assert imantar(22.5, 0.0, 200, 1.2) == 22.5
     assert imantar(0.4, 0.0, 10, 0.06) == 0.4 and imantar(0.48, 0.0, 10, 0.06) == 0.5
+
+
+def test_importar_marca_filtro_sem_pasta_apagar_pasta_com_fotos_e_visualizar():
+    rodar("""
+from revelador.ui.grade import SEM_PASTA
+from revelador.ui.pastas import REMOVER_FOTOS, SecaoPastas
+from revelador.ui.visualizar import VisualizarDialog, fotos_para_visualizar
+estado = Estado()
+estado.trabalho = Trabalho()
+novas = estado.adicionar([PASTA / "x.jpg", PASTA / "y.jpg"], marcar=True)
+assert all(f.selecionada and [i.tamanho for i in f.impressoes] == [estado.trabalho.tamanho_padrao] for f in novas)
+assert not estado.adicionar([PASTA / "z.jpg"])[0].selecionada          # sem marcar: só importa
+p = estado.criar_pasta("Praia", "15x21")
+estado.adicionar_a_pasta([novas[0]], p)
+g = Grade(estado); g.resize(400, 300); g.show()
+esperar(lambda: g.total() == 3)
+g.definir_tamanho(SEM_PASTA)
+assert [f.id for f in g.fotos_visiveis()] == [novas[1].id, estado.trabalho.fotos[2].id]
+g.definir_tamanho(None)
+g.marcar_fotos(g.fotos_visiveis(), False)
+assert not any(f.selecionada for f in estado.trabalho.fotos)
+g.marcar_fotos(g.fotos_visiveis(), True)
+assert all(f.selecionada for f in estado.trabalho.fotos)
+s = SecaoPastas(estado)
+s.confirmar_apagar = lambda pasta, n: REMOVER_FOTOS
+s.apagar(p)
+assert estado.trabalho.pastas == [] and estado.por_id(novas[0].id) is None
+estado.desfazer()
+assert [x.nome for x in estado.trabalho.pastas] == ["Praia"] and estado.por_id(novas[0].id) is not None
+fotos = fotos_para_visualizar(estado, g.fotos_visiveis())
+d = VisualizarDialog(estado, fotos, 1)
+d.show(); app.processEvents()
+assert d.contador.text() == "2 de 3" and len(d._imagens) == len(fotos[1].impressoes)
+d.passar(+1); d.passar(+1)
+assert d.indice == 2 and not d.botao_prox.isEnabled()
+print("ok")
+""")

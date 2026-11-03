@@ -47,7 +47,7 @@ def pasta_com(n):
 
 j = MainWindow(); j.resize(1400, 900); j.show()
 e = j.estado
-fotos = j.importar([pasta_com(4)])
+fotos = j.importar([pasta_com(4)], marcar=False)
 assert esperar(lambda: not j.importacao.ocupado and j.importacao._total == 0 and len(e.info) == 4)
 app.processEvents()
 assert e.pilha.count() == 0

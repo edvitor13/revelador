@@ -116,8 +116,10 @@ class Estado(QObject):
         self.pedido_mudou.emit()
         self.marcar_modificado(False)
 
-    def adicionar(self, caminhos: list[Path]) -> list[Foto]:
-        """Cria fotos para os caminhos ainda não presentes (mesmo arquivo não entra duas vezes) e devolve as novas."""
+    def adicionar(self, caminhos: list[Path], marcar: bool = False) -> list[Foto]:
+        """Cria fotos para os caminhos ainda não presentes (mesmo arquivo não entra duas vezes) e devolve as novas.
+
+        ``marcar``: as novas já entram marcadas para revelação, com uma impressão no tamanho padrão do trabalho."""
         existentes = {_chave_caminho(f.caminho) for f in self.trabalho.fotos}
         novas: list[Foto] = []
         for caminho in caminhos:
@@ -125,12 +127,18 @@ class Estado(QObject):
             if chave in existentes:
                 continue
             existentes.add(chave)
-            novas.append(Foto(id=novo_id(), caminho=Path(caminho)))
+            foto = Foto(id=novo_id(), caminho=Path(caminho))
+            if marcar:
+                foto.selecionada = True
+                foto.impressoes.append(Impressao(tamanho=self.trabalho.tamanho_padrao))
+            novas.append(foto)
         if novas:
             self.trabalho.fotos.extend(novas)
             for foto in novas:
                 self.absorver(foto)
             self.fotos_mudaram.emit()
+            if marcar:
+                self.pedido_mudou.emit()
             self.marcar_modificado()
         return novas
 

@@ -14,6 +14,10 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
   impressões da foto; "Duplicar foto (outro recorte)" no menu da grade; "Centralizar" (tecla C) além do
   enquadramento pelos rostos; soltar uma pasta na janela abre o passo de criar a pasta do Revelador, agora com
   cópias; o painel lateral não corta mais o conteúdo à direita.
+- Foto importada já entra marcada para revelação no tamanho padrão; "Marcar ▾" na grade (marcar/desmarcar todas
+  as mostradas) e filtro "Sem pasta"; exportar para uma pasta que já existe pergunta e a substitui por inteiro (a
+  antiga vai para a Lixeira); apagar uma pasta de tamanho oferece remover as fotos também (desmarcado); tela
+  "Visualizar" (F5 ou botão no topo do editor) que passa pelas fotos marcadas mostrando o resultado de cada tamanho.
 - Documentação para pessoas e agentes de IA: `AGENTS.md`, `CLAUDE.md` e `docs/ARQUITETURA.md` (receita única de
   prévia e exportação, tamanhos de revelação, enquadramento pelos rostos, ajustes, exportação, formato
   `.revelador`, atualização automática).

@@ -332,6 +332,8 @@ class FaixaImpressoes(QWidget):
         self.linha = QHBoxLayout(self)
         self.linha.setContentsMargins(14, 8, 14, 8)
         self.linha.setSpacing(6)
+        self.botao_visualizar = botao_plano("comparar", _("Passar pelas fotos vendo como vão sair (F5)"),
+                                            _("Visualizar"))
         self.vazio = QLabel(_("Foto não marcada para revelação"))
         self.vazio.setObjectName("Muted")
         self.chips: list[QFrame] = []
@@ -356,7 +358,7 @@ class FaixaImpressoes(QWidget):
         self._assinatura = assinatura
         while self.linha.count():
             item = self.linha.takeAt(0)
-            if item.widget() is not None and item.widget() is not self.vazio:
+            if item.widget() is not None and item.widget() not in (self.vazio, self.botao_visualizar):
                 item.widget().deleteLater()
         self.chips = []
         foto = self.estado.atual
@@ -369,6 +371,7 @@ class FaixaImpressoes(QWidget):
         if not imps:
             self.linha.addWidget(self.vazio)
         self.linha.addStretch(1)
+        self.linha.addWidget(self.botao_visualizar)
 
     def _chip(self, n: int, imp: Impressao, ativa: bool) -> QFrame:
         chip = QFrame()
@@ -524,8 +527,8 @@ class Editor(QWidget):
         barra.addWidget(self.botao_centro)
         barra.addStretch(1)
         barra.addWidget(self.modo_vista)
-        controles.definir_adaptacao(compactos=[self.caixa_rostos, self.botao_auto],
-                                    opcionais=[self.botao_centro, self.botao_zoom_menos, self.botao_zoom_mais])
+        controles.definir_adaptacao(compactos=[self.caixa_rostos, self.botao_auto, self.botao_centro],
+                                    opcionais=[self.botao_zoom_menos, self.botao_zoom_mais])
 
         self.rodape = QWidget()
         self.rodape.setObjectName("Rodape")

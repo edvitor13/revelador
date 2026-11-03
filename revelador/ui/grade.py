@@ -23,8 +23,7 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QDrag, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QListView, QMenu, QPushButton, QStyle,
-                               QStyledItemDelegate,
-                               QStyleOptionViewItem, QVBoxLayout, QWidget)
+                               QStyledItemDelegate, QStyleOptionViewItem, QToolButton, QVBoxLayout, QWidget)
 
 from .. import tamanhos
 from ..i18n import _
@@ -51,6 +50,7 @@ RAIO_CARTAO = 12
 RAIO_MINIATURA = 8
 TAMANHO_MARCA = 24
 ALTURA_CHIP = 18
+SEM_PASTA = "__sem_pasta__"   # valor do filtro da grade: fotos marcadas fora de qualquer pasta de tamanho
 LARGURA_MAIS = 15       # zona do "−" (à esquerda) e do "+" (à direita) dentro de cada chip
 LIMITE_PIXMAPS = 400
 PAPEL_FOTO = Qt.ItemDataRole.UserRole
@@ -225,8 +225,11 @@ class ModeloGrade(QAbstractListModel):
         """A foto passa nos filtros (selecionadas e pasta)?"""
         if self.so_selecionadas and not foto.selecionada:
             return False
-        if self.tamanho is not None and not (foto.selecionada and any(i.tamanho == self.tamanho
-                                                                      for i in foto.impressoes)):
+        if self.tamanho == SEM_PASTA:
+            if any(i.pasta is not None for i in foto.impressoes):
+                return False
+        elif self.tamanho is not None and not (foto.selecionada and any(i.tamanho == self.tamanho
+                                                                        for i in foto.impressoes)):
             return False
         return self.pasta is None or any(i.pasta == self.pasta for i in foto.impressoes)
 
@@ -544,7 +547,7 @@ class Grade(QWidget):
         linha.addWidget(self.controle)
         self.combo_tamanho = QComboBox()
         self.combo_tamanho.setObjectName("filtro_tamanho")
-        self.combo_tamanho.setToolTip(_("Mostrar só as fotos marcadas neste tamanho"))
+        self.combo_tamanho.setToolTip(_("Mostrar só as fotos marcadas num tamanho, ou as que não estão em pasta"))
         self.combo_tamanho.currentIndexChanged.connect(self._ao_escolher_tamanho)
         self.botao_repetidas = QPushButton(_("Repetidas…"))
         self.botao_repetidas.setToolTip(_("Procurar fotos muito parecidas (arquivos diferentes) no trabalho"))
@@ -553,7 +556,17 @@ class Grade(QWidget):
         topo = QHBoxLayout(self.topo)
         topo.setContentsMargins(12, 6, 12, 6)
         topo.setSpacing(8)
+        self.botao_marcar = QToolButton()
+        self.botao_marcar.setObjectName("Flat")
+        self.botao_marcar.setText(_("Marcar"))
+        self.botao_marcar.setToolTip(_("Marcar ou desmarcar para revelação todas as fotos mostradas"))
+        self.botao_marcar.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu_marcar = QMenu(self.botao_marcar)
+        menu_marcar.addAction(_("Marcar todas para revelação"), lambda: self.marcar_fotos(self.fotos_visiveis(), True))
+        menu_marcar.addAction(_("Desmarcar todas"), lambda: self.marcar_fotos(self.fotos_visiveis(), False))
+        self.botao_marcar.setMenu(menu_marcar)
         topo.addWidget(self.combo_tamanho, 1)
+        topo.addWidget(self.botao_marcar)
         topo.addWidget(self.botao_repetidas)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -636,7 +649,7 @@ class Grade(QWidget):
                     contagem[t] = contagem.get(t, 0) + 1
         ordem = [t.id for t in tamanhos.TAMANHOS] + [tamanhos.PERSONALIZADO]
         filtro = self.modelo.tamanho
-        if filtro is not None and filtro not in contagem:
+        if filtro is not None and filtro != SEM_PASTA and filtro not in contagem:
             contagem[filtro] = 0
         self._preenchendo = True
         try:
@@ -645,6 +658,8 @@ class Grade(QWidget):
             for t in sorted(contagem, key=lambda t: ordem.index(t) if t in ordem else len(ordem)):
                 nome = _("Personalizado") if t == tamanhos.PERSONALIZADO else nome_tamanho(t)
                 self.combo_tamanho.addItem(_("{tamanho} ({n})").format(tamanho=nome, n=contagem[t]), t)
+            sem = sum(1 for f in self.estado.trabalho.fotos if not any(i.pasta for i in f.impressoes))
+            self.combo_tamanho.addItem(_("Sem pasta ({n})").format(n=sem), SEM_PASTA)
             self.combo_tamanho.setCurrentIndex(max(0, self.combo_tamanho.findData(filtro)) if filtro else 0)
         finally:
             self._preenchendo = False

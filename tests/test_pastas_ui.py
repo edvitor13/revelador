@@ -57,7 +57,7 @@ g = j.grade
 """
 
 COM_FOTOS = """
-fotos = j.importar([pasta_com(5)])
+fotos = j.importar([pasta_com(5)], marcar=False)
 assert esperar(lambda: len(e.info) == 5)
 app.processEvents()
 a, b, c, d, f = fotos

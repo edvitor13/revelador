@@ -301,9 +301,10 @@ class MainWindow(QMainWindow):
         self.vazio_grade.setVisible(not tem_fotos)
         self.grade.setVisible(tem_fotos)
 
-    def importar(self, caminhos) -> list:
-        """Importa arquivos e pastas (recursivo, só formatos aceitos); devolve as fotos novas."""
-        return self.estado.adicionar(imagem.listar_fotos(caminhos))
+    def importar(self, caminhos, marcar: bool = True) -> list:
+        """Importa arquivos e pastas (recursivo, só formatos aceitos); devolve as fotos novas, já marcadas para
+        revelação no tamanho padrão (``marcar=False``: só importa)."""
+        return self.estado.adicionar(imagem.listar_fotos(caminhos), marcar=marcar)
 
     def escolher_arquivos(self) -> None:
         s = prefs.settings()
@@ -373,7 +374,7 @@ class MainWindow(QMainWindow):
         caminhos = imagem.listar_fotos([pasta]) if caminhos is None else caminhos
         nome = pasta_tamanho.get("nome") or Path(pasta).name
         with self.estado.lote(_("importação da pasta “{nome}”").format(nome=nome)):
-            novas = self.importar([pasta])
+            novas = self.importar([pasta], marcar=False)   # sem o tamanho padrão: entram no tamanho da pasta
             fotos = fotos_dos_caminhos(self.estado, caminhos)
             if fotos:
                 criada = self.estado.criar_pasta(**pasta_tamanho)
@@ -469,6 +470,20 @@ class MainWindow(QMainWindow):
         PrecosDialog(self.estado, self).exec()
 
     # ------------------------------------------------------------ editor
+    def visualizar(self) -> None:
+        """Tela de visualização: as fotos marcadas, na ordem da grade, começando pela atual."""
+        from .visualizar import VisualizarDialog, fotos_para_visualizar
+
+        fotos = fotos_para_visualizar(self.estado, self.grade.fotos_visiveis())
+        if not fotos:
+            self.statusBar().showMessage(_("Nenhuma foto marcada para revelação."), 5000)
+            return
+        atual = self.estado.atual
+        inicio = next((i for i, f in enumerate(fotos) if atual is not None and f.id == atual.id), 0)
+        dialogo = VisualizarDialog(self.estado, fotos, inicio, self)
+        dialogo.exec()
+        dialogo.deleteLater()
+
     def _ligar_editor(self) -> None:
         """Encaixa o editor de enquadramento na área central (esconde o texto de orientação)."""
         from .editor import Editor   # importação tardia: o editor puxa a receita (numpy/cv2), que a janela não precisa antes
@@ -484,6 +499,11 @@ class MainWindow(QMainWindow):
     def _ligar_exportacao(self) -> None:
         """Liga ``acao_exportar``: habilitada quando há pelo menos uma foto selecionada com impressão."""
         self.acao_exportar.triggered.connect(self.abrir_exportacao)
+        self.acao_visualizar = QAction(_("Visualizar a revelação"), self)
+        self.acao_visualizar.setShortcut("F5")
+        self.addAction(self.acao_visualizar)
+        self.acao_visualizar.triggered.connect(self.visualizar)
+        self.editor.faixa.botao_visualizar.clicked.connect(self.visualizar)
         self.estado.pedido_mudou.connect(self.atualizar_acao_exportar)
         self.atualizar_acao_exportar()
 
@@ -577,9 +597,9 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.autosalvar.indicador)
         importar_original = self.importar
 
-        def importar(caminhos) -> list:
+        def importar(caminhos, marcar: bool = True) -> list:
             self.autosalvar.notar_importacao(caminhos)
-            return importar_original(caminhos)
+            return importar_original(caminhos, marcar)
 
         self.importar = importar
         self.acao_configuracoes.triggered.connect(lambda _c=False: self.abrir_configuracoes())

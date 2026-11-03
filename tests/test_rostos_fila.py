@@ -118,7 +118,7 @@ j, ordem = janela(); J.append(j)
 mensagens = []
 j.importacao.mensagem.connect(mensagens.append)
 j.estado.definir_atual(None)
-j.importar([pasta_com(12)])
+j.importar([pasta_com(12)], marcar=False)
 assert pronto(j)
 assert conta["chamadas"] == 12 and len(ordem) == 12 and len(set(ordem)) == 12
 assert 1 <= conta["max"] <= j.importacao.rostos.limite, conta
@@ -135,7 +135,7 @@ def test_foto_aberta_ou_marcada_fura_a_fila():
 ATRASO[0] = 0.12
 j, ordem = janela()
 e = j.estado
-fotos = j.importar([pasta_com(10)])
+fotos = j.importar([pasta_com(10)], marcar=False)
 e.definir_atual(fotos[-1])                          # a última da fila, aberta no editor: vai primeiro
 assert esperar(lambda: len(despacho) >= 1)
 assert despacho[0] == fotos[-1].id, despacho
@@ -157,7 +157,7 @@ def test_fotos_na_tela_vem_antes_do_resto():
 j, ordem = janela()
 e = j.estado
 e.definir_exportando(True)                          # segura a fila enquanto a grade rola
-fotos = j.importar([pasta_com(40)])
+fotos = j.importar([pasta_com(40)], marcar=False)
 assert esperar(lambda: miniaturas_prontas(j))
 e.definir_atual(None)
 j.grade.lista.scrollToBottom()
@@ -181,7 +181,7 @@ def test_pausa_durante_a_exportacao():
 ATRASO[0] = 0.1
 j, ordem = janela()
 e = j.estado
-fotos = j.importar([pasta_com(8)])
+fotos = j.importar([pasta_com(8)], marcar=False)
 e.definir_atual(None)
 assert esperar(lambda: conta["chamadas"] >= 1)
 e.definir_exportando(True)
@@ -254,7 +254,7 @@ def test_enquadrar_pelos_rostos_detecta_na_hora():
     rodar("""
 j, ordem = janela()
 e = j.estado
-fotos = j.importar([pasta_com(1)])
+fotos = j.importar([pasta_com(1)], marcar=False)
 assert pronto(j)
 foto = fotos[0]
 e.definir_atual(foto)

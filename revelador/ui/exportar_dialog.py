@@ -17,6 +17,7 @@ from pathlib import Path
 from PySide6.QtGui import QColor
 from PySide6.QtCore import QCoreApplication, QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QLabel,
+                               QMessageBox,
                                QLineEdit, QListWidget, QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import exportar, precos, system
@@ -153,7 +154,8 @@ class ExportarDialog(QDialog):
         self.campo_nome = QLineEdit(exportar.nome_pasta(date.today()))
         self.campo_nome.setObjectName("exportar_nome")
         self.campo_nome.setPlaceholderText(exportar.nome_pasta(date.today()))
-        self.campo_nome.setToolTip(_("A pasta principal, com uma pasta por tamanho dentro. Se já existir, ganha (2)."))
+        self.campo_nome.setToolTip(_("A pasta principal, com uma pasta por tamanho dentro. Se já existir, é substituída (a antiga vai para a "
+                                         "Lixeira)."))
         form.addRow(_("Nome da pasta"), self.campo_nome)
 
         self.combo_copias = QComboBox()
@@ -369,6 +371,8 @@ class ExportarDialog(QDialog):
         """Começa a exportar (sem bloquear). Falso se não houver o que exportar, destino ou se já estiver rodando."""
         if self.exportacao is not None:
             return False
+        if not self._liberar_pasta():
+            return False
         self.atualizar()
         plano = self.plano
         if plano is None or not plano.itens:
@@ -406,6 +410,41 @@ class ExportarDialog(QDialog):
         if self.exportacao is not None and not self.exportacao.concluida:
             self.exportacao.cancelar()
             self.botao_cancelar.setEnabled(False)
+
+    def pasta_principal(self) -> Path | None:
+        """``destino/nome`` da pasta principal, como a pessoa escreveu (antes do `` (2)`` automático)."""
+        destino = self.campo_pasta.text().strip()
+        if not destino:
+            return None
+        return Path(destino) / exportar.nome_principal(self.campo_nome.text(), date.today())
+
+    def perguntar_substituir(self, pasta: Path) -> bool:
+        """Pergunta se a pasta que já existe pode ser substituída (testes trocam este método)."""
+        caixa = QMessageBox(QMessageBox.Icon.Warning, _("A pasta já existe"),
+                            _("Já existe a pasta “{nome}” em {lugar}.\n\nEla será substituída completamente: a "
+                              "pasta antiga vai para a Lixeira (dá para recuperar de lá) e a revelação nova fica "
+                              "sozinha, sem misturar fotos de outra revelação.").format(nome=pasta.name,
+                                                                                       lugar=pasta.parent),
+                            parent=self)
+        substituir = caixa.addButton(_("Substituir"), QMessageBox.ButtonRole.AcceptRole)
+        caixa.addButton(_("Cancelar"), QMessageBox.ButtonRole.RejectRole)
+        caixa.exec()
+        return caixa.clickedButton() is substituir
+
+    def _liberar_pasta(self) -> bool:
+        """Se a pasta principal já existe: pergunta e, com "Substituir", manda a antiga para a Lixeira."""
+        pasta = self.pasta_principal()
+        if pasta is None or not pasta.exists():
+            return True
+        if not self.perguntar_substituir(pasta):
+            return False
+        try:
+            system.para_lixeira(pasta)
+        except OSError as e:
+            self.rotulo_fim.setText(_("Não foi possível substituir a pasta: {erro}").format(erro=e))
+            self.rotulo_fim.show()
+            return False
+        return True
 
     def aguardar(self, ms: int = 60000) -> bool:
         """Espera o fim da exportação processando eventos (para testes e para fechar com segurança)."""

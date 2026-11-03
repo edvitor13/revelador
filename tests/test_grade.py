@@ -48,7 +48,7 @@ def test_importar_pasta_gera_itens_info_e_miniaturas():
 d = pasta_com(5)
 j = MainWindow(); j.show()
 assert j.orientacao_grade.isVisible()
-j.importar([d])
+j.importar([d], marcar=False)
 assert j.grade.total() == 5 and not j.orientacao_grade.isVisible()
 assert pronto(j)
 e = j.estado
@@ -65,7 +65,7 @@ def test_arquivo_corrompido_fica_marcado_e_nao_derruba():
 d = pasta_com(2)
 (d / "ruim.jpg").write_bytes(b"isto nao e uma imagem")
 j = MainWindow(); j.show()
-j.importar([d])
+j.importar([d], marcar=False)
 assert pronto(j)
 e = j.estado
 ruim = next(f for f in e.trabalho.fotos if f.caminho.name == "ruim.jpg")
@@ -79,7 +79,7 @@ def test_selecao_teclado_delete_e_duplicadas():
     rodar("""
 d = pasta_com(4)
 j = MainWindow(); j.resize(900, 600); j.show()
-j.importar([d]); j.importar([d, d / "f00.jpg"])
+j.importar([d], marcar=False); j.importar([d, d / "f00.jpg"], marcar=False)
 assert j.grade.total() == 4
 assert pronto(j)
 e, g = j.estado, j.grade
@@ -115,7 +115,7 @@ from revelador.ui.grade import rect_marca
 g = j.grade
 idx = g.modelo.index(0)
 QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=rect_marca(g.lista.visualRect(idx)).center())
-assert j.estado.trabalho.fotos[0].selecionada
+assert not j.estado.trabalho.fotos[0].selecionada   # importada já marcada; o clique desmarca
 print("ok")
 """)
 
@@ -124,7 +124,7 @@ def test_rostos_chegam_para_foto_de_rosto():
     rodar("""
 d = pasta_com(0, rosto=True)
 j = MainWindow(); j.show()
-j.importar([d])
+j.importar([d], marcar=False)
 assert pronto(j)
 f = j.estado.trabalho.fotos[0]
 assert f.rostos and len(f.rostos) >= 1
@@ -136,7 +136,7 @@ def test_foto_removida_durante_importacao_e_ignorada():
     rodar("""
 d = pasta_com(6, rosto=True)
 j = MainWindow(); j.show()
-j.importar([d])
+j.importar([d], marcar=False)
 j.estado.remover(list(j.estado.trabalho.fotos))
 assert pronto(j)
 assert not j.estado.info and not j.estado.miniaturas and j.grade.total() == 0
