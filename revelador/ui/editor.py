@@ -26,7 +26,7 @@ from dataclasses import replace
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QShortcut
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 
 from .. import ajustes as ajustes_mod
 from .. import enquadramento, receita, tamanhos
@@ -308,6 +308,113 @@ class Tela(QWidget):
             self.setCursor(self._cursor_parado())
 
 
+def rotulo_impressao(imp: Impressao) -> str:
+    """Texto da impressão na faixa do editor: ``10x15 ×2`` (o personalizado com as medidas)."""
+    if imp.tamanho == tamanhos.PERSONALIZADO and imp.papel_mm:
+        nome = _("{menor}x{maior} mm").format(menor=f"{imp.papel_mm[0]:g}", maior=f"{imp.papel_mm[1]:g}")
+    else:
+        try:
+            nome = _(tamanhos.obter(imp.tamanho).nome)
+        except KeyError:
+            nome = _("Personalizado")
+    return f"{nome} ×{imp.copias}"
+
+
+class FaixaImpressoes(QWidget):
+    """Faixa no topo do editor com os tamanhos da foto ("10x15 ×2"), bem à vista: clicar no texto escolhe a impressão
+    mostrada no editor; − e + tiram e põem uma cópia (de 1 a 999)."""
+
+    def __init__(self, estado: Estado, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.estado = estado
+        self.setObjectName("Rodape")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.linha = QHBoxLayout(self)
+        self.linha.setContentsMargins(14, 8, 14, 8)
+        self.linha.setSpacing(6)
+        self.botao_visualizar = botao_plano("comparar", _("Passar pelas fotos vendo como vão sair (F5)"),
+                                            _("Visualizar"))
+        self.vazio = QLabel(_("Foto não marcada para revelação"))
+        self.vazio.setObjectName("Muted")
+        self.chips: list[QFrame] = []
+        self._assinatura: object = ()
+        self.setFixedHeight(42)       # altura fixa: a faixa mudar não redimensiona o visor (nem refaz a prévia)
+        estado.atual_mudou.connect(lambda _f: self.atualizar())
+        estado.foto_mudou.connect(self._foto_mudou)
+        estado.impressao_mudou.connect(lambda _i: self.atualizar())
+        self.atualizar()
+
+    def _foto_mudou(self, foto_id: str) -> None:
+        if self.estado.atual is not None and self.estado.atual.id == foto_id:
+            self.atualizar()
+
+    def atualizar(self) -> None:
+        foto = self.estado.atual
+        imps = foto.impressoes if foto is not None and foto.selecionada else []
+        assinatura = (foto is not None, self.estado.indice_impressao,
+                      tuple(rotulo_impressao(i) for i in imps))
+        if assinatura == self._assinatura:
+            return
+        self._assinatura = assinatura
+        while self.linha.count():
+            item = self.linha.takeAt(0)
+            if item.widget() is not None and item.widget() not in (self.vazio, self.botao_visualizar):
+                item.widget().deleteLater()
+        self.chips = []
+        foto = self.estado.atual
+        self.setVisible(foto is not None)
+        imps = foto.impressoes if foto is not None and foto.selecionada else []
+        for n, imp in enumerate(imps):
+            self.chips.append(self._chip(n, imp, n == min(self.estado.indice_impressao, len(imps) - 1)))
+            self.linha.addWidget(self.chips[-1])
+        self.vazio.setVisible(not imps)
+        if not imps:
+            self.linha.addWidget(self.vazio)
+        self.linha.addStretch(1)
+        self.linha.addWidget(self.botao_visualizar)
+
+    def _chip(self, n: int, imp: Impressao, ativa: bool) -> QFrame:
+        chip = QFrame()
+        chip.setObjectName("ChipImp")
+        chip.setProperty("ativa", ativa)
+        linha = QHBoxLayout(chip)
+        linha.setContentsMargins(4, 1, 4, 1)
+        linha.setSpacing(0)
+        menos = self._botao("−", _("Uma cópia a menos"), lambda: self.mudar_copias(n, -1))
+        texto = QToolButton()
+        texto.setObjectName("ChipTexto")
+        texto.setText(rotulo_impressao(imp))
+        texto.setToolTip(_("Mostrar esta impressão no editor"))
+        texto.setCursor(Qt.CursorShape.PointingHandCursor)
+        texto.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        texto.clicked.connect(lambda: self.estado.definir_impressao(n))
+        mais = self._botao("+", _("Uma cópia a mais"), lambda: self.mudar_copias(n, +1))
+        for w in (menos, texto, mais):
+            linha.addWidget(w)
+        return chip
+
+    @staticmethod
+    def _botao(texto: str, dica: str, slot) -> QToolButton:
+        b = QToolButton()
+        b.setObjectName("ChipMais")
+        b.setText(texto)
+        b.setToolTip(dica)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        b.clicked.connect(slot)
+        return b
+
+    def mudar_copias(self, n: int, delta: int) -> None:
+        foto = self.estado.atual
+        if foto is None or not 0 <= n < len(foto.impressoes):
+            return
+        imp = foto.impressoes[n]
+        copias = max(1, min(999, imp.copias + delta))
+        if copias != imp.copias:
+            imp.copias = copias
+            self.estado.alterar(foto, pedido=True, juntar=f"copias:{n}")
+
+
 class Editor(QWidget):
     """Área central: o visor e os controles do enquadramento da impressão atual."""
 
@@ -388,6 +495,9 @@ class Editor(QWidget):
         self.botao_auto = botao_plano("recorte", _("Volta ao enquadramento automático (A)"),
                                       _("Enquadrar pelos rostos"))
         self.botao_auto.clicked.connect(self.enquadrar_pelos_rostos)
+        self.botao_centro = botao_plano("centro", _("Enquadramento centralizado, sem olhar os rostos (C)"),
+                                        _("Centralizar"))
+        self.botao_centro.clicked.connect(self.centralizar)
         self.caixa_rostos = botao_plano("rosto", _("Mostrar os rostos detectados"), _("Rostos"), marcavel=True,
                                         cor=tema.APAGADO, cor_marcado=tema.DESTAQUE_HI)
         self.caixa_rostos.toggled.connect(self.mostrar_rostos)
@@ -414,9 +524,10 @@ class Editor(QWidget):
             barra.addWidget(w)
         barra.addWidget(self.caixa_rostos)
         barra.addWidget(self.botao_auto)
+        barra.addWidget(self.botao_centro)
         barra.addStretch(1)
         barra.addWidget(self.modo_vista)
-        controles.definir_adaptacao(compactos=[self.caixa_rostos, self.botao_auto],
+        controles.definir_adaptacao(compactos=[self.caixa_rostos, self.botao_auto, self.botao_centro],
                                     opcionais=[self.botao_zoom_menos, self.botao_zoom_mais])
 
         self.rodape = QWidget()
@@ -431,6 +542,8 @@ class Editor(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        self.faixa = FaixaImpressoes(self.estado)
+        layout.addWidget(self.faixa)
         layout.addWidget(self.tela, 1)
         layout.addWidget(self.rodape)
 
@@ -441,6 +554,7 @@ class Editor(QWidget):
         atalho("R", lambda: self.girar(+1))
         atalho("Shift+R", lambda: self.girar(-1))
         atalho("A", self.enquadrar_pelos_rostos)
+        atalho("C", self.centralizar)
         atalho("O", self.girar_papel)
         atalho(QKeySequence.StandardKey.ZoomIn, lambda: self.aproximar(PASSO_ZOOM))
         atalho(QKeySequence.StandardKey.ZoomOut, lambda: self.aproximar(1 / PASSO_ZOOM))
@@ -510,6 +624,7 @@ class Editor(QWidget):
         else:
             juntar = f"recorte:{self.estado.indice_impressao}"
         imp.recorte = replace(novo, origem="manual")
+        self.estado.compartilhar_recorte(foto, imp)   # o recorte vale para todas as impressões da foto
         self.estado.alterar(foto, juntar=juntar)
         return True
 
@@ -623,13 +738,30 @@ class Editor(QWidget):
         foto, imp = ctx
         if foto.rostos is None:
             self.estado.pedir_rostos(foto)
-        imp.recorte = replace(imp.recorte, origem="auto")
+        for outra in foto.impressoes:     # o recorte é da foto: todas voltam ao automático
+            outra.recorte = replace(outra.recorte, origem="auto")
         if foto.id in self.estado.info:
             self.estado.refazer_recortes_auto(foto)
         else:    # metadados ainda não chegaram: as proporções do proxy bastam (o recorte é normalizado)
             largura, altura = self._dims()
             imp.recorte = enquadramento.recorte_sugerido(imp, largura, altura, foto.rostos,
                                                          self.estado.trabalho.margem_corte_mm)
+        self.estado.alterar(foto)
+        return True
+
+    def centralizar(self) -> bool:
+        """Enquadramento centralizado (sem olhar os rostos): o maior recorte no centro da foto, mantendo o giro de
+        90°. Vira manual (não é refeito sozinho) e vale para todas as impressões da foto."""
+        ctx = self._contexto()
+        if ctx is None:
+            return False
+        foto, imp = ctx
+        novo = self._limitado(imp, Recorte(giro=imp.recorte.giro, origem="manual"))
+        a = imp.recorte
+        if (novo.cx, novo.cy, novo.zoom, novo.angulo, a.origem) == (a.cx, a.cy, a.zoom, a.angulo, "manual"):
+            return False
+        imp.recorte = novo
+        self.estado.compartilhar_recorte(foto, imp)
         self.estado.alterar(foto)
         return True
 

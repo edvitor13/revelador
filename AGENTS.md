@@ -176,7 +176,8 @@ tests/ajustes_referencia.py   versão lenta e simples dos ajustes, para comparar
 6. **O enquadramento automático é sugestão.** A detecção de rostos roda uma vez por foto (resultado guardado no
    trabalho) e só define o recorte inicial (`origem = "auto"`). Depois que a pessoa mexe, o recorte vira
    `"manual"` e nunca é refeito sozinho; trocar o tamanho reencaixa o recorte mantendo o centro e a escala
-   possível. Sem rosto: centro (`"centro"`). Falha da detecção nunca impede importar nem exportar.
+   possível. Sem rosto: centro (`"centro"`). Falha da detecção nunca impede importar nem exportar. O recorte é
+   da foto: mexer nele vale para todas as impressões dela (outro recorte = "Duplicar foto").
 7. **Interface fluida.** Decodificar, gerar miniaturas, detectar rostos, calcular a prévia e exportar rodam fora da
    thread principal (`QThreadPool` ou threads com sinais); widgets do Qt só na thread principal. A prévia parte de
    uma cópia reduzida (proxy) e é recalculada com *debounce*; nunca decodifique o original inteiro a cada mexida

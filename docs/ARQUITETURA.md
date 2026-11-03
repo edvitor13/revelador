@@ -192,6 +192,11 @@ Imagem orientada e girada com `W × H` px; proporção do papel `r = largura/alt
 - `retangulo(recorte, W, H, r) → (cx, cy, w, h, θ)` em px é a única função que transforma o `Recorte` em
   geometria; o editor, a receita e os testes usam ela.
 - **Trocar tamanho/orientação**: mantém `cx, cy, zoom, θ` e recalcula; recorte `"auto"` é refeito pelos rostos.
+- **O recorte é da foto**: cada `Impressao` guarda o seu `Recorte` (o arquivo não muda), mas mexer no recorte de uma
+  copia `cx, cy, zoom, θ, giro` para todas as impressões da foto, cada uma reencaixada na proporção do próprio papel
+  (`Estado.compartilhar_recorte`); uma impressão nova herda o recorte manual (`refazer_recortes_auto`). Para ter
+  outro recorte, a pessoa duplica a foto ("Duplicar foto", mesmo arquivo, id novo). "Centralizar" grava o maior
+  recorte no centro como `"manual"`.
 - **Giro de 90°** muda `W × H` e a orientação automática; rostos são transformados para o espaço girado na hora
   de usar (ficam gravados no espaço sem giro).
 

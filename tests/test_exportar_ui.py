@@ -94,7 +94,16 @@ assert "erros" in d.rotulo_fim.text()
 
 d = j.criar_dialogo_exportacao()
 d.definir_destino(base)
+# a pasta da primeira exportação já existe: pergunta e substitui (a antiga iria para a Lixeira; aqui, apagada)
+import shutil
+from revelador.ui import exportar_dialog
+perguntas = []
+d.perguntar_substituir = lambda pasta: perguntas.append(pasta) or True
+exportar_dialog.system.para_lixeira = shutil.rmtree
+antiga = d.pasta_principal()
+assert antiga.exists()
 assert d.iniciar()
+assert perguntas == [antiga] and d.plano.pasta == antiga      # mesmo nome, sem " (2)"
 d.cancelar()
 assert d.aguardar(60000)
 assert d.resultado.cancelado and d.resultado.pedido is None

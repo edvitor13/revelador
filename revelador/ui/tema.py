@@ -233,6 +233,12 @@ QToolButton#Flat[menu="true"]::menu-indicator {{ image: url("{seta}"); width: 12
 QPushButton#Pilula, QToolButton#Pilula {{ background: {PAINEL2}; border: 1px solid {BORDA}; border-radius: 15px;
     padding: 6px 16px; color: {TEXTO}; }}
 QPushButton#Pilula:hover, QToolButton#Pilula:hover {{ background: {PAINEL3}; border-color: {BORDA_FORTE}; }}
+QFrame#ChipImp {{ background: {PAINEL2}; border: 1px solid {BORDA}; border-radius: 13px; }}
+QFrame#ChipImp[ativa="true"] {{ border-color: {DESTAQUE}; }}
+QToolButton#ChipTexto {{ background: transparent; border: none; padding: 3px 4px; color: {TEXTO}; font-weight: 600; }}
+QToolButton#ChipMais {{ background: transparent; border: none; border-radius: 10px; padding: 0px;
+    color: {APAGADO}; font-weight: 700; min-width: 20px; min-height: 20px; }}
+QToolButton#ChipMais:hover {{ background: {PAINEL3}; color: {TEXTO}; }}
 
 QComboBox {{
     background: {PAINEL2}; border: 1px solid {BORDA}; border-radius: {RAIO}px; padding: 6px 11px; min-height: 20px;
