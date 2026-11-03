@@ -24,7 +24,7 @@ from ..i18n import _
 from . import icones, prefs, tema
 from .componentes import BarraAdaptavel, Pilula, Segmented, botao_plano, com_menu
 from .estado import Estado
-from .grade import Grade
+from .grade import Grade, largura_duas_colunas, tamanho_miniatura_salvo
 from .painel_impressoes import PainelImpressoes, SeletorTamanhoPadrao, tamanho_padrao_salvo
 from .precos_dialog import PrecosDialog, tabela_precos
 from .resumo import ResumoDialog, texto_barra
@@ -32,9 +32,14 @@ from .tarefas import Importacao
 
 TAMANHO_INICIAL = (1280, 800)
 PROPORCAO_INICIAL = [380, 580, 320]   # para a janela inicial de 1280 px
-LARGURA_MINIMA = (200, 400, 300)   # grade, editor, painel
+LARGURA_MINIMA = (400, 300)   # editor, painel; a grade tem o mínimo de duas colunas (ver _largura_minima_grade)
 MARGEM_PAINEL = 14
 ATRASO_ATUALIZACAO_MS = 2000  # a verificação ao abrir começa depois que a janela aparece
+
+
+def _largura_minima_grade() -> int:
+    """Menor largura da grade: duas colunas no tamanho de miniatura salvo (antes de a grade existir)."""
+    return largura_duas_colunas(tamanho_miniatura_salvo())
 
 
 def _area(nome: str, texto: str, estilo: str | None = None) -> tuple[QWidget, QLabel]:
@@ -219,9 +224,12 @@ class MainWindow(QMainWindow):
         self.area_painel, self.orientacao_painel = _area(
             "area_painel", _("Os tamanhos e ajustes da foto escolhida aparecem aqui"), "Panel")
         self.divisor = QSplitter(Qt.Orientation.Horizontal)
-        for area, minimo in zip((self.area_grade, self.area_editor, self.area_painel), LARGURA_MINIMA):
+        self.area_grade.setMinimumWidth(_largura_minima_grade())
+        for area, minimo in zip((self.area_editor, self.area_painel), LARGURA_MINIMA):
             area.setMinimumWidth(minimo)
+        for area in (self.area_grade, self.area_editor, self.area_painel):
             self.divisor.addWidget(area)
+        self._atualizar_minimo_divisor()
         self.divisor.setChildrenCollapsible(False)
         self.divisor.setHandleWidth(4)
         self.divisor.setStretchFactor(0, 1)    # a grade e o editor dividem o que sobra ou falta; o painel é fixo
@@ -241,6 +249,7 @@ class MainWindow(QMainWindow):
     def _ligar_grade(self) -> None:
         """Grade de miniaturas, importação (botão, arrastar e soltar, linha de comando) e filtro "Mostrar"."""
         self.grade = Grade(self.estado)
+        self.grade.tamanho_mudou.connect(self._ajustar_largura_grade)
         self.importacao = Importacao(self.estado, self)
         self.importacao.mensagem.connect(self.statusBar().showMessage)
         # Estado vazio: ícone, orientação e um botão; some quando entra a primeira foto.
@@ -438,6 +447,33 @@ class MainWindow(QMainWindow):
         divisores = s.value("janela/divisores")
         if isinstance(divisores, QByteArray):
             self.divisor.restoreState(divisores)
+        self._corrigir_largura_grade()
+
+    def _ajustar_largura_grade(self, _lado: int) -> None:
+        """Quando o tamanho das miniaturas muda, a grade acompanha o novo mínimo de duas colunas."""
+        self.area_grade.setMinimumWidth(self.grade.largura_minima())
+        self._atualizar_minimo_divisor()
+        self._corrigir_largura_grade()
+
+    def _atualizar_minimo_divisor(self) -> None:
+        """A soma dos mínimos das três áreas vira o mínimo do divisor, e a janela cresce para caber."""
+        areas = (self.area_grade, self.area_editor, self.area_painel)
+        self.divisor.setMinimumWidth(sum(a.minimumWidth() for a in areas) + 2 * self.divisor.handleWidth())
+
+    def _corrigir_largura_grade(self) -> None:
+        """Grade com pelo menos duas colunas: uma largura salva menor (ex.: da primeira versão) é ignorada.
+
+        A grade cresce até o mínimo e o editor cede o que falta (sem passar do próprio mínimo).
+        """
+        tamanhos = self.divisor.sizes()
+        if len(tamanhos) != 3:
+            return
+        falta = self.area_grade.minimumWidth() - tamanhos[0]
+        if falta <= 0:
+            return
+        tamanhos[0] += falta
+        tamanhos[1] = max(tamanhos[1] - falta, self.area_editor.minimumWidth())
+        self.divisor.setSizes(tamanhos)
 
     def closeEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
         self.salvar_estado()

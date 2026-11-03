@@ -11,26 +11,61 @@ from __future__ import annotations
 from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QListView, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QListView, QStyle, QStyledItemDelegate,
+                               QStyleOptionViewItem, QVBoxLayout, QWidget)
 
 from .. import tamanhos
 from ..i18n import _
 from ..projeto import Foto
-from . import icones, tema
+from . import icones, prefs, tema
+from .componentes import Slider
 from .estado import Estado
 
-CELULA = QSize(170, 214)
+MINIATURA_PADRAO = 150  # lado da miniatura (o tamanho com que a grade sempre abriu)
+MINIATURA_MINIMA = 80
+MINIATURA_MAXIMA = 320
+PASSO_MINIATURA = 10
+LADO_COMPACTO = 120     # abaixo disso o nome some e os chips viram só a contagem de cópias
 MARGEM_CARTAO = 4       # entre a célula e o cartão
 MARGEM_MINIATURA = 6    # entre o cartão e a miniatura
+MARGEM_TOTAL = 2 * (MARGEM_CARTAO + MARGEM_MINIATURA)
+ALTURA_TOPO = MARGEM_CARTAO + MARGEM_MINIATURA   # da borda da célula até a miniatura
+ALTURA_RODAPE = 54          # da miniatura até a borda: nome, chips e margens
+ALTURA_RODAPE_COMPACTO = 34
+ESPACO_ROLAGEM = 40     # barra de rolagem e folga: a largura mínima da grade conta com ela
 RAIO_CARTAO = 12
 RAIO_MINIATURA = 8
 TAMANHO_MARCA = 24
 ALTURA_CHIP = 18
 LIMITE_PIXMAPS = 400
 PAPEL_FOTO = Qt.ItemDataRole.UserRole
+CHAVE_PREF = "grade/miniatura"
+
+
+def limitar_miniatura(lado: int) -> int:
+    """Lado da miniatura dentro da faixa permitida."""
+    return min(max(int(lado), MINIATURA_MINIMA), MINIATURA_MAXIMA)
+
+
+def tamanho_miniatura_salvo() -> int:
+    """Lado da miniatura lembrado nas preferências (o padrão se não houver ou for inválido)."""
+    try:
+        return limitar_miniatura(prefs.settings().value(CHAVE_PREF))
+    except (TypeError, ValueError):
+        return MINIATURA_PADRAO
+
+
+def celula(lado: int) -> QSize:
+    """Tamanho de uma célula da grade para miniaturas de ``lado`` px."""
+    altura = ALTURA_RODAPE_COMPACTO if lado < LADO_COMPACTO else ALTURA_RODAPE
+    return QSize(lado + MARGEM_TOTAL, ALTURA_TOPO + lado + altura)
+
+
+def largura_duas_colunas(lado: int) -> int:
+    """Menor largura da grade que mostra duas colunas (com a barra de rolagem)."""
+    return 2 * celula(lado).width() + ESPACO_ROLAGEM
 
 
 def rotulo_impressao(tamanho: str, copias: int) -> str:
@@ -50,9 +85,10 @@ def rect_miniatura(celula: QRect) -> QRect:
 
 
 def rect_marca(celula: QRect) -> QRect:
-    """Retângulo da marca de seleção (canto superior esquerdo da miniatura)."""
+    """Retângulo da marca de seleção (canto superior esquerdo da miniatura); encolhe com ela."""
     miniatura = rect_miniatura(celula)
-    return QRect(miniatura.left() + 8, miniatura.top() + 8, TAMANHO_MARCA, TAMANHO_MARCA)
+    lado = max(14, min(TAMANHO_MARCA, round(miniatura.width() * 0.16)))
+    return QRect(miniatura.left() + 8, miniatura.top() + 8, lado, lado)
 
 
 class ModeloGrade(QAbstractListModel):
@@ -137,9 +173,10 @@ class DelegadoGrade(QStyledItemDelegate):
     def __init__(self, modelo: ModeloGrade, parent=None) -> None:
         super().__init__(parent)
         self.modelo = modelo
+        self.lado = MINIATURA_PADRAO
 
     def sizeHint(self, option, index) -> QSize:  # noqa: N802
-        return CELULA
+        return celula(self.lado)
 
     def paint(self, p: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         foto: Foto | None = index.data(PAPEL_FOTO)
@@ -150,6 +187,7 @@ class DelegadoGrade(QStyledItemDelegate):
         sobre = bool(estados & QStyle.StateFlag.State_MouseOver)
         cartao = option.rect.adjusted(MARGEM_CARTAO, MARGEM_CARTAO, -MARGEM_CARTAO, -MARGEM_CARTAO)
         miniatura = rect_miniatura(option.rect)
+        compacto = miniatura.width() < LADO_COMPACTO
         p.save()
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -181,10 +219,11 @@ class DelegadoGrade(QStyledItemDelegate):
         elif erro:
             icone = icones.icone("aviso", tema.PERIGO, 28).pixmap(28, 28)
             p.drawPixmap(miniatura.center().x() - 14, miniatura.center().y() - 22, icone)
-            p.setPen(QColor(tema.PERIGO))
-            p.setFont(tema.fonte(8.5))
-            p.drawText(QRect(miniatura.left(), miniatura.center().y() + 12, miniatura.width(), 18),
-                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, _("Não abriu"))
+            if not compacto:
+                p.setPen(QColor(tema.PERIGO))
+                p.setFont(tema.fonte(8.5))
+                p.drawText(QRect(miniatura.left(), miniatura.center().y() + 12, miniatura.width(), 18),
+                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, _("Não abriu"))
         else:
             icone = icones.icone("foto", tema.FRACO, 28).pixmap(28, 28)
             p.setOpacity(0.5)
@@ -197,13 +236,17 @@ class DelegadoGrade(QStyledItemDelegate):
 
         self._marca(p, option.rect, foto, atual or sobre)
 
-        # nome do arquivo (apagado, cortado com "…")
-        p.setFont(tema.fonte(8.5))
-        p.setPen(QColor(tema.TEXTO if atual else tema.APAGADO))
-        nome_r = QRect(miniatura.left() + 2, miniatura.bottom() + 8, miniatura.width() - 4, 16)
-        p.drawText(nome_r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                   p.fontMetrics().elidedText(foto.caminho.name, Qt.TextElideMode.ElideRight, nome_r.width()))
-        self._chips(p, QRect(miniatura.left() + 2, nome_r.bottom() + 5, miniatura.width() - 4, ALTURA_CHIP), foto)
+        # nome do arquivo (apagado, cortado com "…"); nas miniaturas pequenas ele some
+        if compacto:
+            topo_chips = miniatura.bottom() + 8
+        else:
+            p.setFont(tema.fonte(8.5))
+            p.setPen(QColor(tema.TEXTO if atual else tema.APAGADO))
+            nome_r = QRect(miniatura.left() + 2, miniatura.bottom() + 8, miniatura.width() - 4, 16)
+            p.drawText(nome_r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       p.fontMetrics().elidedText(foto.caminho.name, Qt.TextElideMode.ElideRight, nome_r.width()))
+            topo_chips = nome_r.bottom() + 5
+        self._chips(p, QRect(miniatura.left() + 2, topo_chips, miniatura.width() - 4, ALTURA_CHIP), foto, compacto)
         p.restore()
 
     def _marca(self, p: QPainter, celula: QRect, foto: Foto, visivel: bool) -> None:
@@ -223,13 +266,18 @@ class DelegadoGrade(QStyledItemDelegate):
             p.setPen(QPen(QColor(255, 255, 255, 215), 1.6))
             p.drawEllipse(QRectF(marca).adjusted(1, 1, -1, -1))
 
-    def _chips(self, p: QPainter, area: QRect, foto: Foto) -> None:
-        """Um chip em pílula por impressão ("10x15 ×2"); o que não couber vira "+N"."""
+    def _chips(self, p: QPainter, area: QRect, foto: Foto, compacto: bool = False) -> None:
+        """Um chip em pílula por impressão ("10x15 ×2"); o que não couber vira "+N". Compacto: só o total de cópias."""
         if not foto.impressoes:
             return
         fonte = tema.fonte(8, QFont.Weight.DemiBold)
         medidas = QFontMetrics(fonte)
         p.setFont(fonte)
+        if compacto:
+            total = sum(i.copias for i in foto.impressoes)
+            largura = min(medidas.horizontalAdvance(f"×{total}") + 16, area.width())
+            self._pilula(p, QRect(area.left(), area.top(), largura, ALTURA_CHIP), f"×{total}")
+            return
         x = area.left()
         textos = [rotulo_impressao(i.tamanho, i.copias) for i in foto.impressoes]
         for n, texto in enumerate(textos):
@@ -261,6 +309,15 @@ class _Lista(QListView):
         super().__init__()
         self.grade = grade
 
+    def wheelEvent(self, evento) -> None:  # noqa: N802
+        """Ctrl + roda do mouse muda o tamanho das miniaturas; sem Ctrl, rola a grade."""
+        dy = evento.angleDelta().y()
+        if evento.modifiers() & Qt.KeyboardModifier.ControlModifier and dy:
+            self.grade.ajustar_miniatura(PASSO_MINIATURA if dy > 0 else -PASSO_MINIATURA)
+            evento.accept()
+            return
+        super().wheelEvent(evento)
+
     def mousePressEvent(self, evento) -> None:  # noqa: N802
         indice = self.indexAt(evento.position().toPoint())
         if indice.isValid() and evento.button() == Qt.MouseButton.LeftButton:
@@ -280,7 +337,9 @@ class _Lista(QListView):
 
 
 class Grade(QWidget):
-    """A grade de miniaturas ligada ao ``Estado``."""
+    """A grade de miniaturas ligada ao ``Estado``. Rodapé com o tamanho das miniaturas (lembrado nas preferências)."""
+
+    tamanho_mudou = Signal(int)
 
     def __init__(self, estado: Estado, parent=None) -> None:
         super().__init__(parent)
@@ -289,7 +348,11 @@ class Grade(QWidget):
         self.lista = _Lista(self)
         self.lista.setObjectName("lista_grade")
         self.lista.setModel(self.modelo)
-        self.lista.setItemDelegate(DelegadoGrade(self.modelo, self.lista))
+        self.delegado = DelegadoGrade(self.modelo, self.lista)
+        self.lado = tamanho_miniatura_salvo()
+        self.delegado.lado = self.lado
+        self.lista.setItemDelegate(self.delegado)
+        self.lista.setGridSize(celula(self.lado))
         self.lista.setViewMode(QListView.ViewMode.IconMode)
         self.lista.setMovement(QListView.Movement.Static)
         self.lista.setResizeMode(QListView.ResizeMode.Adjust)
@@ -300,9 +363,20 @@ class Grade(QWidget):
         self.lista.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.lista.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.lista.setFrameShape(QListView.Shape.NoFrame)
+        self.controle = Slider(_("Miniaturas"), MINIATURA_MINIMA, MINIATURA_MAXIMA, PASSO_MINIATURA, self.lado, "px",
+                               casas=0, horizontal=True, dica=_("Tamanho das miniaturas (Ctrl + roda do mouse também)"))
+        self.controle.valor_mudou.connect(lambda v: self.definir_miniatura(int(round(v))))
+        self.rodape = QWidget()
+        self.rodape.setObjectName("Rodape")
+        self.rodape.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        linha = QHBoxLayout(self.rodape)
+        linha.setContentsMargins(12, 6, 12, 6)
+        linha.addWidget(self.controle)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.lista)
+        layout.setSpacing(0)
+        layout.addWidget(self.lista, 1)
+        layout.addWidget(self.rodape)
 
         self._sincronizando = False
         self.lista.selectionModel().currentChanged.connect(self._ao_mudar_indice)
@@ -322,7 +396,31 @@ class Grade(QWidget):
         fotos = [self.modelo.foto(i.row()) for i in self.lista.selectionModel().selectedIndexes()]
         return [f for f in fotos if f is not None]
 
+    def largura_minima(self) -> int:
+        """Menor largura que mantém duas colunas no tamanho atual."""
+        return largura_duas_colunas(self.lado)
+
     # ------------------------------------------------------------ ações
+    def definir_miniatura(self, lado: int) -> None:
+        """Muda o lado das miniaturas (limitado), relê o layout, lembra a escolha e avisa a janela."""
+        lado = limitar_miniatura(lado)
+        if lado == self.lado:
+            return
+        self.lado = lado
+        self.delegado.lado = lado
+        self.lista.setGridSize(celula(lado))
+        self.lista.doItemsLayout()
+        atual = self.lista.currentIndex()
+        if atual.isValid():
+            self.lista.scrollTo(atual)
+        self.lista.viewport().update()
+        prefs.settings().setValue(CHAVE_PREF, lado)
+        self.controle.definir_valor(lado)
+        self.tamanho_mudou.emit(lado)
+
+    def ajustar_miniatura(self, passo: int) -> None:
+        self.definir_miniatura(self.lado + passo)
+
     def definir_filtro(self, so_selecionadas: bool) -> None:
         self.modelo.so_selecionadas = so_selecionadas
         self._ao_mudar_fotos()
