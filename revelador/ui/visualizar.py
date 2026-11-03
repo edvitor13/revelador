@@ -15,20 +15,25 @@ from ..i18n import _
 from ..projeto import Foto
 from .editor import rotulo_impressao
 from .estado import Estado
-from .previa import CarregarProxy, RenderizarPrevia, Sinais
+from .previa import CarregarProxy, RenderizarPrevia, Sinais, para_qimage
 
 ESPACO = 16   # px entre as impressões lado a lado
+INTEIRA = -1  # chave da coluna da foto inteira (modo comparar)
 
 
 class VisualizarDialog(QDialog):
     """Tela de visualização: ``fotos`` na ordem dada, começando em ``inicio``."""
 
-    def __init__(self, estado: Estado, fotos: list[Foto], inicio: int = 0, parent: QWidget | None = None) -> None:
+    def __init__(self, estado: Estado, fotos: list[Foto], inicio: int = 0, parent: QWidget | None = None,
+                 comparar: bool = False) -> None:
+        """``comparar``: mostra a foto inteira (sem recorte), com o nome, a resolução e os tamanhos marcados — para
+        conferir fotos repetidas lado a lado."""
         super().__init__(parent)
         self.estado = estado
         self.fotos = fotos
+        self.comparar = comparar
         self.indice = max(0, min(inicio, len(fotos) - 1))
-        self.setWindowTitle(_("Visualizar a revelação"))
+        self.setWindowTitle(_("Comparar fotos parecidas") if comparar else _("Visualizar a revelação"))
         self.setObjectName("Panel")
         self.resize(1200, 820)
         self.sinais = Sinais(self)
@@ -38,6 +43,7 @@ class VisualizarDialog(QDialog):
         self.sinais.previa_erro.connect(lambda _g, msg: self._aviso(msg))
         self._geracao = 0
         self._proxy = None
+        self._inteira: QPixmap | None = None
         self._imagens: dict[int, QLabel] = {}
 
         self.titulo = QLabel()
@@ -105,6 +111,7 @@ class VisualizarDialog(QDialog):
         """Monta a foto atual: título, uma coluna por impressão (imagem + rótulo) e pede o proxy."""
         self._geracao += 1
         self._proxy = None
+        self._inteira = None
         self._imagens.clear()
         while self.linha.count():
             item = self.linha.takeAt(0)
@@ -120,10 +127,15 @@ class VisualizarDialog(QDialog):
         self.titulo.setText(foto.caminho.name)
         self.contador.setText(_("{n} de {total}").format(n=self.indice + 1, total=len(self.fotos)))
         imps = foto.impressoes if foto.selecionada else []
-        if not imps:
+        if self.comparar:
+            info = self.estado.info.get(foto.id)
+            partes = [f"{info.largura} × {info.altura} px"] if info is not None else []
+            partes.append(" · ".join(rotulo_impressao(i) for i in imps) if imps else _("não marcada"))
+            self._coluna(INTEIRA, " — ".join(partes))
+        elif not imps:
             self._aviso(_("Esta foto não está marcada para revelação."))
             return
-        for n, imp in enumerate(imps):
+        for n, imp in enumerate([] if self.comparar else imps):
             coluna = QVBoxLayout()
             imagem = QLabel(_("Carregando…"))
             imagem.setObjectName("Muted")
@@ -140,6 +152,22 @@ class VisualizarDialog(QDialog):
             self.linha.addWidget(caixa, 1)
             self._imagens[n] = imagem
         QThreadPool.globalInstance().start(CarregarProxy(self.sinais, self._geracao, foto.caminho))
+
+    def _coluna(self, chave: int, texto: str) -> None:
+        imagem = QLabel(_("Carregando…"))
+        imagem.setObjectName("Muted")
+        imagem.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        imagem.setMinimumSize(80, 80)
+        rotulo = QLabel(texto)
+        rotulo.setObjectName("PanelTitle")
+        rotulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        caixa = QWidget()
+        coluna = QVBoxLayout(caixa)
+        coluna.setContentsMargins(0, 0, 0, 0)
+        coluna.addWidget(imagem, 1)
+        coluna.addWidget(rotulo)
+        self.linha.addWidget(caixa, 1)
+        self._imagens[chave] = imagem
 
     def _aviso(self, texto: str) -> None:
         if not self._imagens:
@@ -163,6 +191,13 @@ class VisualizarDialog(QDialog):
             return
         altura, largura = self._proxy.shape[:2]
         for n, imagem in self._imagens.items():
+            if n == INTEIRA:     # a foto inteira, como está no arquivo (orientada), sem recorte nem ajustes
+                if self._inteira is None:
+                    self._inteira = QPixmap.fromImage(para_qimage(receita.para_uint8(self._proxy)))
+                imagem.setPixmap(self._inteira.scaled(imagem.width() - 8, imagem.height() - 8,
+                                                      Qt.AspectRatioMode.KeepAspectRatio,
+                                                      Qt.TransformationMode.SmoothTransformation))
+                continue
             imp = foto.impressoes[n]
             w, h = receita.destino_na_caixa(imp, largura, altura, imagem.width() - 8, imagem.height() - 8)
             ger = self._geracao * 1000 + n

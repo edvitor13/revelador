@@ -51,6 +51,10 @@ RAIO_MINIATURA = 8
 TAMANHO_MARCA = 24
 ALTURA_CHIP = 18
 SEM_PASTA = "__sem_pasta__"   # valor do filtro da grade: fotos marcadas fora de qualquer pasta de tamanho
+COM_COPIAS = "__com_copias__"  # filtro: fotos marcadas com algum tamanho em mais de uma cópia
+UMA_COPIA = "__uma_copia__"    # filtro: fotos marcadas só com uma cópia de cada tamanho
+REPETIDAS = "__repetidas__"    # filtro: fotos parecidas com outra (arquivos diferentes; ui/repetidas.py)
+FILTROS_ESPECIAIS = (SEM_PASTA, COM_COPIAS, UMA_COPIA, REPETIDAS)
 LARGURA_MAIS = 15       # zona do "−" (à esquerda) e do "+" (à direita) dentro de cada chip
 LIMITE_PIXMAPS = 400
 PAPEL_FOTO = Qt.ItemDataRole.UserRole
@@ -212,7 +216,8 @@ class ModeloGrade(QAbstractListModel):
         self.estado = estado
         self.so_selecionadas = False
         self.pasta: str | None = None   # id da pasta de tamanho filtrada (None = sem filtro de pasta)
-        self.tamanho: str | None = None  # id do tamanho filtrado (None = todos os tamanhos)
+        self.tamanho: str | None = None  # id do tamanho filtrado, um de FILTROS_ESPECIAIS, ou None (sem filtro)
+        self.repetidas: set[str] | None = None   # ids das fotos repetidas (None = ainda não procurado)
         self._fotos: list[Foto] = []
         self._linha: dict[str, int] = {}
         self._pixmaps: OrderedDict[str, QPixmap] = OrderedDict()
@@ -227,6 +232,15 @@ class ModeloGrade(QAbstractListModel):
             return False
         if self.tamanho == SEM_PASTA:
             if any(i.pasta is not None for i in foto.impressoes):
+                return False
+        elif self.tamanho == COM_COPIAS:
+            if not (foto.selecionada and any(i.copias > 1 for i in foto.impressoes)):
+                return False
+        elif self.tamanho == UMA_COPIA:
+            if not (foto.selecionada and foto.impressoes and all(i.copias == 1 for i in foto.impressoes)):
+                return False
+        elif self.tamanho == REPETIDAS:
+            if foto.id not in (self.repetidas or ()):
                 return False
         elif self.tamanho is not None and not (foto.selecionada and any(i.tamanho == self.tamanho
                                                                         for i in foto.impressoes)):
@@ -509,6 +523,7 @@ class Grade(QWidget):
 
     tamanho_mudou = Signal(int)
     repetidas_pedido = Signal()  # botão "Repetidas…" no topo da grade; a janela liga
+    repetidas_prontas = Signal()  # a busca do filtro "Repetidas" terminou
     procurar_pedido = Signal()   # "Procurar…" no menu de contexto (fotos que faltam no disco); a janela liga
 
     def __init__(self, estado: Estado, parent=None) -> None:
@@ -584,6 +599,7 @@ class Grade(QWidget):
         estado.pastas_mudaram.connect(self._ao_mudar_pastas)
         estado.pedido_mudou.connect(self._atualizar_tamanhos)
         estado.fotos_mudaram.connect(self._atualizar_tamanhos)
+        estado.fotos_mudaram.connect(self._repetidas_velhas)
         self._atualizar_tamanhos()
         self._ligar_na_tela()
 
@@ -629,12 +645,35 @@ class Grade(QWidget):
         self._ao_mudar_fotos()
 
     def definir_tamanho(self, tamanho_id: str | None) -> None:
-        """Mostra só as fotos marcadas com uma impressão em ``tamanho_id`` (None: todos os tamanhos)."""
+        """Filtro da grade: só as fotos marcadas com uma impressão em ``tamanho_id``, ou um de ``FILTROS_ESPECIAIS``
+        (sem pasta, com mais de uma cópia, com uma cópia só, repetidas); None: sem filtro."""
         if tamanho_id == self.modelo.tamanho:
             return
+        if tamanho_id == REPETIDAS:
+            self.procurar_repetidas()
         self.modelo.tamanho = tamanho_id
         self._ao_mudar_fotos()
         self._atualizar_tamanhos()
+
+    def _repetidas_velhas(self) -> None:
+        """A lista de fotos mudou: as repetidas são procuradas de novo (já, se o filtro estiver ligado)."""
+        self.modelo.repetidas = None
+        if self.modelo.tamanho == REPETIDAS:
+            self.procurar_repetidas()
+
+    def procurar_repetidas(self) -> None:
+        """Procura as repetidas em segundo plano; quando chegam, o filtro "Repetidas" mostra só elas."""
+        from .repetidas import procurar
+
+        def pronto(grupos) -> None:
+            self._busca = None
+            self.modelo.repetidas = {i for g in grupos for i in g}
+            if self.modelo.tamanho == REPETIDAS:
+                self._ao_mudar_fotos()
+            self._atualizar_tamanhos()
+            self.repetidas_prontas.emit()
+
+        self._busca = procurar(self.estado, pronto)
 
     def _ao_escolher_tamanho(self, _i: int) -> None:
         if not self._preenchendo:
@@ -649,17 +688,24 @@ class Grade(QWidget):
                     contagem[t] = contagem.get(t, 0) + 1
         ordem = [t.id for t in tamanhos.TAMANHOS] + [tamanhos.PERSONALIZADO]
         filtro = self.modelo.tamanho
-        if filtro is not None and filtro != SEM_PASTA and filtro not in contagem:
+        if filtro is not None and filtro not in FILTROS_ESPECIAIS and filtro not in contagem:
             contagem[filtro] = 0
         self._preenchendo = True
         try:
             self.combo_tamanho.clear()
-            self.combo_tamanho.addItem(_("Todos os tamanhos"), None)
+            self.combo_tamanho.addItem(_("Todas as fotos"), None)
             for t in sorted(contagem, key=lambda t: ordem.index(t) if t in ordem else len(ordem)):
                 nome = _("Personalizado") if t == tamanhos.PERSONALIZADO else nome_tamanho(t)
                 self.combo_tamanho.addItem(_("{tamanho} ({n})").format(tamanho=nome, n=contagem[t]), t)
             sem = sum(1 for f in self.estado.trabalho.fotos if not any(i.pasta for i in f.impressoes))
             self.combo_tamanho.addItem(_("Sem pasta ({n})").format(n=sem), SEM_PASTA)
+            marcadas = [f for f in self.estado.trabalho.fotos if f.selecionada and f.impressoes]
+            com = sum(1 for f in marcadas if any(i.copias > 1 for i in f.impressoes))
+            self.combo_tamanho.addItem(_("Com mais de uma cópia ({n})").format(n=com), COM_COPIAS)
+            self.combo_tamanho.addItem(_("Com uma cópia só ({n})").format(n=len(marcadas) - com), UMA_COPIA)
+            rep = self.modelo.repetidas
+            self.combo_tamanho.addItem(_("Repetidas") if rep is None else _("Repetidas ({n})").format(n=len(rep)),
+                                       REPETIDAS)
             self.combo_tamanho.setCurrentIndex(max(0, self.combo_tamanho.findData(filtro)) if filtro else 0)
         finally:
             self._preenchendo = False
