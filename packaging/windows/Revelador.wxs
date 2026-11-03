@@ -17,9 +17,10 @@
   Propriedades públicas úteis na linha de comando do msiexec:
     ABRIR_APOS_INSTALAR=1   abre o app quando a instalação termina (útil com /passive ou /qn)
     INSTALLFOLDER=C:\...    outra pasta (só na primeira instalação; depois a pasta é lembrada)
-    ADDLOCAL / REMOVE       escolher recursos: AtalhoDesktop
+    ADDLOCAL / REMOVE       escolher recursos: AtalhoDesktop, AssociacaoRevelador
 
-  A associação dos trabalhos .revelador entra com a issue #9 (recurso AssociacaoRevelador).
+  Associação dos trabalhos .revelador (recurso AssociacaoRevelador): só no HKCU\Software\Classes, ProgId
+  Revelador.Trabalho, ícone do app e abertura com "%1".
 -->
 <?ifndef Version?>
 <?error Defina -d Version=x.y.z?>
@@ -115,6 +116,21 @@
                     Target="[#ReveladorExe]" WorkingDirectory="INSTALLFOLDER" />
           <RegistryValue Root="HKCU" Key="Software\Revelador" Name="AtalhoAreaDeTrabalho" Type="integer"
                          Value="1" KeyPath="yes" />
+        </Component>
+      </Feature>
+
+      <Feature Id="AssociacaoRevelador" Title="Abrir trabalhos .revelador com o Revelador"
+               Description="Dá um clique duplo num arquivo .revelador e o Revelador o abre."
+               Level="1" AllowAdvertise="no">
+        <Component Id="AssociacaoTrabalho" Directory="INSTALLFOLDER" Guid="6B0F3C1E-7D42-4A59-9E1A-3C5D8B2F4A70">
+          <RegistryValue Root="HKCU" Key="Software\Classes\.revelador" Type="string" Value="Revelador.Trabalho"
+                         KeyPath="yes" />
+          <RegistryValue Root="HKCU" Key="Software\Classes\Revelador.Trabalho" Type="string"
+                         Value="Trabalho do Revelador" />
+          <RegistryValue Root="HKCU" Key="Software\Classes\Revelador.Trabalho\DefaultIcon" Type="string"
+                         Value="[#ReveladorExe],0" />
+          <RegistryValue Root="HKCU" Key="Software\Classes\Revelador.Trabalho\shell\open\command" Type="string"
+                         Value="&quot;[#ReveladorExe]&quot; &quot;%1&quot;" />
         </Component>
       </Feature>
     </Feature>

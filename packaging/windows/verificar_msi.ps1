@@ -128,6 +128,10 @@ Copy-Item $exe $script:exeCopia
 
 Confere (Test-Path $AtalhoMenu) "atalho no Menu Iniciar"
 Confere (Test-Path $AtalhoDesktop) "atalho na Área de Trabalho"
+$assoc = (Get-ItemProperty "HKCU:\Software\Classes\.revelador" -ErrorAction SilentlyContinue).'(default)'
+$abrirCmd = (Get-ItemProperty "HKCU:\Software\Classes\Revelador.Trabalho\shell\open\command" -ErrorAction SilentlyContinue).'(default)'
+Confere ($assoc -eq "Revelador.Trabalho") "extensão .revelador associada (ProgId Revelador.Trabalho)"
+Confere ($abrirCmd -like '*Revelador.exe" "%1"') "comando de abertura do .revelador usa ""%1"""
 $prods = Produtos-Instalados
 Confere ($prods.Count -eq 1) "um Revelador instalado (Windows Installer, UpgradeCode $UpgradeCode)"
 if ($prods.Count -ge 1) {

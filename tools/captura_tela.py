@@ -121,6 +121,7 @@ def capturar_janela(app, fotos: list[Path], caminho: Path) -> tuple[int, int]:
     if pm.isNull() or not pm.save(str(caminho), "PNG"):
         raise RuntimeError(f"não consegui gravar {caminho}")
     janela.salvar_estado = lambda: None   # não grava a geometria da captura nas preferências
+    janela.estado.marcar_modificado(False)   # sem a pergunta "Salvar alterações?" ao fechar
     janela.close()
     return pm.width(), pm.height()
 

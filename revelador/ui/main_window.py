@@ -82,6 +82,7 @@ class MainWindow(QMainWindow):
         self._ligar_grade()
         self._ligar_selecao()
         self._ligar_editor()
+        self._ligar_projeto()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -303,6 +304,25 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.editor.encerrar)
+
+    # ------------------------------------------------------------ salvar e abrir o trabalho (#9)
+    def _ligar_projeto(self) -> None:
+        """Novo/Abrir/Salvar, recentes, título, recuperação e fotos não encontradas (``ui/projeto_ui.py``).
+
+        As faixas de aviso (não modais) ficam acima das três áreas: o divisor passa a morar num contêiner.
+        """
+        from .projeto_ui import PilhaFaixas, ProjetoUi
+
+        self.faixas = PilhaFaixas()
+        conteudo = QWidget()
+        caixa = QVBoxLayout(conteudo)
+        caixa.setContentsMargins(0, 0, 0, 0)
+        caixa.setSpacing(0)
+        caixa.addWidget(self.faixas)
+        caixa.addWidget(self.takeCentralWidget())
+        self.setCentralWidget(conteudo)
+        self.projeto_ui = ProjetoUi(self, self.estado, self.importacao, self.faixas)
+        self.projeto_ui.oferecer_recuperacao()
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
