@@ -5,6 +5,7 @@ Gera, em SAIDA (padrão ``saida/``):
 - ``janela.png``: a janela principal em 1440x900, com fotos de teste importadas, quatro delas marcadas para
   revelar (uma com dois tamanhos) e a foto do rosto no editor (a menos de ``--sem-fotos``);
 - ``janela_estreita.png``: a mesma janela em 1000x700; ``janela_resultado.png``: o editor no modo "Resultado";
+  ``editor_alcas.png``: só o editor, aproximado e endireitado, com o mouse sobre a alça do canto inferior direito;
   ``janela_vazia.png``: sem fotos; ``janela_ajustes.png``: o painel rolado até os ajustes (a foto atual tem exposição, contraste, saturação e temperatura
   alterados); ``resumo.png``, ``precos.png``, ``personalizado.png`` e ``exportar.png``: os diálogos do pedido;
   ``menu_projeto.png`` e ``menu_engrenagem.png``: os menus da barra superior;
@@ -187,6 +188,13 @@ def capturar_janelas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int
     janela.editor.definir_previa(True)
     _esperar_ate(app, lambda: janela.editor.previa is not None, 8.0)
     gravar(janela, "janela_resultado.png")
+    janela.editor.definir_previa(False)
+    if fotos:     # as alças: aproximado, endireitado e o mouse sobre um canto (a alça em destaque)
+        janela.editor.aproximar(1.5)
+        janela.editor.endireitar(6.0)
+        janela.editor.tela._alca_sob_mouse = 2
+        gravar(janela.editor, "editor_alcas.png")
+        janela.editor.tela._alca_sob_mouse = None
     resumo = ResumoDialog(janela.estado, janela)
     resumo.resize(640, 420)
     resumo.atualizar()
