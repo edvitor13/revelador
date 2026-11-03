@@ -27,6 +27,7 @@ from .tarefas import Importacao
 CINZA_EDITOR = "#6b6b6b"  # cinza neutro: um fundo colorido enganaria a percepção de cor da foto
 TAMANHO_INICIAL = (1280, 800)
 PROPORCAO_INICIAL = [260, 700, 300]
+ATRASO_ATUALIZACAO_MS = 2000  # a verificação ao abrir começa depois que a janela aparece
 
 
 def aplicar_tema(app: QApplication) -> None:
@@ -82,6 +83,7 @@ class MainWindow(QMainWindow):
         self._ligar_grade()
         self._ligar_selecao()
         self._ligar_editor()
+        self._ligar_atualizacao()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -303,6 +305,16 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.editor.encerrar)
+
+    # ------------------------------------------------------------ atualização (#10)
+    def _ligar_atualizacao(self) -> None:
+        """Verificação ao abrir (em segundo plano, no máximo uma vez por dia) e "Verificar atualizações…" (Ajuda)."""
+        from .atualizacao import Verificador
+
+        self.verificador = Verificador(self)
+        self.acao_verificar_atualizacoes.setEnabled(True)
+        self.acao_verificar_atualizacoes.triggered.connect(self.verificador.verificar_manual)
+        QTimer.singleShot(ATRASO_ATUALIZACAO_MS, self.verificador.verificar_ao_abrir)
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
