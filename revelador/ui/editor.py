@@ -6,8 +6,12 @@ pessoa marca o recorte como ``"manual"`` (nunca mais refeito sozinho); "Enquadra
 
 Geometria: tudo vem de ``enquadramento.retangulo`` e de ``receita.poligono`` (a moldura desenhada é exatamente o que
 a receita vai amostrar). O recorte só entra no modelo depois de passar por ``enquadramento.reencaixar``, então fica
-sempre dentro da imagem. Os gestos têm métodos públicos (``mover``, ``aproximar``, ``girar``, ``endireitar``,
-``enquadrar_pelos_rostos``) que o mouse e os atalhos só chamam; os testes chamam direto.
+sempre dentro da imagem. Os gestos têm métodos públicos (``mover``, ``aproximar``, ``puxar_canto``, ``girar``,
+``endireitar``, ``enquadrar_pelos_rostos``) que o mouse e os atalhos só chamam; os testes chamam direto. As alças nos
+cantos do papel (só na moldura, no modo *preencher*) mudam o zoom com o canto oposto parado.
+
+Com o foco no editor, ← / → (e Home / End) vão para a foto anterior / seguinte entre as visíveis na grade
+(``Estado.vizinha``; o filtro "Mostrar" vale): ``navegar`` e ``ir_para_ponta``.
 
 Dois modos de ver (``definir_previa``, seletor "Moldura | Resultado"): a foto inteira com a moldura do papel (padrão)
 e o resultado, a prévia pela receita no tamanho do visor, calculada num trabalhador com *debounce* de ~60 ms e contador de geração
@@ -42,6 +46,13 @@ DEBOUNCE_FINO_MS = 350      # parou de mexer nos ajustes: refaz a moldura na res
 LADO_RAPIDO = 640           # lado maior da versão reduzida da moldura (enquanto o controle é arrastado)
 ANGULO_MAX = 45.0
 MARGEM_TELA = 14             # px lógicos entre a moldura e a borda do visor
+TOQUE_ALCA = 12              # px lógicos ao redor do canto do papel que pegam a alça
+COMPRIMENTO_ALCA = 20        # px lógicos de cada perna do "L" da alça
+LARGURA_ALCA = 4.0           # espessura do "L" (o contorno escuro tem 2,5 px a mais)
+# Sinal (x, y), no referencial do papel, do canto i (horário a partir do superior esquerdo) visto do canto oposto.
+SINAIS_CANTO = ((-1, -1), (1, -1), (1, 1), (-1, 1))
+# Teclas de navegação entre as fotos visíveis na grade, com o foco no editor.
+TECLAS_NAVEGAR = {Qt.Key.Key_Left: -1, Qt.Key.Key_Right: +1}
 
 QUALIDADES = {
     "boa": N_("qualidade boa"),
@@ -55,12 +66,14 @@ class Tela(QWidget):
 
     arrastado = Signal(float, float)       # deslocamento do mouse (px lógicos) desde o último evento
     rolado = Signal(float, QPointF)        # passos da roda (1 = um clique) e a posição do mouse
+    alca_arrastada = Signal(int, QPointF)  # canto do papel (0..3) e onde ele deve ficar (px lógicos do visor)
     redimensionada = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("tela_editor")
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setMouseTracking(True)                        # cursor de redimensionar ao passar sobre uma alça
         self.setMinimumSize(240, 180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.imagem: QImage | None = None                  # a foto inteira, já girada (e ajustada)
@@ -74,7 +87,11 @@ class Tela(QWidget):
         self.mensagem = ""                                 # texto no centro (carregando, erro, nada escolhido)
         self.dica = ""                                     # faixa de texto embaixo
         self.arrastavel = False
+        self.alcas = False                                 # alças nos cantos do papel (moldura editável)
         self._ultimo: QPointF | None = None
+        self._alca: int | None = None                      # alça sendo arrastada
+        self._desvio = QPointF()                           # canto − ponto onde o mouse pegou a alça
+        self._alca_sob_mouse: int | None = None
 
     # ------------------------------------------------------------ geometria do visor
     def area_util(self) -> QRectF:
@@ -99,6 +116,36 @@ class Tela(QWidget):
         if q is None or self.imagem is None:
             return 1.0
         return q.width() / (self.largura_ref or self.imagem.width())
+
+    def cantos_tela(self) -> list[QPointF] | None:
+        """Os cantos do papel em px lógicos do visor (horário a partir do superior esquerdo), quando há alças."""
+        if not self.alcas or self.moldura is None or self.mostrar_previa or self.imagem is None:
+            return None
+        quadro = self.quadro()
+        return None if quadro is None else self._para_tela(quadro, receita.poligono(self.moldura))
+
+    def alca_em(self, pos: QPointF) -> int | None:
+        """O canto (0..3) cuja alça está sob ``pos`` (o mais perto, até ``TOQUE_ALCA`` px), ou None."""
+        cantos = self.cantos_tela()
+        if not cantos:
+            return None
+        dist = [math.hypot(c.x() - pos.x(), c.y() - pos.y()) for c in cantos]
+        i = min(range(4), key=dist.__getitem__)
+        return i if dist[i] <= TOQUE_ALCA else None
+
+    def _cursor_alca(self, canto: int) -> Qt.CursorShape:
+        """Seta diagonal que acompanha o canto na tela (o papel pode estar endireitado)."""
+        cantos = self.cantos_tela()
+        if not cantos:
+            return Qt.CursorShape.SizeFDiagCursor
+        oposto = cantos[(canto + 2) % 4]
+        d = cantos[canto] - oposto
+        return Qt.CursorShape.SizeFDiagCursor if d.x() * d.y() > 0 else Qt.CursorShape.SizeBDiagCursor
+
+    def _cursor_parado(self) -> Qt.CursorShape:
+        if self._alca_sob_mouse is not None:
+            return self._cursor_alca(self._alca_sob_mouse)
+        return Qt.CursorShape.OpenHandCursor if self.arrastavel else Qt.CursorShape.ArrowCursor
 
     # ------------------------------------------------------------ desenho
     def paintEvent(self, _evento) -> None:  # noqa: N802 - nome do Qt
@@ -175,25 +222,71 @@ class Tela(QWidget):
         if self.margem_rel > 0:
             interno = receita.encolher(ret, self.margem_rel * ret.w)
             self._tracejado(p, self._para_tela(quadro, receita.poligono(interno)))
+        if self.alcas:
+            self._alcas(p, cantos)
+
+    def _alcas(self, p: QPainter, cantos: list[QPointF]) -> None:
+        """Um "L" em cada canto do papel, ao longo das bordas; a alça ativa (mouse em cima ou arrastando) em destaque."""
+        sombra = QColor(tema.CANVAS_EDITOR)
+        sombra.setAlpha(200)
+        ativa = self._alca if self._alca is not None else self._alca_sob_mouse
+        for i, c in enumerate(cantos):
+            pernas = []
+            for vizinho in (cantos[(i - 1) % 4], cantos[(i + 1) % 4]):
+                d = vizinho - c
+                n = math.hypot(d.x(), d.y()) or 1.0
+                pernas.append(c + d * (min(COMPRIMENTO_ALCA, n / 3) / n))
+            linha = QPolygonF([pernas[0], c, pernas[1]])
+            for cor, largura in ((sombra, LARGURA_ALCA + 2.5),
+                                 (QColor(tema.DESTAQUE if i == ativa else tema.TEXTO), LARGURA_ALCA)):
+                caneta = QPen(cor, largura)
+                caneta.setCapStyle(Qt.PenCapStyle.SquareCap)
+                caneta.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+                p.setPen(caneta)
+                p.drawPolyline(linha)
 
     # ------------------------------------------------------------ mouse
     def mousePressEvent(self, e) -> None:  # noqa: N802
         if e.button() == Qt.MouseButton.LeftButton and self.arrastavel:
-            self._ultimo = e.position()
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            alca = self.alca_em(e.position())
+            if alca is not None:      # pegou uma alça: muda o zoom pelo canto (sem saltar para o ponto exato)
+                self._alca = alca
+                self._desvio = self.cantos_tela()[alca] - e.position()
+                self.setCursor(self._cursor_alca(alca))
+                self.update()
+            else:
+                self._ultimo = e.position()
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
             self.setFocus()
 
     def mouseMoveEvent(self, e) -> None:  # noqa: N802
-        if self._ultimo is not None:
+        if self._alca is not None:
+            self.alca_arrastada.emit(self._alca, e.position() + self._desvio)
+        elif self._ultimo is not None:
             d = e.position() - self._ultimo
             self._ultimo = e.position()
             if d.x() or d.y():
                 self.arrastado.emit(d.x(), d.y())
+        else:
+            alca = self.alca_em(e.position()) if self.arrastavel else None
+            if alca != self._alca_sob_mouse:
+                self._alca_sob_mouse = alca
+                self.setCursor(self._cursor_parado())
+                self.update()
 
     def mouseReleaseEvent(self, e) -> None:  # noqa: N802
-        if e.button() == Qt.MouseButton.LeftButton and self._ultimo is not None:
-            self._ultimo = None
-            self.setCursor(Qt.CursorShape.OpenHandCursor if self.arrastavel else Qt.CursorShape.ArrowCursor)
+        if e.button() != Qt.MouseButton.LeftButton or (self._ultimo is None and self._alca is None):
+            return
+        self._ultimo, self._alca = None, None
+        self._alca_sob_mouse = self.alca_em(e.position()) if self.arrastavel else None
+        self.setCursor(self._cursor_parado())
+        self.update()
+
+    def leaveEvent(self, e) -> None:  # noqa: N802
+        super().leaveEvent(e)
+        if self._alca_sob_mouse is not None and self._alca is None:
+            self._alca_sob_mouse = None
+            self.update()
 
     def wheelEvent(self, e) -> None:  # noqa: N802
         passos = e.angleDelta().y() / 120.0
@@ -207,7 +300,12 @@ class Tela(QWidget):
 
     def definir_arrastavel(self, sim: bool) -> None:
         self.arrastavel = sim
-        self.setCursor(Qt.CursorShape.OpenHandCursor if sim else Qt.CursorShape.ArrowCursor)
+        if not sim:
+            self._ultimo = None
+        if not sim or not self.alcas:     # chame depois de definir ``alcas``
+            self._alca, self._alca_sob_mouse = None, None
+        if self._ultimo is None and self._alca is None:   # no meio de um gesto o cursor do gesto continua
+            self.setCursor(self._cursor_parado())
 
 
 class Editor(QWidget):
@@ -268,7 +366,9 @@ class Editor(QWidget):
         self.tela = Tela(self)
         self.tela.arrastado.connect(self._ao_arrastar)
         self.tela.rolado.connect(self._ao_rolar)
+        self.tela.alca_arrastada.connect(self._ao_arrastar_alca)
         self.tela.redimensionada.connect(self._agendar_previa)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)   # clicar no rodapé também dá o foco (←/→ entre as fotos)
 
         self.botao_girar_esq = botao_plano("girar_esquerda", _("Girar 90° para a esquerda (Shift+R)"))
         self.botao_girar_dir = botao_plano("girar_direita", _("Girar 90° para a direita (R)"))
@@ -344,6 +444,24 @@ class Editor(QWidget):
         atalho("O", self.girar_papel)
         atalho(QKeySequence.StandardKey.ZoomIn, lambda: self.aproximar(PASSO_ZOOM))
         atalho(QKeySequence.StandardKey.ZoomOut, lambda: self.aproximar(1 / PASSO_ZOOM))
+
+    def keyPressEvent(self, e) -> None:  # noqa: N802 - nome do Qt
+        """← / → (e Home / End) com o foco no editor: foto anterior / seguinte entre as visíveis na grade.
+
+        As teclas que um filho trata (o slider de endireitar usa as setas) não chegam aqui; a grade navega sozinha
+        quando o foco está nela.
+        """
+        modificadores = e.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if modificadores == Qt.KeyboardModifier.NoModifier:
+            if e.key() in TECLAS_NAVEGAR:
+                self.navegar(TECLAS_NAVEGAR[e.key()])
+                e.accept()
+                return
+            if e.key() in (Qt.Key.Key_Home, Qt.Key.Key_End):
+                self.ir_para_ponta(e.key() == Qt.Key.Key_End)
+                e.accept()
+                return
+        super().keyPressEvent(e)
 
     # ------------------------------------------------------------ consulta
     def _contexto(self) -> tuple[Foto, Impressao] | None:
@@ -425,6 +543,38 @@ class Editor(QWidget):
             cx, cy = ancora[0] + (cx - ancora[0]) * k, ancora[1] + (cy - ancora[1]) * k
         return self._aplicar(foto, imp, self._limitado(imp, replace(rec, cx=cx, cy=cy)))
 
+    def puxar_canto(self, canto: int, ponto: tuple[float, float]) -> bool:
+        """A alça: leva o canto ``canto`` do papel (0..3, horário a partir do superior esquerdo) para ``ponto``
+        (frações da imagem girada) com o **canto oposto parado**. Muda só o zoom: a proporção do papel não muda.
+
+        O tamanho novo é a projeção do ponto na diagonal do papel (o canto fica o mais perto possível do mouse), de
+        zoom 1 a ``ZOOM_MAXIMO``. Se o papel maior não cabe com o canto oposto onde está, ele é empurrado para dentro
+        da imagem (``reencaixar``), como nos outros gestos.
+        """
+        ctx = self._editavel()
+        if ctx is None or canto not in range(4):
+            return False
+        foto, imp = ctx
+        W, H = receita.dimensoes_giradas(imp, *self._dims())
+        prop = receita.proporcao(imp, *self._dims())
+        r = self._retangulo(imp)
+        ox, oy = receita.poligono(r)[(canto + 2) % 4]
+        t = math.radians(-r.angulo)              # o mesmo giro de receita.matriz_destino_fonte (papel -> imagem)
+        c, s = math.cos(t), math.sin(t)
+        vx, vy = ponto[0] * W - ox, ponto[1] * H - oy
+        lx, ly = c * vx + s * vy, -s * vx + c * vy           # o vetor no referencial do papel
+        sx, sy = SINAIS_CANTO[canto]
+        k = (sx * lx * r.w + sy * ly * r.h) / (r.w ** 2 + r.h ** 2)   # tamanho novo ÷ tamanho atual
+        w0, _h0 = enquadramento.tamanho_maximo(W, H, prop)
+        zoom = min(ZOOM_MAXIMO, max(1.0, w0 / max(k * r.w, 1e-9)))
+        if abs(zoom - enquadramento.zoom_efetivo(imp.recorte, W, H, prop)) < 1e-9:
+            return False          # o canto não saiu do lugar (só arredondamento): não vira manual
+        rec = replace(imp.recorte, zoom=zoom)
+        novo = enquadramento.retangulo(rec, W, H, prop)
+        hx, hy = sx * novo.w / 2, sy * novo.h / 2            # do canto oposto ao centro, no referencial do papel
+        cx, cy = ox + c * hx - s * hy, oy + s * hx + c * hy
+        return self._aplicar(foto, imp, self._limitado(imp, replace(rec, cx=cx / W, cy=cy / H)))
+
     def girar(self, sentido: int) -> bool:
         """Gira 90° (``+1`` horário, ``-1`` anti-horário), sem perda. A proporção acompanha a imagem girada."""
         ctx = self._contexto()
@@ -498,6 +648,27 @@ class Editor(QWidget):
         self._atualizar()
         self._agendar_previa()
 
+    # ------------------------------------------------------------ navegação entre as fotos (←/→, Home/End)
+    def navegar(self, passo: int) -> bool:
+        """Vai para a foto ``passo`` posições adiante (negativo: para trás) entre as visíveis na grade (o filtro vale).
+
+        Para nas pontas (sem dar a volta). ``True`` se a foto atual mudou.
+        """
+        foto = self.estado.vizinha(passo)
+        if foto is None or foto is self.estado.atual:
+            return False
+        self.estado.definir_atual(foto)
+        return True
+
+    def ir_para_ponta(self, ultima: bool) -> bool:
+        """Vai para a primeira (Home) ou a última (End) foto visível na grade."""
+        ids = self.estado.visiveis
+        foto = self.estado.por_id(ids[-1 if ultima else 0]) if ids else None
+        if foto is None or foto is self.estado.atual:
+            return False
+        self.estado.definir_atual(foto)
+        return True
+
     # ------------------------------------------------------------ mouse -> gestos
     def _ponto_da_tela(self, pos: QPointF) -> tuple[float, float] | None:
         """A posição do visor como fração da imagem girada (nos dois modos de ver)."""
@@ -537,6 +708,13 @@ class Editor(QWidget):
 
     def _ao_rolar(self, passos: float, pos: QPointF) -> None:
         self.aproximar(PASSO_ZOOM ** passos, self._ponto_da_tela(pos))
+
+    def _ao_arrastar_alca(self, canto: int, pos: QPointF) -> None:
+        if self.mostrando_previa:      # as alças só existem na moldura
+            return
+        ponto = self._ponto_da_tela(pos)
+        if ponto is not None:
+            self.puxar_canto(canto, ponto)
 
     # ------------------------------------------------------------ reação ao Estado
     def _atual_mudou(self, foto: Foto | None) -> None:
@@ -717,7 +895,9 @@ class Editor(QWidget):
                 info, qualidade = self._preencher_moldura(foto, imp)
         t.mostrar_previa = self.mostrando_previa and self.previa is not None
         t.previa = self.previa
-        t.definir_arrastavel(self._editavel() is not None)
+        editavel = self._editavel() is not None
+        t.alcas = editavel and not self.mostrando_previa   # nem no modo caber nem no "Resultado"
+        t.definir_arrastavel(editavel)
         self.rotulo_info.setText(info)
         cor = {"baixa": tema.PERIGO, "aceitavel": tema.AVISO}.get(qualidade or "")
         self.rotulo_info.setStyleSheet(f"color: {cor};" if cor else "")

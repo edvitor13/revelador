@@ -331,10 +331,26 @@ class MainWindow(QMainWindow):
             evento.acceptProposedAction()
 
     def dropEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        """Fotos e pastas soltas são importadas; o primeiro ``.revelador`` solto abre o trabalho (como na linha de
+        comando: abre primeiro, as fotos entram depois no trabalho aberto; se a pessoa cancelar, nada entra).
+
+        O trabalho é tratado depois do soltar (``QTimer``): a pergunta "Salvar/Descartar" não prende o Explorer."""
+        from ..app import separar_argumentos
+
         caminhos = [u.toLocalFile() for u in evento.mimeData().urls() if u.isLocalFile()]
-        if caminhos:
-            self.importar(caminhos)
-            evento.acceptProposedAction()
+        if not caminhos:
+            return
+        trabalhos, resto = separar_argumentos(caminhos)
+        evento.acceptProposedAction()
+        if not trabalhos:
+            self.importar(resto)
+            return
+
+        def abrir_e_importar() -> None:
+            if self.projeto_ui.abrir(Path(trabalhos[0])) and resto:
+                self.importar(resto)
+
+        QTimer.singleShot(0, abrir_e_importar)
 
     # ------------------------------------------------------------ seleção, tamanhos e custo (#5, #13)
     def _ligar_selecao(self) -> None:
