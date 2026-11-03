@@ -91,6 +91,63 @@ def rect_marca(celula: QRect) -> QRect:
     return QRect(miniatura.left() + 8, miniatura.top() + 8, lado, lado)
 
 
+def compacta(celula: QRect) -> bool:
+    """Miniatura abaixo de ``LADO_COMPACTO``: sem nome, e o chip mostra só o total de cópias."""
+    return rect_miniatura(celula).width() < LADO_COMPACTO
+
+
+def area_chips(celula: QRect) -> QRect:
+    """Faixa dos chips de impressão, abaixo do nome do arquivo (ou logo abaixo da miniatura, se compacta)."""
+    miniatura = rect_miniatura(celula)
+    if compacta(celula):
+        topo = miniatura.bottom() + 8
+    else:
+        topo = miniatura.bottom() + 8 + 16 + 5     # mesma conta do nome em DelegadoGrade.paint
+    return QRect(miniatura.left() + 2, topo, miniatura.width() - 4, ALTURA_CHIP)
+
+
+def _fonte_chip() -> QFont:
+    return tema.fonte(8, QFont.Weight.DemiBold)
+
+
+def layout_chips(area: QRect, foto: Foto, compacto: bool = False) -> list[tuple[QRect, int | None, str, bool]]:
+    """Chips da foto dentro de ``area``: (retângulo, índice da impressão ou None no "+N", texto, apagado).
+
+    Compacto: um único chip "×N" com o total de cópias; o clique nele age sobre a primeira impressão.
+    """
+    if not foto.impressoes:
+        return []
+    medidas = QFontMetrics(_fonte_chip())
+    if compacto:
+        texto = f"×{sum(i.copias for i in foto.impressoes)}"
+        largura = min(medidas.horizontalAdvance(texto) + 16, area.width())
+        return [(QRect(area.left(), area.top(), largura, ALTURA_CHIP), 0, texto, False)]
+    textos = [rotulo_impressao(i.tamanho, i.copias) for i in foto.impressoes]
+    saida: list[tuple[QRect, int | None, str, bool]] = []
+    x = area.left()
+    for n, texto in enumerate(textos):
+        largura = medidas.horizontalAdvance(texto) + 16
+        resto = len(textos) - n - 1
+        reserva = medidas.horizontalAdvance(f"+{resto}") + 16 + 4 if resto else 0
+        if x + largura + reserva > area.right() + 1 and n > 0:
+            sobra = f"+{len(textos) - n}"
+            saida.append((QRect(x, area.top(), medidas.horizontalAdvance(sobra) + 16, ALTURA_CHIP), None, sobra, True))
+            return saida
+        retangulo = QRect(x, area.top(), min(largura, area.right() - x + 1), ALTURA_CHIP)
+        saida.append((retangulo, n, medidas.elidedText(texto, Qt.TextElideMode.ElideRight, area.right() - x - 14),
+                      False))
+        x += largura + 4
+    return saida
+
+
+def chip_em(celula: QRect, foto: Foto, ponto: QPoint) -> int | None:
+    """Índice da impressão cujo chip está sob ``ponto`` (None se nenhum, ou se for o "+N")."""
+    for retangulo, indice, _texto, _apagado in layout_chips(area_chips(celula), foto, compacta(celula)):
+        if indice is not None and retangulo.contains(ponto):
+            return indice
+    return None
+
+
 class ModeloGrade(QAbstractListModel):
     """Fotos visíveis (todas ou só as selecionadas), na ordem de importação."""
 
@@ -237,16 +294,13 @@ class DelegadoGrade(QStyledItemDelegate):
         self._marca(p, option.rect, foto, atual or sobre)
 
         # nome do arquivo (apagado, cortado com "…"); nas miniaturas pequenas ele some
-        if compacto:
-            topo_chips = miniatura.bottom() + 8
-        else:
+        if not compacto:
             p.setFont(tema.fonte(8.5))
             p.setPen(QColor(tema.TEXTO if atual else tema.APAGADO))
             nome_r = QRect(miniatura.left() + 2, miniatura.bottom() + 8, miniatura.width() - 4, 16)
             p.drawText(nome_r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                        p.fontMetrics().elidedText(foto.caminho.name, Qt.TextElideMode.ElideRight, nome_r.width()))
-            topo_chips = nome_r.bottom() + 5
-        self._chips(p, QRect(miniatura.left() + 2, topo_chips, miniatura.width() - 4, ALTURA_CHIP), foto, compacto)
+        self._chips(p, area_chips(option.rect), foto, compacto)
         p.restore()
 
     def _marca(self, p: QPainter, celula: QRect, foto: Foto, visivel: bool) -> None:
@@ -270,27 +324,9 @@ class DelegadoGrade(QStyledItemDelegate):
         """Um chip em pílula por impressão ("10x15 ×2"); o que não couber vira "+N". Compacto: só o total de cópias."""
         if not foto.impressoes:
             return
-        fonte = tema.fonte(8, QFont.Weight.DemiBold)
-        medidas = QFontMetrics(fonte)
-        p.setFont(fonte)
-        if compacto:
-            total = sum(i.copias for i in foto.impressoes)
-            largura = min(medidas.horizontalAdvance(f"×{total}") + 16, area.width())
-            self._pilula(p, QRect(area.left(), area.top(), largura, ALTURA_CHIP), f"×{total}")
-            return
-        x = area.left()
-        textos = [rotulo_impressao(i.tamanho, i.copias) for i in foto.impressoes]
-        for n, texto in enumerate(textos):
-            largura = medidas.horizontalAdvance(texto) + 16
-            resto = len(textos) - n - 1
-            reserva = medidas.horizontalAdvance(f"+{resto}") + 16 + 4 if resto else 0
-            if x + largura + reserva > area.right() + 1 and n > 0:
-                self._pilula(p, QRect(x, area.top(), medidas.horizontalAdvance(f"+{len(textos) - n}") + 16,
-                                      ALTURA_CHIP), f"+{len(textos) - n}", apagado=True)
-                return
-            self._pilula(p, QRect(x, area.top(), min(largura, area.right() - x + 1), ALTURA_CHIP),
-                         medidas.elidedText(texto, Qt.TextElideMode.ElideRight, area.right() - x - 14))
-            x += largura + 4
+        p.setFont(_fonte_chip())
+        for retangulo, _indice, texto, apagado in layout_chips(area, foto, compacto):
+            self._pilula(p, retangulo, texto, apagado=apagado)
 
     @staticmethod
     def _pilula(p: QPainter, r: QRect, texto: str, apagado: bool = False) -> None:
@@ -321,9 +357,15 @@ class _Lista(QListView):
     def mousePressEvent(self, evento) -> None:  # noqa: N802
         indice = self.indexAt(evento.position().toPoint())
         if indice.isValid() and evento.button() == Qt.MouseButton.LeftButton:
-            if rect_marca(self.visualRect(indice)).contains(evento.position().toPoint()):
+            ponto = evento.position().toPoint()
+            if rect_marca(self.visualRect(indice)).contains(ponto):
                 self.grade.alternar(indice)
                 self.setCurrentIndex(indice)
+                return
+            foto = self.grade.modelo.foto(indice.row())
+            n = chip_em(self.visualRect(indice), foto, ponto) if foto is not None else None
+            if n is not None:
+                self.grade.clicar_chip(indice, n, bool(evento.modifiers() & Qt.KeyboardModifier.ShiftModifier))
                 return
         super().mousePressEvent(evento)
 
@@ -429,6 +471,17 @@ class Grade(QWidget):
         foto = self.modelo.foto(indice.row())
         if foto is not None:
             self.estado.selecionar(foto, not foto.selecionada)
+
+    def clicar_chip(self, indice: QModelIndex, n: int, tirar: bool = False) -> None:
+        """Clique no chip "10x15 ×2": soma uma cópia à impressão n (Shift+clique tira uma), limitado a 1 e 999."""
+        foto = self.modelo.foto(indice.row())
+        if foto is None or not 0 <= n < len(foto.impressoes):
+            return
+        imp = foto.impressoes[n]
+        imp.copias = max(1, min(999, imp.copias + (-1 if tirar else 1)))
+        self.lista.setCurrentIndex(indice)   # a foto clicada vira a atual (e a impressão, a do editor)
+        self.estado.definir_impressao(n)
+        self.estado.alterar(foto, pedido=True)
 
     def alternar_atual(self) -> None:
         escolhidas = self.fotos_escolhidas() or ([self.estado.atual] if self.estado.atual else [])

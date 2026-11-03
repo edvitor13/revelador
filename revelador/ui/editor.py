@@ -274,6 +274,8 @@ class Editor(QWidget):
         self.botao_girar_dir = botao_plano("girar_direita", _("Girar 90° para a direita (R)"))
         self.botao_girar_esq.clicked.connect(lambda: self.girar(-1))
         self.botao_girar_dir.clicked.connect(lambda: self.girar(+1))
+        self.botao_papel = botao_plano("foto", _("Girar o papel: retrato ↔ paisagem (O)"), _("Girar papel"))
+        self.botao_papel.clicked.connect(self.girar_papel)
         self.botao_zoom_menos = botao_plano("zoom_menos", _("Afastar a foto (Ctrl+−)"))
         self.botao_zoom_mais = botao_plano("zoom_mais", _("Aproximar a foto (Ctrl++)"))
         self.botao_zoom_menos.clicked.connect(lambda: self.aproximar(1 / PASSO_ZOOM))
@@ -306,7 +308,7 @@ class Editor(QWidget):
         barra = QHBoxLayout(controles)
         barra.setContentsMargins(0, 0, 0, 0)
         barra.setSpacing(6)
-        for w in (self.botao_girar_esq, self.botao_girar_dir):
+        for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_papel):
             barra.addWidget(w)
         for w in (self.botao_zoom_menos, self.botao_zoom_mais):
             barra.addWidget(w)
@@ -339,6 +341,7 @@ class Editor(QWidget):
         atalho("R", lambda: self.girar(+1))
         atalho("Shift+R", lambda: self.girar(-1))
         atalho("A", self.enquadrar_pelos_rostos)
+        atalho("O", self.girar_papel)
         atalho(QKeySequence.StandardKey.ZoomIn, lambda: self.aproximar(PASSO_ZOOM))
         atalho(QKeySequence.StandardKey.ZoomOut, lambda: self.aproximar(1 / PASSO_ZOOM))
 
@@ -462,6 +465,23 @@ class Editor(QWidget):
             imp.recorte = enquadramento.recorte_sugerido(imp, largura, altura, foto.rostos,
                                                          self.estado.trabalho.margem_corte_mm)
         self.estado.alterar(foto)
+        return True
+
+    def girar_papel(self) -> bool:
+        """Troca retrato ↔ paisagem da impressão atual (fixa a escolha). Automático refeito; manual reencaixado."""
+        ctx = self._contexto()
+        if ctx is None:
+            return False
+        foto, imp = ctx
+        imp.orientacao = "paisagem" if receita.orientacao(imp, *self._dims()) == "retrato" else "retrato"
+        if imp.recorte.origem == "manual":
+            imp.recorte = self._limitado(imp, imp.recorte)
+        elif foto.id in self.estado.info:
+            self.estado.refazer_recortes_auto(foto)
+        else:    # metadados ainda não chegaram: o recorte sai das proporções do proxy (como em enquadrar_pelos_rostos)
+            imp.recorte = enquadramento.recorte_sugerido(imp, *self._dims(), foto.rostos,
+                                                         self.estado.trabalho.margem_corte_mm)
+        self.estado.alterar(foto, pedido=True)
         return True
 
     def mostrar_rostos(self, sim: bool) -> None:
@@ -740,7 +760,7 @@ class Editor(QWidget):
         com_foto = self._contexto() is not None
         for w in (self.slider_angulo, self.botao_zoom_menos, self.botao_zoom_mais):
             w.setEnabled(ativo)
-        for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_auto, self.modo_vista):
+        for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_papel, self.botao_auto, self.modo_vista):
             w.setEnabled(com_foto)
         angulo = imp.recorte.angulo if imp is not None else 0.0
         self.slider_angulo.definir_valor(round(angulo, 1))
