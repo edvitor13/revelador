@@ -349,8 +349,17 @@ vibração, nitidez) **não é** a ordem de aplicação; esta é fixa em `aplica
 
 - **Conferência antes**: lista impressões com resolução baixa, originais que sumiram ou mudaram (bytes/mtime) e
   fotos selecionadas sem impressão; a pessoa pode voltar ou seguir.
-- **Destino**: pasta escolhida (lembra a última; padrão: Imagens) + subpasta `Revelação AAAA-MM-DD` (nome livre:
-  ` (2)`...). Uma subpasta **por tamanho** com o nome do laboratório (`10x15`, `15x21`, `A4`...).
+- **Destino**: pasta escolhida (lembra a última; padrão: Imagens) + a **pasta principal com o nome que a pessoa
+  escreve** no diálogo ("Nome da pasta", padrão `Revelação AAAA-MM-DD`; `planejar(..., nome=...)`,
+  `nome_principal()`: limpo para o Windows; se já existir, ` (2)`...). Dentro, uma subpasta **por tamanho** com o
+  nome do laboratório (`10x15`, `15x21`, `A4`...).
+- **Acabamento por tamanho** (`Acabamento(borda, papel)`, `planejar(..., acabamentos={"10x15": ...})`): no diálogo,
+  uma linha por tamanho exportado com **Borda** (não informar, sem borda, borda fina, borda grossa: `BORDAS`) e
+  **Papel** (não informar, fosco, brilho, semibrilho: `PAPEIS`), lembrados por tamanho em
+  `exportar/acabamento/<tamanho>` (`"borda|papel"`). É **só um aviso para o laboratório**: vai no fim do nome da
+  subpasta (`com_acabamento()`: `10x15 - borda fina - fosco`; organizado por pasta, `Família - fosco`, pelo tamanho
+  da pasta) e na seção "Acabamento (para o laboratório)" do `pedido.txt`; a foto sai sem borda. Não informado, o
+  nome fica só o tamanho.
 - **Organizar por** (#32; `planejar(..., organizar="tamanho"|"pasta")`, `ORGANIZAR_TAMANHO`/`ORGANIZAR_PASTA`,
   lembrado em `exportar/organizar`; a opção só aparece no diálogo quando o trabalho tem pastas): **por tamanho** (o
   padrão) como acima; **por pasta**, cada pasta de tamanho vira uma subpasta com o nome dela (`nome_subpasta()`: tira

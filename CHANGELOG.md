@@ -79,6 +79,10 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 - Rostos detectados aos poucos, numa fila leve que não pesa a máquina: a foto aberta, a recém-marcada e as visíveis
   vêm primeiro, a fila pausa durante a exportação e o progresso aparece na barra de status (#36).
 
+- Exportação: nome da pasta principal escolhido na hora (padrão "Revelação AAAA-MM-DD") e, por tamanho, a borda (sem,
+  fina, grossa) e o papel (fosco, brilho, semibrilho) para o laboratório, escritos no nome de cada pasta de tamanho
+  ("10x15 - borda fina - fosco") e no `pedido.txt`; a escolha é lembrada por tamanho.
+
 ### Mudado
 - Enquadramento automático com vários rostos: o centro horizontal é a média simples dos rostos principais (antes,
   ponderada pelo tamanho), sempre com todas as cabeças inteiras (#36).

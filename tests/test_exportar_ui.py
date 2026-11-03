@@ -114,3 +114,29 @@ d.atualizar()
 assert d.lista_avisos.count() == 1 and "resolução baixa" in d.lista_avisos.item(0).text()
 print("ok")
 """)
+
+
+def test_nome_da_pasta_e_acabamento_por_tamanho_no_dialogo():
+    rodar("""
+from revelador import exportar
+f = nova(j, "a"); g = nova(j, "b")
+g.impressoes[0].tamanho = "15x21"
+e.alterar(g, pedido=True)
+d = j.criar_dialogo_exportacao()
+destino = base / "saida"
+destino.mkdir()
+d.definir_destino(destino)
+assert d.campo_nome.text().startswith("Revelação ")              # padrão: Revelação AAAA-MM-DD
+assert list(d.combos_acabamento) == ["10x15", "15x21"]            # uma linha por tamanho exportado
+d.definir_nome("Casamento da Ana")
+d.definir_acabamento("10x15", "fina", "fosco")
+d.definir_acabamento("15x21", "", "brilho")
+assert "Casamento da Ana/10x15 - borda fina - fosco/a.jpg" in d.rotulo_estrutura.text(), d.rotulo_estrutura.text()
+assert d.iniciar() and d.aguardar(60000) and d.resultado.ok
+raiz = destino / "Casamento da Ana"
+assert (raiz / "10x15 - borda fina - fosco" / "a.jpg").is_file()
+assert (raiz / "15x21 - brilho" / "b.jpg").is_file()
+d2 = j.criar_dialogo_exportacao()                                 # o acabamento é lembrado por tamanho
+assert d2.acabamentos() == {"10x15": exportar.Acabamento("fina", "fosco"), "15x21": exportar.Acabamento("", "brilho")}
+print("ok")
+""")

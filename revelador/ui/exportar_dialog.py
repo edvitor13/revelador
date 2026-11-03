@@ -11,12 +11,13 @@ Testável sem diálogo modal: ``definir_destino()``, ``iniciar()`` (devolve Fals
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from PySide6.QtGui import QColor
 from PySide6.QtCore import QCoreApplication, QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, Signal
-from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QListWidget, QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QLabel,
+                               QLineEdit, QListWidget, QProgressBar, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import exportar, precos, system
 from ..i18n import N_, _
@@ -34,6 +35,7 @@ CHAVE_PASTA = "exportar/pasta"
 CHAVE_MODO = "exportar/copias"
 CHAVE_DPI = "exportar/dpi"
 CHAVE_ORGANIZAR = "exportar/organizar"
+CHAVE_ACABAMENTO = "exportar/acabamento/"   # + nome do tamanho ("10x15") → "borda|papel", lembrado por tamanho
 ORGANIZAR_TEXTO = (
     (exportar.ORGANIZAR_TAMANHO, N_("Tamanho"), N_("Uma subpasta por tamanho (10x15, 15x21...)")),
     (exportar.ORGANIZAR_PASTA, N_("Pasta"), N_("Uma subpasta por pasta de tamanho; as fotos avulsas, por tamanho")),
@@ -148,6 +150,12 @@ class ExportarDialog(QDialog):
         linha.addWidget(self.botao_pasta)
         form.addRow(_("Pasta de destino"), linha)
 
+        self.campo_nome = QLineEdit(exportar.nome_pasta(date.today()))
+        self.campo_nome.setObjectName("exportar_nome")
+        self.campo_nome.setPlaceholderText(exportar.nome_pasta(date.today()))
+        self.campo_nome.setToolTip(_("A pasta principal, com uma pasta por tamanho dentro. Se já existir, ganha (2)."))
+        form.addRow(_("Nome da pasta"), self.campo_nome)
+
         self.combo_copias = QComboBox()
         for modo in exportar.MODOS:
             self.combo_copias.addItem(_(MODOS_TEXTO[modo]), modo)
@@ -172,6 +180,7 @@ class ExportarDialog(QDialog):
         self.spin_dpi.setValue(self.estado.trabalho.dpi or 300)
         form.addRow(_("Resolução"), self.spin_dpi)
         raiz.addLayout(form)
+        raiz.addWidget(self._montar_acabamentos())
 
         self.rotulo_resumo = QLabel()
         self.rotulo_resumo.setWordWrap(True)
@@ -219,10 +228,79 @@ class ExportarDialog(QDialog):
         raiz.addLayout(botoes)
 
         self.campo_pasta.textChanged.connect(self.atualizar)
+        self.campo_nome.textChanged.connect(self.atualizar)
         self.combo_copias.currentIndexChanged.connect(self.atualizar)
         self.seg_organizar.mudou.connect(lambda _k: self.atualizar())
         self.spin_dpi.valueChanged.connect(self.atualizar)
         self.atualizar()
+
+    # ------------------------------------------------------------ acabamento por tamanho
+    def tamanhos_exportados(self) -> list[str]:
+        """Nomes dos tamanhos que vão sair ("10x15", "15x21"...), na ordem em que aparecem no trabalho."""
+        return list(dict.fromkeys(exportar.nome_tamanho(imp) for foto in self.estado.trabalho.selecionadas()
+                                  for imp in foto.impressoes))
+
+    def _montar_acabamentos(self) -> QWidget:
+        """Uma linha por tamanho: borda e papel, só para o nome da pasta e o pedido.txt (a foto sai sem borda)."""
+        caixa = QWidget()
+        grade = QGridLayout(caixa)
+        grade.setContentsMargins(0, 0, 0, 0)
+        grade.setHorizontalSpacing(10)
+        grade.setVerticalSpacing(6)
+        titulo = QLabel(_("Acabamento"))
+        titulo.setObjectName("PanelTitle")
+        dica = QLabel(_("Vai no nome de cada pasta de tamanho, para o laboratório (a foto sai sem borda)."))
+        dica.setObjectName("Muted")
+        dica.setWordWrap(True)
+        grade.addWidget(titulo, 0, 0, 1, 3)
+        grade.addWidget(dica, 1, 0, 1, 3)
+        for coluna, texto in ((1, _("Borda")), (2, _("Papel"))):
+            cabecalho = QLabel(texto)
+            cabecalho.setObjectName("Faint")
+            grade.addWidget(cabecalho, 2, coluna)
+        self.combos_acabamento: dict[str, tuple[QComboBox, QComboBox]] = {}
+        s = prefs.settings()
+        for linha, tam in enumerate(self.tamanhos_exportados(), start=3):
+            borda, papel = QComboBox(), QComboBox()
+            for chave in exportar.BORDAS:
+                borda.addItem(_maiuscula(_(exportar.TEXTO_BORDA[chave])), chave)
+            for chave in exportar.PAPEIS:
+                papel.addItem(_maiuscula(_(exportar.TEXTO_PAPEL[chave])), chave)
+            salvo = str(s.value(CHAVE_ACABAMENTO + tam, "", str) or "").split("|")
+            borda.setCurrentIndex(max(0, borda.findData(salvo[0])))
+            papel.setCurrentIndex(max(0, papel.findData(salvo[1] if len(salvo) > 1 else "")))
+            borda.setToolTip(_("Borda branca que o laboratório deve fazer em {t}").format(t=tam))
+            papel.setToolTip(_("Papel da revelação em {t}").format(t=tam))
+            borda.currentIndexChanged.connect(self.atualizar)
+            papel.currentIndexChanged.connect(self.atualizar)
+            rotulo = QLabel(tam)
+            rotulo.setObjectName("Value")
+            grade.addWidget(rotulo, linha, 0)
+            grade.addWidget(borda, linha, 1)
+            grade.addWidget(papel, linha, 2)
+            self.combos_acabamento[tam] = (borda, papel)
+        grade.setColumnStretch(1, 1)
+        grade.setColumnStretch(2, 1)
+        caixa.setVisible(bool(self.combos_acabamento))
+        return caixa
+
+    def acabamentos(self) -> dict[str, exportar.Acabamento]:
+        return {tam: exportar.Acabamento(str(b.currentData()), str(p.currentData()))
+                for tam, (b, p) in self.combos_acabamento.items()}
+
+    def definir_acabamento(self, tamanho: str, borda: str = "", papel: str = "") -> None:
+        """Escolhe borda e papel de um tamanho (testes e atalhos)."""
+        b, p = self.combos_acabamento[tamanho]
+        b.setCurrentIndex(b.findData(borda))
+        p.setCurrentIndex(p.findData(papel))
+
+    def definir_nome(self, nome: str) -> None:
+        self.campo_nome.setText(nome)
+
+    def _lembrar_acabamentos(self) -> None:
+        s = prefs.settings()
+        for tam, a in self.acabamentos().items():
+            s.setValue(CHAVE_ACABAMENTO + tam, f"{a.borda}|{a.papel}")
 
     # ------------------------------------------------------------ escolhas e resumo
     @property
@@ -250,7 +328,8 @@ class ExportarDialog(QDialog):
 
     def montar_plano(self) -> exportar.Plano:
         return exportar.planejar(self.estado.trabalho, self.campo_pasta.text().strip(), self.modo_copias,
-                                 self.spin_dpi.value(), tabela_precos(), organizar=self.organizar)
+                                 self.spin_dpi.value(), tabela_precos(), organizar=self.organizar,
+                                 nome=self.campo_nome.text(), acabamentos=self.acabamentos())
 
     def atualizar(self) -> None:
         """Refaz resumo, avisos e a prévia da estrutura (instantâneo: não toca no disco além de ver o que existe)."""
@@ -305,6 +384,7 @@ class ExportarDialog(QDialog):
         s = prefs.settings()
         s.setValue(CHAVE_PASTA, self.campo_pasta.text().strip())
         s.setValue(CHAVE_MODO, self.modo_copias)
+        self._lembrar_acabamentos()
         if self.estado.trabalho.pastas:
             s.setValue(CHAVE_ORGANIZAR, self.organizar)
         s.sync()
@@ -369,3 +449,6 @@ class ExportarDialog(QDialog):
             self.aguardar()
         super().reject()
 
+
+def _maiuscula(texto: str) -> str:
+    return texto[:1].upper() + texto[1:]
