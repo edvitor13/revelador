@@ -159,7 +159,7 @@ class ExportarDialog(QDialog):
         self.combo_copias = QComboBox()
         for modo in exportar.MODOS:
             self.combo_copias.addItem(_(MODOS_TEXTO[modo]), modo)
-        modo_salvo = str(s.value(CHAVE_MODO, exportar.MODO_PASTAS, str))
+        modo_salvo = str(s.value(CHAVE_MODO, exportar.MODO_REPETIR, str))   # padrão: repetir o arquivo
         self.combo_copias.setCurrentIndex(max(0, self.combo_copias.findData(modo_salvo)))
         form.addRow(_("Cópias"), self.combo_copias)
 

@@ -64,16 +64,17 @@ destino = base / "saida"
 destino.mkdir()
 d.definir_destino(destino)
 assert d.spin_dpi.value() == 300
+assert d.modo_copias == "repetir"            # padrão: repetir o arquivo, uma vez por cópia
 assert "2 foto(s), 3 cópia(s)" in d.rotulo_resumo.text(), d.rotulo_resumo.text()
 assert d.botao_exportar.isEnabled() and d.botao_exportar.objectName() == "Primary"
 assert d.iniciar() and not d.iniciar()      # a segunda chamada não faz nada
 assert d.aguardar(60000)
 r = d.resultado
-assert r is not None and r.ok and len(r.arquivos) == 2 and r.pedido.is_file()
+assert r is not None and r.ok and len(r.arquivos) == 3 and r.pedido.is_file()   # a: 2 cópias = 2 arquivos
 assert d.barra.value() == 2
 assert "Exportação concluída" in d.rotulo_fim.text()
 pasta = r.pedido.parent
-assert (pasta / "10x15" / "2 cópias" / "a.jpg").is_file() and (pasta / "10x15" / "1 cópia" / "b.jpg").is_file()
+assert sorted(x.name for x in (pasta / "10x15").iterdir()) == ["a - 2.jpg", "a.jpg", "b.jpg"]
 assert str(prefs.settings().value("exportar/pasta")) == str(destino)
 d2 = j.criar_dialogo_exportacao()
 assert Path(d2.campo_pasta.text()) == destino
