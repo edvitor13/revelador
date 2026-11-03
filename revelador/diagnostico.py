@@ -1,4 +1,4 @@
-"""Confere se as dependências nativas funcionam de verdade (numpy, Pillow, pillow-heif, OpenCV e Qt).
+"""Confere se as dependências nativas funcionam de verdade (numpy, Pillow, pillow-heif, OpenCV, rostos e Qt).
 
 Usado pelo CI no executável empacotado (``Revelador.exe --diagnostico saida.json``): o PyInstaller pode deixar
 uma DLL de fora sem erro nenhum na hora de gerar, e o problema só apareceria quando a pessoa abrisse uma foto HEIC
@@ -84,6 +84,23 @@ def _opencv() -> str:
     return cv2.__version__
 
 
+def _rostos() -> str:
+    """Carrega o YuNet empacotado e roda o ``cv2.FaceDetectorYN`` (prova que o modelo e o DNN do OpenCV estão no
+    executável). A imagem é sintética: não precisa achar rosto, só não pode falhar."""
+    import numpy as np
+
+    from . import rostos
+
+    if not rostos.MODELO.is_file():
+        raise RuntimeError(f"modelo de rostos ausente: {rostos.MODELO}")
+    if rostos.sha256_modelo() != rostos.SHA256_MODELO:
+        raise RuntimeError("modelo de rostos com SHA-256 diferente do esperado")
+    a = np.zeros((ALTURA * 2, LARGURA * 2, 3), np.uint8)
+    a[ALTURA // 2:ALTURA * 3 // 2, LARGURA // 2:LARGURA * 3 // 2] = (200, 170, 150)
+    _, faces = rostos.criar_detector(LARGURA * 2, ALTURA * 2).detect(a)
+    return f"{rostos.MODELO.name} ({0 if faces is None else len(faces)} rostos na imagem de teste)"
+
+
 def _qt() -> str:
     import PySide6
     from PySide6.QtGui import QColor, QImage
@@ -100,6 +117,7 @@ ITENS: dict[str, Callable[[], str]] = {
     "pillow": _pillow,
     "pillow-heif": _pillow_heif,
     "opencv": _opencv,
+    "rostos": _rostos,
     "qt": _qt,
 }
 
