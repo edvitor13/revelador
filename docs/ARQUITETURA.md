@@ -367,7 +367,8 @@ vibração, nitidez) **não é** a ordem de aplicação; esta é fixa em `aplica
   continuam em subpastas por tamanho. As pastas escolhem o nome primeiro; nomes repetidos sem diferenciar maiúsculas
   ganham ` (2)`. Dentro de cada subpasta vale o mesmo esquema de cópias. `Item` ganha `grupo` e `pasta`; `Plano`
   ganha `organizar`. O custo não muda (continua por tamanho).
-- **Cópias** (opção, padrão *pastas por quantidade*):
+- **Cópias** (opção; no diálogo o padrão é *repetir*, e a última escolha é lembrada em `exportar/copias`;
+  `planejar()` sem o argumento usa *pastas*):
   - `pastas`: `10x15/1 cópia/…`, `10x15/2 cópias/…` (sem subpasta se todas forem 1 cópia);
   - `nome`: `IMG_1234 (2 cópias).jpg`;
   - `repetir`: o arquivo gravado N vezes (`IMG_1234.jpg`, `IMG_1234 - 2.jpg`), para laboratórios que contam

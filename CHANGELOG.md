@@ -82,6 +82,7 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 - Exportação: nome da pasta principal escolhido na hora (padrão "Revelação AAAA-MM-DD") e, por tamanho, a borda (sem,
   fina, grossa) e o papel (fosco, brilho, semibrilho) para o laboratório, escritos no nome de cada pasta de tamanho
   ("10x15 - borda fina - fosco") e no `pedido.txt`; a escolha é lembrada por tamanho.
+- Exportação: o padrão das cópias passa a ser "Repetir o arquivo, uma vez por cópia".
 
 ### Mudado
 - Enquadramento automático com vários rostos: o centro horizontal é a média simples dos rostos principais (antes,
