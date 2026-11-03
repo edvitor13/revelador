@@ -47,12 +47,14 @@ assert barra.objectName() == "TopBar" and j.centralWidget().layout().itemAt(0).w
 # importar e projeto: botões planos com menu; ações desligadas aparecem desligadas
 assert j.botao_importar.menu().actions() == [j.acao_importar, j.acao_importar_pasta]
 nomes = [a.text() for a in j.botao_projeto.menu().actions() if not a.isSeparator()]
-assert nomes == ["Novo trabalho", "Abrir trabalho…", "Abrir recente", "Salvar", "Salvar como…"], nomes
+assert nomes == ["Novo trabalho", "Abrir trabalho…", "Abrir recente", "Salvar", "Salvar como…", "Desfazer",
+                 "Refazer"], nomes
 assert j.acao_salvar.isEnabled() and j.acao_abrir.isEnabled() and j.acao_importar.isEnabled()   # ligadas pela #9
 assert j.botao_projeto.menu().actions()[2].menu() is j.menu_recentes
 # engrenagem
 assert [a.text() for a in j.botao_menu.menu().actions() if not a.isSeparator()] == [
-    "Preços do laboratório…", "Resumo do pedido…", "Verificar atualizações…", "Sobre o Revelador"]
+    "Preços do laboratório…", "Resumo do pedido…", "Configurações…", "Tela de boas-vindas",
+    "Verificar atualizações…", "Sobre o Revelador"]
 # mostrar, tamanho padrão, custo, exportar
 assert list(j.filtro_mostrar.botoes) == ["todas", "selecionadas"] and j.filtro_mostrar.chave_atual() == "todas"
 assert j.seletor_tamanho.parent() is not None and j.botao_custo.objectName() == "Pilula"

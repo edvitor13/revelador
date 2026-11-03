@@ -24,9 +24,15 @@ github.com/edvitor13/revelador). Outros agentes trabalham em paralelo em outras 
   cor fixa fora de `tema.py`** (use as constantes). Confira a sua tela com `tools/captura_tela.py` (plataforma
   `windows`; `offscreen` não tem fontes) e OLHE o PNG com a ferramenta de leitura antes de entregar.
 - **Ações da janela** (contrato): `acao_novo`, `acao_abrir`, `acao_salvar`, `acao_salvar_como`, `menu_recentes`,
-  `acao_verificar_atualizacoes`, `acao_exportar`, `acao_importar` já existem na `MainWindow`, desligadas quando não
-  têm dono. Conecte e ligue as da sua tarefa; **não crie menus nem botões de barra** (a barra superior é de outro
-  agente, que só posiciona essas ações).
+  `acao_verificar_atualizacoes`, `acao_exportar`, `acao_importar`, `acao_importar_pasta`, `acao_desfazer` (Ctrl+Z),
+  `acao_refazer` (Ctrl+Y / Ctrl+Shift+Z), `acao_configuracoes` ("Configurações…", engrenagem) e `acao_boas_vindas`
+  ("Tela de boas-vindas", engrenagem) já existem na `MainWindow`, desligadas quando não têm dono. Conecte e ligue as
+  da sua tarefa; **não crie menus nem botões de barra** (a barra superior só posiciona essas ações).
+- **Ganchos comuns do `Estado`** (já existem): `visiveis` (ids das fotos visíveis na grade, na ordem dela; a grade
+  publica por `definir_visiveis`) e `vizinha(passo)` (foto anterior/seguinte entre as visíveis); `lote(texto)`
+  (*context manager*: agrupa mudanças em várias fotos num passo só do desfazer — use-o sempre que mexer em várias
+  fotos de uma vez); `alterar_pastas()` + sinal `pastas_mudaram()` (quem muda `trabalho.pastas` chama;
+  entra no desfazer). Modelo: `projeto.Pasta`, `Trabalho.pastas` e `Impressao.pasta` (pastas de tamanho, #32).
 - **Interface**: todo widget conversa só pelo `revelador/ui/estado.py` (`janela.estado`): leia a docstring dele
   antes de qualquer widget. Mexeu no modelo → chame `estado.alterar(foto, pedido=...)`; nunca um widget chama outro.
   Não mude a API do `Estado` (pode ACRESCENTAR métodos se precisar; descreva no relatório).

@@ -12,11 +12,14 @@ Sinais:
 - ``pedido_mudou()``: algo que muda o orçamento ou a exportação (seleção, tamanhos, cópias, preços).
 - ``modificado_mudou(bool)``: o trabalho passou a ter (ou deixou de ter) alterações não salvas.
 - ``comparando_mudou(bool)``: antes/depois (``comparando``): enquanto verdadeiro, o editor mostra a foto sem ajustes.
+- ``pastas_mudaram()``: a lista de pastas de tamanho (``trabalho.pastas``) ou algo de uma pasta mudou (#32).
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
@@ -41,6 +44,7 @@ class Estado(QObject):
     pedido_mudou = Signal()
     modificado_mudou = Signal(bool)
     comparando_mudou = Signal(bool)
+    pastas_mudaram = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -52,6 +56,7 @@ class Estado(QObject):
         self.erros: dict[str, str] = {}        # mensagem amigável das fotos que não abriram, por id de foto
         self._modificado = False
         self.comparando = False               # antes/depois: mostrar a foto sem ajustes (não vai para o arquivo)
+        self.visiveis: list[str] = []          # ids das fotos visíveis na grade, na ordem dela (a grade publica)
 
     # ------------------------------------------------------------ consulta
     @property
@@ -77,6 +82,7 @@ class Estado(QObject):
         self.erros.clear()
         self.atual = None
         self.fotos_mudaram.emit()
+        self.pastas_mudaram.emit()
         self.atual_mudou.emit(None)
         self.pedido_mudou.emit()
         self.marcar_modificado(False)
@@ -119,6 +125,24 @@ class Estado(QObject):
         self.atual = foto
         self.indice_impressao = 0
         self.atual_mudou.emit(foto)
+
+    def definir_visiveis(self, ids: list[str]) -> None:
+        """A grade publica as fotos visíveis (filtro aplicado), na ordem da tela; quem navega usa ``vizinha``."""
+        self.visiveis = list(ids)
+
+    def vizinha(self, passo: int) -> Foto | None:
+        """A foto ``passo`` posições depois (negativo: antes) da atual entre as visíveis; None fora da lista.
+
+        Sem foto atual (ou atual fora do filtro), ``passo > 0`` dá a primeira visível e ``passo < 0`` a última.
+        """
+        if not self.visiveis or passo == 0:
+            return None
+        try:
+            i = self.visiveis.index(self.atual.id) if self.atual is not None else -1
+        except ValueError:
+            i = -1
+        j = (0 if passo > 0 else len(self.visiveis) - 1) if i < 0 else i + passo
+        return self.por_id(self.visiveis[j]) if 0 <= j < len(self.visiveis) else None
 
     def definir_impressao(self, indice: int) -> None:
         """Escolhe qual impressão da foto atual o editor mostra."""
@@ -192,6 +216,25 @@ class Estado(QObject):
         if pedido:
             self.pedido_mudou.emit()
         self.marcar_modificado()
+
+    def alterar_pastas(self) -> None:
+        """Avisa que ``trabalho.pastas`` mudou (criar, renomear, cor, tamanho, cópias, apagar uma pasta).
+
+        Quem mexe nas pastas chama isto (as impressões das fotos afetadas avisam por ``alterar``, de preferência
+        tudo dentro de um ``lote``). Entra no desfazer/refazer (#5).
+        """
+        self.pastas_mudaram.emit()
+        self.pedido_mudou.emit()
+        self.marcar_modificado()
+
+    @contextmanager
+    def lote(self, texto: str = "") -> Iterator[None]:
+        """Agrupa várias mudanças (em uma ou várias fotos) num passo só do desfazer/refazer.
+
+        ``with estado.lote(_("Aplicar 15x21")): ...`` — quem mexe em várias fotos de uma vez usa isto. Os lotes podem
+        ser aninhados (vale o de fora). O desfazer/refazer (#5) é ligado aqui; sem ele, só executa o bloco.
+        """
+        yield
 
     def definir_comparando(self, sim: bool) -> None:
         """Liga/desliga o antes/depois (o editor mostra a foto sem ajustes, com o mesmo recorte)."""

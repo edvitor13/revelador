@@ -170,6 +170,7 @@ class ModeloGrade(QAbstractListModel):
         self._linha = {f.id: i for i, f in enumerate(self._fotos)}
         self._pixmaps.clear()
         self.endResetModel()
+        self.estado.definir_visiveis([f.id for f in self._fotos])
 
     def foto_mudou(self, foto_id: str) -> None:
         if self.so_selecionadas:

@@ -63,6 +63,23 @@ class Impressao:
     recorte: Recorte = field(default_factory=Recorte)
     papel_mm: tuple[float, float] | None = None  # só no "personalizado": (lado menor, lado maior) em mm
     preco_centavos: int | None = None            # só no "personalizado": valor por cópia (seção 13)
+    pasta: str | None = None        # id da Pasta de tamanho de onde veio (#32); None = impressão avulsa
+
+
+@dataclass
+class Pasta:
+    """Pasta de tamanho (#32): grupo virtual do trabalho; a foto que entra ganha uma impressão no tamanho dela.
+
+    Nada muda nas pastas do disco. O ``id`` nunca muda; a ordem de ``Trabalho.pastas`` é a da tela.
+    """
+
+    id: str
+    nome: str
+    cor: str                        # chave da paleta de pastas em ``ui/tema.py`` (não um hexadecimal)
+    tamanho: str = TAMANHO_PADRAO   # id de tamanhos.TAMANHOS, ou "personalizado"
+    copias: int = 1                 # cópias padrão das impressões novas da pasta
+    papel_mm: tuple[float, float] | None = None  # só no "personalizado"
+    preco_centavos: int | None = None            # só no "personalizado"
 
 
 @dataclass
@@ -88,6 +105,7 @@ class Trabalho:
     dpi: int = DPI_PADRAO
     margem_corte_mm: float = MARGEM_CORTE_MM_PADRAO
     caminho: Path | None = None     # o .revelador, quando salvo
+    pastas: list[Pasta] = field(default_factory=list)   # pastas de tamanho (#32), na ordem da tela
 
     def selecionadas(self) -> list[Foto]:
         return [f for f in self.fotos if f.selecionada]

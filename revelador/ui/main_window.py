@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSize, Qt, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
                                QPushButton, QScrollArea, QSplitter, QToolButton, QVBoxLayout, QWidget)
 
@@ -109,8 +109,15 @@ class MainWindow(QMainWindow):
         self.acao_salvar_como.setShortcut("Ctrl+Shift+S")
         self.menu_recentes = QMenu(_("Abrir recente"), self)                  # #9 (preenchido por ela)
         self.acao_verificar_atualizacoes = QAction(_("Verificar atualizações…"), self)  # #10
+        self.acao_desfazer = QAction(_("Desfazer"), self)                     # #5 (QUndoStack do Estado)
+        self.acao_desfazer.setShortcut(QKeySequence.StandardKey.Undo)
+        self.acao_refazer = QAction(_("Refazer"), self)                       # #5
+        self.acao_refazer.setShortcuts([QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")])
+        self.acao_configuracoes = QAction(_("Configurações…"), self)          # #34 (e outras preferências)
+        self.acao_boas_vindas = QAction(_("Tela de boas-vindas"), self)       # #35
         for acao in (self.acao_novo, self.acao_abrir, self.acao_salvar, self.acao_salvar_como,
-                     self.acao_verificar_atualizacoes):
+                     self.acao_verificar_atualizacoes, self.acao_desfazer, self.acao_refazer,
+                     self.acao_configuracoes, self.acao_boas_vindas):
             acao.setEnabled(False)
         self.menu_recentes.setEnabled(False)
         self.acao_precos = QAction(_("Preços do laboratório…"), self)
@@ -122,7 +129,8 @@ class MainWindow(QMainWindow):
         # Sem barra de menus, os atalhos precisam estar na própria janela.
         self.acoes_da_janela = [
             self.acao_importar, self.acao_importar_pasta, self.acao_exportar, self.acao_novo, self.acao_abrir,
-            self.acao_salvar, self.acao_salvar_como, self.acao_verificar_atualizacoes, self.acao_sair,
+            self.acao_salvar, self.acao_salvar_como, self.acao_verificar_atualizacoes, self.acao_desfazer,
+            self.acao_refazer, self.acao_sair,
         ]
         for acao in self.acoes_da_janela:
             self.addAction(acao)
@@ -159,7 +167,7 @@ class MainWindow(QMainWindow):
         self.botao_projeto = com_menu(
             botao_plano("salvar", _("Novo, abrir e salvar o trabalho"), _("Projeto")),
             self._menu(self.acao_novo, self.acao_abrir, self.menu_recentes, None, self.acao_salvar,
-                       self.acao_salvar_como))
+                       self.acao_salvar_como, None, self.acao_desfazer, self.acao_refazer))
         lay.addWidget(self.botao_importar)
         lay.addWidget(self.botao_projeto)
         lay.addSpacing(10)
@@ -201,8 +209,9 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.botao_exportar)
 
         self.botao_menu = com_menu(
-            botao_plano("configuracoes", _("Preços, resumo, atualizações e sobre")),
-            self._menu(self.acao_precos, self.acao_resumo, None, self.acao_verificar_atualizacoes, self.acao_sobre))
+            botao_plano("configuracoes", _("Preços, resumo, configurações, atualizações e sobre")),
+            self._menu(self.acao_precos, self.acao_resumo, None, self.acao_configuracoes, self.acao_boas_vindas,
+                       None, self.acao_verificar_atualizacoes, self.acao_sobre))
         self.botao_menu.setProperty("menu", False)   # só o ícone, sem a setinha
         lay.addWidget(self.botao_menu)
 

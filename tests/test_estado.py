@@ -83,3 +83,28 @@ print("ok")
 """)
     assert p.returncode == 0, p.stderr
     assert p.stdout.strip().endswith("ok"), p.stdout
+
+
+def test_vizinha_segue_a_ordem_publicada_pela_grade_e_lote_executa():
+    p = rodar_python("""
+from pathlib import Path
+from revelador.projeto import Pasta, Trabalho
+from revelador.ui.estado import Estado
+
+e = Estado()
+a, b, c = e.adicionar([Path("a.jpg"), Path("b.jpg"), Path("c.jpg")])
+assert e.vizinha(1) is None                       # nada publicado ainda
+e.definir_visiveis([a.id, c.id])                  # filtro: b escondida
+assert e.vizinha(1) is a and e.vizinha(-1) is c   # sem atual: primeira / última
+e.definir_atual(a)
+assert e.vizinha(1) is c and e.vizinha(-1) is None and e.vizinha(2) is None
+e.definir_atual(b)                                # atual fora do filtro
+assert e.vizinha(1) is a
+with e.lote("teste"):
+    e.selecionar(a)
+assert a.selecionada
+assert Trabalho().pastas == [] and Pasta("p1", "Festa", "laranja").tamanho == "10x15"
+print("ok")
+""")
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.strip().endswith("ok"), p.stdout
