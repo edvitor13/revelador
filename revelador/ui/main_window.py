@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
         self.restaurar_estado()
         self._ligar_grade()
         self._ligar_selecao()
+        self._ligar_editor()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -267,6 +268,18 @@ class MainWindow(QMainWindow):
 
     def abrir_precos(self) -> None:
         PrecosDialog(self.estado, self).exec()
+
+    # ------------------------------------------------------------ editor
+    def _ligar_editor(self) -> None:
+        """Encaixa o editor de enquadramento na área central (esconde o texto de orientação)."""
+        from .editor import Editor   # importação tardia: o editor puxa a receita (numpy/cv2), que a janela não precisa antes
+
+        self.editor = Editor(self.estado, self.area_editor)
+        self.area_editor.layout().addWidget(self.editor)
+        self.orientacao_editor.hide()
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.editor.encerrar)
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
