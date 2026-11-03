@@ -452,11 +452,17 @@ class Editor(QWidget):
         return self._aplicar(foto, imp, replace(imp.recorte, angulo=graus))
 
     def enquadrar_pelos_rostos(self) -> bool:
-        """Volta ao recorte automático (``origem = "auto"``): o mesmo caminho de ``Estado.refazer_recortes_auto``."""
+        """Volta ao recorte automático (``origem = "auto"``): o mesmo caminho de ``Estado.refazer_recortes_auto``.
+
+        Foto ainda sem detecção: pede os rostos já (``Estado.pedir_rostos``); o recorte, que deixa de ser manual, é
+        refeito quando eles chegam (``definir_rostos`` refaz os recortes não manuais).
+        """
         ctx = self._contexto()
         if ctx is None:
             return False
         foto, imp = ctx
+        if foto.rostos is None:
+            self.estado.pedir_rostos(foto)
         imp.recorte = replace(imp.recorte, origem="auto")
         if foto.id in self.estado.info:
             self.estado.refazer_recortes_auto(foto)

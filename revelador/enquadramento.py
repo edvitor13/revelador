@@ -198,9 +198,8 @@ def _uniao(caixas: list[_Caixa], expansao: tuple[float, float, float], margem: f
 
 
 def _descartar(caixas: list[_Caixa]) -> list[_Caixa]:
-    """Tira o rosto menos importante; entre os empatados, o mais longe do centro de importância (as pontas)."""
-    total = sum(c.importancia for c in caixas) or 1.0
-    centro_x = sum(c.cx * c.importancia for c in caixas) / total
+    """Tira o rosto menos importante; entre os empatados, o mais longe do centro do grupo (as pontas)."""
+    centro_x = sum(c.cx for c in caixas) / len(caixas)
     menor = min(c.importancia for c in caixas)
     empatados = [c for c in caixas if c.importancia <= menor * EMPATE]
     sai = max(empatados, key=lambda c: (abs(c.cx - centro_x), -c.importancia))
@@ -220,9 +219,9 @@ def recorte_automatico(W: float, H: float, proporcao: float, rostos: Iterable[Ro
     2. Importância = área × confiança; principais = importância ≥ 15% da maior.
     3. Região de interesse = união das caixas principais expandidas (cabelo, queixo, laterais).
     4. Recorte com ``zoom = 1`` na proporção do papel.
-    5. Horizontal: centróide dos rostos ponderado pela importância (o rosto principal fica mais ao centro), com a
-       região inteira dentro do recorte.
-    6. Vertical: linha dos olhos a 1/3 do topo; depois o topo da região dentro do recorte (cabeça inteira) e, se
+    5. Horizontal: média simples dos centros dos rostos principais (o grupo fica no meio, sem favorecer o maior),
+       com a região inteira dentro do recorte.
+    6. Vertical: linha dos olhos (média ponderada pela importância) a 1/3 do topo; depois o topo da região dentro do recorte (cabeça inteira) e, se
        couber, a base também.
     7. Se a região não couber nem com as expansões mais justas, descarta o rosto principal menos importante (entre
        empatados, o da ponta) e repete; com um rosto só, prioriza a cabeça inteira.
@@ -255,7 +254,7 @@ def recorte_automatico(W: float, H: float, proporcao: float, rostos: Iterable[Ro
 
     total = sum(c.importancia for c in principais) or 1.0
     olhos_y = sum(c.olhos_y * c.importancia for c in principais) / total
-    centro_x = sum(c.cx * c.importancia for c in principais) / total
+    centro_x = sum(c.cx for c in principais) / len(principais)   # média simples (#36)
     if escolha is not None:
         _, (x0, y0, x1, y1) = escolha
         cx = _intervalo(centro_x, w, W, x0, x1)

@@ -13,6 +13,8 @@ Sinais:
 - ``modificado_mudou(bool)``: o trabalho passou a ter (ou deixou de ter) alterações não salvas.
 - ``comparando_mudou(bool)``: antes/depois (``comparando``): enquanto verdadeiro, o editor mostra a foto sem ajustes.
 - ``pastas_mudaram()``: a lista de pastas de tamanho (``trabalho.pastas``) ou algo de uma pasta mudou (#32).
+- ``rostos_pedidos(id)``: alguém quer os rostos desta foto já (``pedir_rostos``); a fila de rostos a põe na frente.
+- ``exportando_mudou(bool)``: a exportação começou/terminou (``definir_exportando``); a fila de rostos pausa.
 """
 
 from __future__ import annotations
@@ -157,6 +159,8 @@ class Estado(QObject):
         if foto is None:
             return
         self.info[foto_id] = info
+        if foto.rostos is not None and _mudou_no_disco(foto, info):
+            foto.rostos = None          # a foto mudou desde que os rostos foram guardados: detectar de novo (#36)
         foto.bytes = info.bytes
         foto.mtime = info.mtime / 1e9   # Foto.mtime em segundos; InfoFoto.mtime em ns
         self.refazer_recortes_auto(foto)
@@ -246,6 +250,39 @@ class Estado(QObject):
         if sim != self._modificado:
             self._modificado = sim
             self.modificado_mudou.emit(sim)
+
+    # ---- rostos (#36) --------------------------------------------------------------------------------------------
+    # A fila de rostos (``ui/tarefas.FilaRostos``) detecta aos poucos, na ordem: fotos pedidas (``pedir_rostos``), a
+    # atual e as recém-marcadas; depois as visíveis na tela da grade (``na_tela``); depois a ordem da grade. Pausa
+    # enquanto ``exportando``. Atributos de classe imutáveis como padrão (cada instância troca o seu ao definir).
+    rostos_pedidos = Signal(str)
+    exportando_mudou = Signal(bool)
+    na_tela: tuple[str, ...] = ()       # ids das fotos que aparecem agora no viewport da grade (a grade publica)
+    exportando: bool = False            # uma exportação está rodando (o diálogo avisa)
+
+    def pedir_rostos(self, foto: Foto) -> bool:
+        """Pede a detecção dos rostos desta foto já, na frente da fila. Falso se ela já tem rostos (nada a fazer)."""
+        if foto.rostos is not None or self.por_id(foto.id) is None:
+            return False
+        self.rostos_pedidos.emit(foto.id)
+        return True
+
+    def definir_na_tela(self, ids) -> None:
+        """A grade publica as fotos visíveis no viewport (ao rolar/redimensionar); a fila de rostos as adianta."""
+        self.na_tela = tuple(ids)
+
+    def definir_exportando(self, sim: bool) -> None:
+        """A exportação começou (True) ou terminou/foi cancelada (False)."""
+        if bool(sim) != self.exportando:
+            self.exportando = bool(sim)
+            self.exportando_mudou.emit(self.exportando)
+
+
+def _mudou_no_disco(foto: Foto, info: InfoFoto) -> bool:
+    """O arquivo no disco não é mais o dos dados guardados (tamanho ou data diferentes). Sem dados guardados: não."""
+    if foto.bytes <= 0 and foto.mtime <= 0:
+        return False
+    return foto.bytes != info.bytes or abs(foto.mtime - info.mtime / 1e9) > 1e-3
 
 
 def _chave_caminho(caminho: Path) -> str:

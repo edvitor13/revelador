@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QListView, QStyle, QStyledItemDelegate,
                                QStyleOptionViewItem, QVBoxLayout, QWidget)
@@ -42,6 +42,7 @@ ALTURA_CHIP = 18
 LIMITE_PIXMAPS = 400
 PAPEL_FOTO = Qt.ItemDataRole.UserRole
 CHAVE_PREF = "grade/miniatura"
+ATRASO_NA_TELA_MS = 150    # debounce da publicação das fotos na tela (rostos, #36)
 
 
 def limitar_miniatura(lado: int) -> int:
@@ -426,6 +427,7 @@ class Grade(QWidget):
         estado.fotos_mudaram.connect(self._ao_mudar_fotos)
         estado.foto_mudou.connect(self.modelo.foto_mudou)
         estado.atual_mudou.connect(self._ao_mudar_atual)
+        self._ligar_na_tela()
 
     # ------------------------------------------------------------ consulta
     def total(self) -> int:
@@ -545,3 +547,30 @@ class Grade(QWidget):
             self.estado.definir_atual(self.modelo.foto(atual.row()))
         finally:
             self._sincronizando = False
+
+    # ---- rostos (#36): publica no Estado as fotos que aparecem no viewport (a fila de rostos as adianta)
+    def _ligar_na_tela(self) -> None:
+        self._timer_na_tela = QTimer(self)
+        self._timer_na_tela.setSingleShot(True)
+        self._timer_na_tela.setInterval(ATRASO_NA_TELA_MS)
+        self._timer_na_tela.timeout.connect(self.publicar_na_tela)
+        barra = self.lista.verticalScrollBar()
+        barra.valueChanged.connect(lambda *_: self._timer_na_tela.start())    # rolar
+        barra.rangeChanged.connect(lambda *_: self._timer_na_tela.start())    # redimensionar, miniatura, filtro
+        self.modelo.modelReset.connect(lambda: self._timer_na_tela.start())
+
+    def ids_na_tela(self) -> list[str]:
+        """Ids das fotos cujo cartão aparece (mesmo em parte) no viewport, na ordem da grade."""
+        area = self.lista.viewport().rect()
+        ids: list[str] = []
+        for linha in range(self.modelo.rowCount()):
+            r = self.lista.visualRect(self.modelo.index(linha))
+            if r.top() > area.bottom():
+                break                      # modo ícone: as linhas seguem de cima para baixo
+            foto = self.modelo.foto(linha)
+            if foto is not None and r.intersects(area):
+                ids.append(foto.id)
+        return ids
+
+    def publicar_na_tela(self) -> None:
+        self.estado.definir_na_tela(self.ids_na_tela())

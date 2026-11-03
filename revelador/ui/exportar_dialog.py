@@ -277,6 +277,7 @@ class ExportarDialog(QDialog):
         s.setValue(CHAVE_MODO, self.modo_copias)
         s.sync()
         self.exportacao = exportacao
+        self.estado.definir_exportando(True)   # a fila de rostos pausa (#36)
         self.resultado = None
         for w in (self.campo_pasta, self.botao_pasta, self.combo_copias, self.spin_dpi):
             w.setEnabled(False)
@@ -305,6 +306,7 @@ class ExportarDialog(QDialog):
         return self.exportacao is None or self.exportacao.concluida
 
     def _ao_terminar(self, resultado: exportar.Resultado) -> None:
+        self.estado.definir_exportando(False)  # concluída ou cancelada: os rostos seguem (#36)
         self.resultado = resultado
         self.botao_cancelar.hide()
         self.botao_fechar.show()
