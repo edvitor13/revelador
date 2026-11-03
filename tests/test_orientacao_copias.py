@@ -336,3 +336,45 @@ d.passar(+1); d.passar(+1)
 assert d.indice == 2 and not d.botao_prox.isEnabled()
 print("ok")
 """)
+
+
+def test_filtros_de_copias_e_repetidas_e_comparar_grupo():
+    rodar("""
+from PIL import Image, ImageDraw
+from PySide6.QtCore import QTimer
+from revelador.ui.grade import COM_COPIAS, REPETIDAS, UMA_COPIA
+from revelador.ui.repetidas import RepetidasDialog, _CartaoGrupo
+def jpeg(nome, cor, desloca=0, lado=300):
+    im = Image.new("RGB", (lado, lado * 2 // 3), cor)
+    ImageDraw.Draw(im).ellipse((lado // 5 + desloca, lado // 8, lado // 2 + desloca, lado // 2), fill=(250, 240, 220))
+    caminho = PASTA / (nome + ".jpg"); im.save(caminho); return caminho
+estado = Estado()
+estado.trabalho = Trabalho()
+a = nova_foto(estado, "a", 300, 200); b = nova_foto(estado, "b", 150, 100); c = nova_foto(estado, "c", 300, 200)
+a.impressoes[0].copias = 3
+estado.miniaturas.update({"a": jpeg("a", (40, 60, 90)), "b": jpeg("b", (40, 60, 90), lado=150),
+                          "c": jpeg("c", (200, 30, 30), desloca=100)})
+g = Grade(estado); g.resize(400, 300); g.show()
+esperar(lambda: g.total() == 3)
+g.definir_tamanho(COM_COPIAS)
+assert [f.id for f in g.fotos_visiveis()] == ["a"]
+g.definir_tamanho(UMA_COPIA)
+assert [f.id for f in g.fotos_visiveis()] == ["b", "c"]
+g.definir_tamanho(REPETIDAS)
+esperar(lambda: g.modelo.repetidas is not None)
+assert [f.id for f in g.fotos_visiveis()] == ["a", "b"]
+assert g.combo_tamanho.currentData() == REPETIDAS and "(2)" in g.combo_tamanho.currentText()
+# janela de repetidas: clicar no grupo abre a comparação só com essas fotos (foto inteira)
+d = RepetidasDialog(estado, [["a", "b"]])
+d.show(); app.processEvents()
+vistos = []
+def conferir():
+    v = d.comparando
+    vistos.append((v.comparar, [f.id for f in v.fotos], v.contador.text()))
+    v.passar(+1); vistos.append(v.contador.text()); v.reject()
+QTimer.singleShot(50, conferir)
+cartao = d.findChildren(_CartaoGrupo)[0]
+QTest.mouseClick(cartao, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
+assert vistos == [(True, ["a", "b"], "1 de 2"), "2 de 2"], vistos
+print("ok")
+""")

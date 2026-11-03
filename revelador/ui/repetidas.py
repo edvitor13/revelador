@@ -10,8 +10,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QScrollArea,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QPushButton,
+                               QScrollArea, QVBoxLayout, QWidget)
 
 from .. import repetidas
 from ..i18n import _
@@ -52,12 +52,26 @@ def procurar(estado: Estado, ao_terminar) -> _Sinais:
     return sinais
 
 
+class _CartaoGrupo(QFrame):
+    """Cartão de um grupo: clicar nele (fora da escolha) abre a comparação."""
+
+    def __init__(self, ao_clicar) -> None:
+        super().__init__()
+        self._ao_clicar = ao_clicar
+
+    def mouseReleaseEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        if evento.button() == Qt.MouseButton.LeftButton:
+            self._ao_clicar()
+        super().mouseReleaseEvent(evento)
+
+
 class RepetidasDialog(QDialog):
     """Um cartão por grupo de fotos parecidas, com as miniaturas e a escolha: "Manter todas" ou "Unificar em …"."""
 
     def __init__(self, estado: Estado, grupos: list[list[str]], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.estado = estado
+        self.comparando = None
         self.setWindowTitle(_("Fotos repetidas"))
         self.resize(720, 560)
         raiz = QVBoxLayout(self)
@@ -93,23 +107,50 @@ class RepetidasDialog(QDialog):
         raiz.addWidget(botoes)
 
     def _cartao(self, fotos: list[Foto]) -> QFrame:
-        cartao = QFrame()
+        cartao = _CartaoGrupo(lambda: self.comparar(fotos))
         cartao.setObjectName("Card")
+        cartao.setCursor(Qt.CursorShape.PointingHandCursor)
+        cartao.setToolTip(_("Clique para abrir estas fotos na tela grande e comparar"))
         coluna = QVBoxLayout(cartao)
         coluna.setContentsMargins(12, 10, 12, 10)
-        linha = QHBoxLayout()
+        faixa = QWidget()
+        linha = QHBoxLayout(faixa)
+        linha.setContentsMargins(0, 0, 0, 0)
         linha.setSpacing(10)
         for foto in fotos:
             linha.addWidget(self._miniatura(foto))
         linha.addStretch(1)
-        coluna.addLayout(linha)
+        rolagem = QScrollArea()          # muitas parecidas: rola na horizontal
+        rolagem.setWidgetResizable(True)
+        rolagem.setFrameShape(QScrollArea.Shape.NoFrame)
+        rolagem.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        rolagem.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        rolagem.setWidget(faixa)
+        rolagem.setFixedHeight(faixa.sizeHint().height() + 18)
+        coluna.addWidget(rolagem)
+        botao = QPushButton(_("Comparar na tela grande"))
+        botao.setObjectName("Flat")
+        botao.clicked.connect(lambda: self.comparar(fotos))
+        linha_base = QHBoxLayout()
         escolha = QComboBox()
         escolha.addItem(_("Manter todas"), None)
         for foto in fotos:
             escolha.addItem(_("Unificar em “{nome}”").format(nome=foto.caminho.name), foto.id)
-        coluna.addWidget(escolha)
+        linha_base.addWidget(escolha, 1)
+        linha_base.addWidget(botao)
+        coluna.addLayout(linha_base)
         self.grupos.append((fotos, escolha))
         return cartao
+
+    def comparar(self, fotos: list[Foto]) -> None:
+        """Abre só as fotos do grupo na tela grande (foto inteira, ← → passam)."""
+        from .visualizar import VisualizarDialog
+
+        dialogo = VisualizarDialog(self.estado, fotos, 0, self, comparar=True)
+        self.comparando = dialogo
+        dialogo.exec()
+        dialogo.deleteLater()
+        self.comparando = None
 
     def _miniatura(self, foto: Foto) -> QWidget:
         caixa = QWidget()

@@ -6,6 +6,12 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.1.1] - 2026-11-03
+
+### Adicionado
+- Filtros da grade "Com mais de uma cópia", "Com uma cópia só" e "Repetidas" (busca em segundo plano).
+- Janela "Repetidas…": grupos com rolagem horizontal e comparação do grupo na tela grande (foto inteira, ← →).
+
 ## [0.1.0] - 2026-11-03
 
 ### Adicionado
