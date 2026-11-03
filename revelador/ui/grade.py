@@ -4,6 +4,10 @@ Fala só com o ``Estado``: lê ``trabalho.fotos``, ``miniaturas`` e ``erros`` e 
 ``foto_mudou``. Clique escolhe a foto atual; Espaço ou clique na marca liga/desliga a seleção para revelação;
 Delete tira do trabalho (nunca do disco, sem confirmação); setas navegam. A miniatura é lida do cache em disco
 sob demanda, só das células visíveis, com um cache pequeno de ``QPixmap``.
+
+Clique direito abre o menu de contexto das fotos escolhidas (``Grade.menu_contexto``): marcar/desmarcar, tamanho e
+cópias para todas de uma vez, "Procurar…" (se alguma falta no disco; sinal ``procurar_pedido``) e remover. Cada ação
+em várias fotos é um passo só do desfazer (``estado.lote``).
 """
 
 from __future__ import annotations
@@ -12,16 +16,17 @@ from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QListView, QStyle, QStyledItemDelegate,
+from PySide6.QtGui import QAction, QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QListView, QMenu, QStyle, QStyledItemDelegate,
                                QStyleOptionViewItem, QVBoxLayout, QWidget)
 
 from .. import tamanhos
 from ..i18n import _
-from ..projeto import Foto
+from ..projeto import Foto, Impressao
 from . import icones, prefs, tema
 from .componentes import Slider
 from .estado import Estado
+from .painel_impressoes import LIMITE_COPIAS, NOMES_GRUPOS, refazer_enquadramento
 
 MINIATURA_PADRAO = 150  # lado da miniatura (o tamanho com que a grade sempre abriu)
 MINIATURA_MINIMA = 80
@@ -42,6 +47,7 @@ ALTURA_CHIP = 18
 LIMITE_PIXMAPS = 400
 PAPEL_FOTO = Qt.ItemDataRole.UserRole
 CHAVE_PREF = "grade/miniatura"
+COPIAS_MENU = (1, 2, 3, 5, 10)   # atalhos do submenu "Cópias" do menu de contexto
 
 
 def limitar_miniatura(lado: int) -> int:
@@ -370,6 +376,17 @@ class _Lista(QListView):
                 return
         super().mousePressEvent(evento)
 
+    def contextMenuEvent(self, evento) -> None:  # noqa: N802
+        indice = self.indexAt(evento.pos())
+        if indice.isValid() and not self.selectionModel().isSelected(indice):
+            self.setCurrentIndex(indice)   # clique direito fora da seleção: escolhe só a foto clicada
+        fotos = self.grade.fotos_escolhidas()
+        menu = self.grade.menu_contexto(fotos) if fotos else None
+        if menu is not None and menu.actions():
+            menu.exec(evento.globalPos())
+        if menu is not None:
+            menu.deleteLater()
+
     def keyPressEvent(self, evento) -> None:  # noqa: N802
         if evento.key() == Qt.Key.Key_Space:
             self.grade.alternar_atual()
@@ -383,6 +400,7 @@ class Grade(QWidget):
     """A grade de miniaturas ligada ao ``Estado``. Rodapé com o tamanho das miniaturas (lembrado nas preferências)."""
 
     tamanho_mudou = Signal(int)
+    procurar_pedido = Signal()   # "Procurar…" no menu de contexto (fotos que faltam no disco); a janela liga
 
     def __init__(self, estado: Estado, parent=None) -> None:
         super().__init__(parent)
@@ -488,18 +506,129 @@ class Grade(QWidget):
         escolhidas = self.fotos_escolhidas() or ([self.estado.atual] if self.estado.atual else [])
         if not escolhidas:
             return
-        sim = not escolhidas[0].selecionada
-        for foto in escolhidas:
-            self.estado.selecionar(foto, sim)
+        self.marcar_fotos(escolhidas, not escolhidas[0].selecionada)
 
     def remover_selecionados(self) -> None:
-        escolhidas = self.fotos_escolhidas()
-        if not escolhidas:
+        self.remover_fotos(self.fotos_escolhidas())
+
+    def remover_fotos(self, fotos: list[Foto]) -> None:
+        """Tira as fotos do trabalho (nunca do disco) e escolhe a vizinha. Desfazer as põe de volta."""
+        if not fotos:
             return
-        proxima = self._vizinha(escolhidas)
-        self.estado.remover(escolhidas)
+        proxima = self._vizinha(fotos)
+        self.estado.remover(fotos)
         if proxima is not None:
             self.estado.definir_atual(proxima)
+
+    # ------------------------------------------------------------ várias fotos de uma vez (menu de contexto)
+    def menu_contexto(self, fotos: list[Foto]) -> QMenu:
+        """Menu de contexto para ``fotos`` (as escolhidas), sem abrir: quem chama faz ``exec``/``popup``.
+
+        Itens (``objectName`` entre parênteses, para testes e para quem acrescentar itens): "Marcar para revelação"
+        (``marcar``), "Desmarcar" (``desmarcar``), "Tamanho ▸" (``tamanho``; ações com o id do tamanho),
+        "Cópias ▸" (``copias``: ``copias_1``... ``copias_10``, ``copias_mais``, ``copias_menos``), "Procurar…"
+        (``procurar``, só se alguma foto falta no disco) e "Remover do trabalho" (``remover``). Submenus novos entram
+        depois de "Cópias ▸", antes do separador de "Procurar…"/"Remover".
+        """
+        menu = QMenu(self)
+        menu.setObjectName("menu_grade")
+        fotos = list(fotos)
+        if not fotos:
+            return menu
+        n = len(fotos)
+        if any(not f.selecionada for f in fotos):
+            texto = _("Marcar para revelação") if n == 1 else _("Marcar {n} fotos para revelação").format(n=n)
+            self._item(menu, "marcar", texto, lambda: self.marcar_fotos(fotos, True))
+        if any(f.selecionada for f in fotos):
+            texto = _("Desmarcar") if n == 1 else _("Desmarcar {n} fotos").format(n=n)
+            self._item(menu, "desmarcar", texto, lambda: self.marcar_fotos(fotos, False))
+        menu.addSeparator()
+
+        marcadas = all(f.selecionada for f in fotos)
+        tamanho = menu.addMenu(_("Tamanho"))
+        tamanho.menuAction().setObjectName("tamanho")
+        avulsos = {i.tamanho for f in fotos for i in f.impressoes if i.pasta is None}
+        for grupo in tamanhos.GRUPOS:
+            tamanho.addSection(_(NOMES_GRUPOS[grupo]))
+            for t in tamanhos.TAMANHOS:
+                if t.grupo == grupo:
+                    acao = self._item(tamanho, t.id, _(t.nome), lambda _c=False, i=t.id: self.aplicar_tamanho(fotos, i))
+                    acao.setCheckable(True)
+                    acao.setChecked(marcadas and avulsos == {t.id})
+                    acao.setData(t.id)
+
+        copias = menu.addMenu(_("Cópias"))
+        copias.menuAction().setObjectName("copias")
+        todas = {i.copias for f in fotos for i in f.impressoes}
+        for c in COPIAS_MENU:
+            texto = _("1 cópia") if c == 1 else _("{n} cópias").format(n=c)
+            acao = self._item(copias, f"copias_{c}", texto, lambda _c=False, c=c: self.aplicar_copias(fotos, c))
+            acao.setCheckable(True)
+            acao.setChecked(marcadas and todas == {c})
+            acao.setData(c)
+        copias.addSeparator()
+        self._item(copias, "copias_mais", _("Uma cópia a mais"), lambda: self.somar_copias(fotos, +1))
+        self._item(copias, "copias_menos", _("Uma cópia a menos"), lambda: self.somar_copias(fotos, -1))
+
+        menu.addSeparator()
+        if any(not f.caminho.exists() for f in fotos):
+            self._item(menu, "procurar", _("Procurar…"), lambda: self.procurar_pedido.emit())
+        texto = _("Remover do trabalho") if n == 1 else _("Remover {n} fotos do trabalho").format(n=n)
+        self._item(menu, "remover", texto, lambda: self.remover_fotos(fotos))
+        return menu
+
+    @staticmethod
+    def _item(menu: QMenu, nome: str, texto: str, slot) -> QAction:
+        acao = menu.addAction(texto)
+        acao.setObjectName(nome)
+        acao.triggered.connect(slot)
+        return acao
+
+    def marcar_fotos(self, fotos: list[Foto], sim: bool = True) -> None:
+        """Marca (ou desmarca) as fotos para revelação, num passo só do desfazer."""
+        with self.estado.lote(_("marcação") if sim else _("desmarcação")):
+            for foto in fotos:
+                self.estado.selecionar(foto, sim)
+
+    def aplicar_tamanho(self, fotos: list[Foto], tamanho_id: str) -> None:
+        """Põe as fotos no tamanho ``tamanho_id``, num passo só do desfazer.
+
+        Regra: a foto não marcada é marcada; as impressões **avulsas** (``pasta is None``) trocam de tamanho (o recorte
+        automático é refeito e o manual, reencaixado, como no painel); a foto sem avulsa (só com impressões de pastas)
+        ganha uma avulsa nesse tamanho. Impressões de pastas de tamanho não mudam (o tamanho delas é o da pasta).
+        """
+        t = tamanhos.obter(tamanho_id)   # valida (KeyError em id desconhecido); "personalizado" não entra aqui
+        with self.estado.lote(_("tamanho {t}").format(t=_(t.nome))):
+            for foto in fotos:
+                if not foto.selecionada:
+                    self.estado.selecionar(foto)
+                avulsas = [i for i in foto.impressoes if i.pasta is None]
+                if not avulsas:
+                    foto.impressoes.append(Impressao(tamanho=tamanho_id))
+                    self.estado.refazer_recortes_auto(foto)
+                for imp in avulsas:
+                    if imp.tamanho != tamanho_id:
+                        imp.tamanho, imp.papel_mm, imp.preco_centavos = tamanho_id, None, None
+                        refazer_enquadramento(self.estado, foto, imp)
+                self.estado.alterar(foto, pedido=True)
+
+    def aplicar_copias(self, fotos: list[Foto], copias: int) -> None:
+        """Todas as impressões das fotos com ``copias`` cópias (1 a 999); marca as não marcadas. Um passo só."""
+        copias = max(LIMITE_COPIAS[0], min(LIMITE_COPIAS[1], int(copias)))
+        self._mudar_copias(fotos, lambda _atual: copias)
+
+    def somar_copias(self, fotos: list[Foto], delta: int) -> None:
+        """Soma ``delta`` às cópias de todas as impressões das fotos (limitado a 1 e 999). Um passo só."""
+        self._mudar_copias(fotos, lambda atual: max(LIMITE_COPIAS[0], min(LIMITE_COPIAS[1], atual + delta)))
+
+    def _mudar_copias(self, fotos: list[Foto], nova) -> None:
+        with self.estado.lote(_("cópias")):
+            for foto in fotos:
+                if not foto.selecionada:
+                    self.estado.selecionar(foto)
+                for imp in foto.impressoes:
+                    imp.copias = nova(imp.copias)
+                self.estado.alterar(foto, pedido=True)
 
     def _vizinha(self, removidas: list[Foto]) -> Foto | None:
         ids = {f.id for f in removidas}
