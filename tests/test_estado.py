@@ -60,6 +60,8 @@ f = novas[0]
 e.selecionar(f)                                    # sem metadados ainda: impressão criada, recorte padrão
 assert f.selecionada and len(f.impressoes) == 1 and f.impressoes[0].tamanho == "10x15"
 assert f.impressoes[0].recorte == Recorte()
+e.definir_atual(f)
+assert e.impressao_atual is f.impressoes[0] and e.indice_impressao == 0
 
 e.definir_info(f.id, InfoFoto(4000, 3000, None, None, None, 123, 5_000_000_000))
 assert f.bytes == 123 and f.mtime == 5.0

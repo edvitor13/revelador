@@ -7,6 +7,7 @@ metadados, rostos, prévia, exportação) devolvem resultados por sinal e quem r
 Sinais:
 - ``fotos_mudaram()``: a lista de fotos mudou (importação, remoção, trabalho aberto).
 - ``atual_mudou(foto | None)``: outra foto passou a ser a atual (a do editor e do painel).
+- ``impressao_mudou(indice)``: outra impressão da foto atual passou a ser a do editor (o painel escolhe).
 - ``foto_mudou(id)``: algo de uma foto mudou (seleção, impressões, recorte, ajustes, rostos, metadados).
 - ``pedido_mudou()``: algo que muda o orçamento ou a exportação (seleção, tamanhos, cópias, preços).
 - ``modificado_mudou(bool)``: o trabalho passou a ter (ou deixou de ter) alterações não salvas.
@@ -34,6 +35,7 @@ class Estado(QObject):
 
     fotos_mudaram = Signal()
     atual_mudou = Signal(object)
+    impressao_mudou = Signal(int)
     foto_mudou = Signal(str)
     pedido_mudou = Signal()
     modificado_mudou = Signal(bool)
@@ -42,6 +44,7 @@ class Estado(QObject):
         super().__init__(parent)
         self.trabalho = Trabalho()
         self.atual: Foto | None = None
+        self.indice_impressao = 0             # impressão da foto atual mostrada no editor
         self.info: dict[str, InfoFoto] = {}   # metadados lidos em segundo plano (largura/altura orientadas etc.)
         self._modificado = False
 
@@ -49,6 +52,13 @@ class Estado(QObject):
     @property
     def modificado(self) -> bool:
         return self._modificado
+
+    @property
+    def impressao_atual(self) -> Impressao | None:
+        """A impressão da foto atual que o editor mostra (None sem foto ou sem impressões)."""
+        if self.atual is None or not self.atual.impressoes:
+            return None
+        return self.atual.impressoes[min(self.indice_impressao, len(self.atual.impressoes) - 1)]
 
     def por_id(self, foto_id: str) -> Foto | None:
         return next((f for f in self.trabalho.fotos if f.id == foto_id), None)
@@ -98,7 +108,14 @@ class Estado(QObject):
         if foto is self.atual:
             return
         self.atual = foto
+        self.indice_impressao = 0
         self.atual_mudou.emit(foto)
+
+    def definir_impressao(self, indice: int) -> None:
+        """Escolhe qual impressão da foto atual o editor mostra."""
+        if indice != self.indice_impressao:
+            self.indice_impressao = indice
+            self.impressao_mudou.emit(indice)
 
     # ------------------------------------------------------------ resultados dos workers
     def definir_info(self, foto_id: str, info: InfoFoto) -> None:
