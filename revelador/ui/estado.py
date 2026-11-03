@@ -240,10 +240,63 @@ class Estado(QObject):
         info = self.info.get(foto.id)
         if info is None:
             return
+        manual = next((i for i in foto.impressoes if i.recorte.origem == "manual"), None)
         for imp in foto.impressoes:
             if imp.recorte.origem != "manual":
-                imp.recorte = recorte_sugerido(imp, info.largura, info.altura, foto.rostos,
-                                               self.trabalho.margem_corte_mm)
+                if manual is not None:   # o recorte é da foto: a impressão nova herda o que a pessoa escolheu
+                    imp.recorte = self._encaixar(imp, copy.copy(manual.recorte), info)
+                else:
+                    imp.recorte = recorte_sugerido(imp, info.largura, info.altura, foto.rostos,
+                                                   self.trabalho.margem_corte_mm)
+
+    def compartilhar_recorte(self, foto: Foto, base: Impressao) -> None:
+        """O recorte vale para todas as impressões da foto: copia o de ``base`` para as outras, cada uma reencaixada
+        na proporção do próprio papel (mesmo centro, zoom, giro e ângulo). Sem sinais: quem chama faz ``alterar``."""
+        info = self.info.get(foto.id)
+        for imp in foto.impressoes:
+            if imp is not base:
+                novo = copy.copy(base.recorte)
+                imp.recorte = self._encaixar(imp, novo, info) if info is not None else novo
+
+    @staticmethod
+    def _encaixar(imp: Impressao, recorte, info: InfoFoto):
+        w, h = (info.altura, info.largura) if int(recorte.giro) % 2 else (info.largura, info.altura)
+        orient = tamanhos.orientacao_efetiva(imp.orientacao, w, h)
+        return enquadramento.reencaixar(recorte, w, h, tamanhos.proporcao(imp.tamanho, orient, imp.papel_mm))
+
+    def duplicar(self, foto: Foto) -> Foto:
+        """Cópia da foto no trabalho (mesmo arquivo, id novo), logo depois dela: serve para ter outro recorte."""
+        nova = copy.deepcopy(foto)
+        nova.id = novo_id()
+        self.trabalho.fotos.insert(self.trabalho.fotos.index(foto) + 1, nova)
+        for tabela in (self.info, self.miniaturas, self.erros):
+            if foto.id in tabela:
+                tabela[nova.id] = tabela[foto.id]
+        self.absorver(nova)
+        self.fotos_mudaram.emit()
+        self.pedido_mudou.emit()
+        self.marcar_modificado()
+        return nova
+
+    def unificar(self, principal: Foto, outras: list[Foto]) -> None:
+        """Junta fotos repetidas em ``principal``: as impressões das outras passam para ela (mesmo papel e pasta somam
+        as cópias) e as outras saem do trabalho (o arquivo original não é tocado). Um passo só do desfazer."""
+        outras = [f for f in outras if f is not principal]
+        if not outras:
+            return
+        with self.lote(_("unificar fotos repetidas")):
+            for foto in outras:
+                for imp in foto.impressoes:
+                    igual = next((i for i in principal.impressoes if (i.tamanho, i.orientacao, i.papel_mm, i.pasta)
+                                  == (imp.tamanho, imp.orientacao, imp.papel_mm, imp.pasta)), None)
+                    if igual is not None:
+                        igual.copias = min(COPIAS_MAX, igual.copias + imp.copias)
+                    else:
+                        principal.impressoes.append(copy.deepcopy(imp))
+                principal.selecionada = principal.selecionada or foto.selecionada
+            self.refazer_recortes_auto(principal)
+            self.alterar(principal, pedido=True)
+            self.remover(outras)
 
     def alterar(self, foto: Foto, *, pedido: bool = False, juntar: str | None = None) -> None:
         """Avisa que a foto mudou (quem mexeu no modelo chama isto). ``pedido=True`` se afeta orçamento/exportação.
@@ -560,9 +613,7 @@ class Estado(QObject):
         info = self.info.get(foto.id)
         if info is None:
             return
-        w, h = (info.altura, info.largura) if int(imp.recorte.giro) % 2 else (info.largura, info.altura)
-        orient = tamanhos.orientacao_efetiva(imp.orientacao, w, h)
-        imp.recorte = enquadramento.reencaixar(imp.recorte, w, h, tamanhos.proporcao(imp.tamanho, orient, imp.papel_mm))
+        imp.recorte = self._encaixar(imp, imp.recorte, info)
 
     # ------------------------------------------------------------ desfazer/refazer (#5)
     def _iniciar_desfazer(self) -> None:

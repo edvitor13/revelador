@@ -184,7 +184,7 @@ print("ok")
 """)
 
 
-def test_chip_da_grade_soma_e_shift_tira_uma_copia():
+def test_chip_da_grade_tem_mais_e_menos():
     rodar("""
 estado = Estado()
 estado.trabalho = Trabalho()
@@ -197,16 +197,19 @@ idx = g.modelo.index(0)
 area = area_chips(g.lista.visualRect(idx))
 chips = layout_chips(area, f)
 assert len(chips) == 1 and chips[0][1] == 0
-pos = chips[0][0].center()
-QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=pos)
+r = chips[0][0]
+mais, menos = QPoint(r.right() - 4, r.center().y()), QPoint(r.left() + 4, r.center().y())
+QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=r.center())   # o texto só escolhe
+app.processEvents()
+assert f.impressoes[0].copias == 1 and estado.atual is f
+QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=mais)
 app.processEvents()
 assert f.impressoes[0].copias == 2
-assert estado.atual is f
-QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, pos=pos)
+QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=menos)
 app.processEvents()
 assert f.impressoes[0].copias == 1
 # uma cópia a menos não passa de 1
-QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ShiftModifier, pos=pos)
+QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=menos)
 app.processEvents()
 assert f.impressoes[0].copias == 1
 print("ok")
@@ -227,8 +230,72 @@ app.processEvents()
 idx = g.modelo.index(0)
 chips = layout_chips(area_chips(g.lista.visualRect(idx)), f, True)
 assert len(chips) == 1 and chips[0][2] == "×2", chips
-QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=chips[0][0].center())
+r = chips[0][0]
+QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(r.right() - 4, r.center().y()))
 app.processEvents()
 assert f.impressoes[0].copias == 3
 print("ok")
 """)
+
+
+def test_recorte_comum_duplicar_unificar_e_filtro_por_tamanho():
+    rodar("""
+from dataclasses import replace
+estado = Estado()
+estado.trabalho = Trabalho()
+f = nova_foto(estado, "a", 4000, 3000)
+f.impressoes[0].recorte = replace(f.impressoes[0].recorte, cx=0.3, zoom=2.0, origem="manual")
+f.impressoes.append(Impressao(tamanho="15x21"))
+estado.refazer_recortes_auto(f)          # a impressão nova herda o recorte escolhido
+r = f.impressoes[1].recorte
+assert r.origem == "manual" and r.zoom == 2.0 and abs(r.cx - 0.3) < 0.05, r
+f.impressoes[0].recorte = replace(f.impressoes[0].recorte, cx=0.6)
+estado.compartilhar_recorte(f, f.impressoes[0])
+assert abs(f.impressoes[1].recorte.cx - 0.6) < 0.05
+# duplicar: mesmo arquivo, id novo, logo depois
+d = estado.duplicar(f)
+assert d.id != f.id and d.caminho == f.caminho and estado.trabalho.fotos.index(d) == 1
+d.impressoes[1].recorte = replace(d.impressoes[1].recorte, cx=0.4)
+assert abs(f.impressoes[1].recorte.cx - 0.6) < 0.05      # cópia independente
+# unificar: tamanhos iguais somam cópias, a outra sai do trabalho
+g = nova_foto(estado, "b", 4000, 3000, tamanho="10x15")
+g.impressoes.append(Impressao(tamanho="20x30", copias=2))
+estado.absorver(f); estado.absorver(g)
+estado.unificar(f, [g])
+assert estado.por_id("b") is None
+assert [(i.tamanho, i.copias) for i in f.impressoes] == [("10x15", 2), ("15x21", 1), ("20x30", 2)]
+estado.desfazer()
+assert estado.por_id("b") is not None and [i.copias for i in f.impressoes] == [1, 1]
+# filtro por tamanho na grade
+gr = Grade(estado); gr.resize(400, 300); gr.show()
+esperar(lambda: gr.total() == 3)
+gr.definir_tamanho("20x30")
+assert [x.id for x in gr.fotos_visiveis()] == ["b"]
+assert gr.combo_tamanho.currentData() == "20x30"
+gr.definir_tamanho(None)
+assert gr.total() == 3
+print("ok")
+""")
+
+
+def test_repetidas_e_ima_do_trilho():
+    from PIL import Image, ImageDraw
+
+    from revelador import repetidas
+    from revelador.ui.componentes import imantar
+
+    def foto(cor, deslocar=0):
+        im = Image.new("RGB", (300, 200), cor)
+        ImageDraw.Draw(im).ellipse((60 + deslocar, 40, 180 + deslocar, 160), fill=(250, 240, 220))
+        return im
+
+    a = repetidas.assinatura(foto((40, 60, 90)))
+    b = repetidas.assinatura(foto((40, 60, 90)).resize((150, 100)))    # a mesma em outra resolução
+    c = repetidas.assinatura(foto((200, 30, 30), deslocar=100))          # outra foto
+    assert repetidas.distancia(a, b) <= repetidas.LIMITE_PADRAO < repetidas.distancia(a, c)
+    assert repetidas.agrupar([("a", a), ("b", b), ("c", c)]) == [["a", "b"]]
+    # ímã: perto do zero gruda no zero; perto de múltiplo de 5 gruda nele; longe, fica
+    assert imantar(1.5, 0.0, 200, 1.2) == 0.0
+    assert imantar(24.2, 0.0, 200, 1.2) == 25.0
+    assert imantar(22.5, 0.0, 200, 1.2) == 22.5
+    assert imantar(0.4, 0.0, 10, 0.06) == 0.4 and imantar(0.48, 0.0, 10, 0.06) == 0.5

@@ -14,7 +14,7 @@ import os
 
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QSize, Qt, QTimer
+from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
                                QPushButton, QScrollArea, QSplitter, QToolButton, QVBoxLayout, QWidget)
@@ -293,6 +293,7 @@ class MainWindow(QMainWindow):
 
         self.acao_importar.triggered.connect(self.escolher_arquivos)
         self.acao_importar_pasta.triggered.connect(self.escolher_pasta)
+        self.grade.repetidas_pedido.connect(self.procurar_repetidas)
         self.filtro_mostrar.mudou.connect(lambda chave: self.grade.definir_filtro(chave == "selecionadas"))
 
     def _atualizar_orientacao_grade(self) -> None:
@@ -324,6 +325,24 @@ class MainWindow(QMainWindow):
             passo = self.criar_passo_importar_pasta(Path(pasta))
             passo.exec()
             passo.deleteLater()
+
+    def procurar_repetidas(self) -> None:
+        """"Repetidas…": procura fotos parecidas em segundo plano e abre a janela para decidir grupo a grupo."""
+        from .repetidas import RepetidasDialog, procurar
+
+        self.statusBar().showMessage(_("Procurando fotos repetidas…"))
+
+        def pronto(grupos) -> None:
+            self._busca_repetidas = None
+            if not grupos:
+                self.statusBar().showMessage(_("Nenhuma foto repetida."), 5000)
+                return
+            self.statusBar().showMessage(_("{n} grupos de fotos parecidas.").format(n=len(grupos)), 5000)
+            dialogo = RepetidasDialog(self.estado, grupos, self)
+            dialogo.exec()
+            dialogo.deleteLater()
+
+        self._busca_repetidas = procurar(self.estado, pronto)
 
     def criar_passo_importar_pasta(self, pasta: Path):
         """Passo "Importar pasta" (``pastas.PassoImportarPasta``) já ligado: aceitar importa a pasta e, com "Criar pasta
@@ -389,7 +408,10 @@ class MainWindow(QMainWindow):
         trabalhos, resto = separar_argumentos(caminhos)
         evento.acceptProposedAction()
         if not trabalhos:
-            self.importar(resto)
+            if len(resto) == 1 and Path(resto[0]).is_dir():   # uma pasta: o passo de criar a pasta do Revelador
+                QTimer.singleShot(0, lambda: self._passo_pasta_solta(Path(resto[0])))
+            else:
+                self.importar(resto)
             return
 
         def abrir_e_importar() -> None:
@@ -397,6 +419,11 @@ class MainWindow(QMainWindow):
                 self.importar(resto)
 
         QTimer.singleShot(0, abrir_e_importar)
+
+    def _passo_pasta_solta(self, pasta: Path) -> None:
+        passo = self.criar_passo_importar_pasta(pasta)
+        passo.exec()
+        passo.deleteLater()
 
     # ------------------------------------------------------------ seleção, tamanhos e custo (#5, #13)
     def _ligar_selecao(self) -> None:
@@ -406,7 +433,7 @@ class MainWindow(QMainWindow):
         espaçador no fim; quem acrescentar seções (``Card``) insere antes dele (``insertWidget(count() - 1, ...)``).
         """
         self.orientacao_painel.hide()
-        rolagem = QScrollArea()
+        rolagem = _RolagemPainel(self._ajustar_largura_painel)
         rolagem.setWidgetResizable(True)
         rolagem.setFrameShape(QScrollArea.Shape.NoFrame)
         rolagem.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -419,6 +446,7 @@ class MainWindow(QMainWindow):
         self.coluna_painel.addWidget(self.painel_impressoes)
         self.coluna_painel.addStretch(1)
         rolagem.setWidget(conteudo)
+        conteudo.installEventFilter(rolagem)
         self.rolagem_painel = rolagem
         self.area_painel.layout().addWidget(rolagem)
 
@@ -619,6 +647,17 @@ class MainWindow(QMainWindow):
         self._atualizar_minimo_divisor()
         self._corrigir_largura_grade()
 
+    def _ajustar_largura_painel(self) -> None:
+        """O painel lateral nunca fica mais estreito que o conteúdo dele (senão a direita dos cartões some)."""
+        conteudo = self.rolagem_painel.widget()
+        if conteudo is None:
+            return
+        precisa = conteudo.minimumSizeHint().width() + self.rolagem_painel.verticalScrollBar().sizeHint().width() + 2
+        minimo = max(LARGURA_MINIMA[1], precisa)
+        if minimo != self.area_painel.minimumWidth():
+            self.area_painel.setMinimumWidth(minimo)
+            self._atualizar_minimo_divisor()
+
     def _atualizar_minimo_divisor(self) -> None:
         """A soma dos mínimos das três áreas vira o mínimo do divisor, e a janela cresce para caber."""
         areas = (self.area_grade, self.area_editor, self.area_painel)
@@ -664,3 +703,16 @@ class MainWindow(QMainWindow):
 
     def mostrar_sobre(self) -> None:
         QMessageBox.about(self, _("Sobre o {app}").format(app=APP_NAME), self.texto_sobre())
+
+
+class _RolagemPainel(QScrollArea):
+    """Rolagem do painel lateral: avisa quando o conteúdo muda de layout (a janela ajusta a largura mínima)."""
+
+    def __init__(self, ao_mudar) -> None:
+        super().__init__()
+        self._ao_mudar = ao_mudar
+
+    def eventFilter(self, obj, evento) -> bool:  # noqa: N802 - nome do Qt
+        if obj is self.widget() and evento.type() == QEvent.Type.LayoutRequest:
+            QTimer.singleShot(0, self._ao_mudar)
+        return super().eventFilter(obj, evento)

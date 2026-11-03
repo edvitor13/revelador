@@ -30,7 +30,7 @@ from PySide6.QtCore import QByteArray, QMimeData, QPoint, QRect, QRectF, QSize, 
 from PySide6.QtGui import QAction, QColor, QFont, QFontMetrics, QPainter, QPen, QTransform
 from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu,
-                               QMessageBox, QScrollArea, QSizePolicy, QToolButton, QVBoxLayout, QWidget)
+                               QMessageBox, QScrollArea, QSizePolicy, QSpinBox, QToolButton, QVBoxLayout, QWidget)
 
 from .. import precos, tamanhos
 from ..i18n import _
@@ -234,6 +234,11 @@ class PastaDialog(QDialog):
         self.form.addRow(_("Tamanho"), self.combo_tamanho)
         self.form.addRow(_("Papel (mm)"), papel)
         self.form.addRow(_("Preço por cópia (R$)"), self.preco)
+        self.spin_copias = QSpinBox()
+        self.spin_copias.setRange(1, 999)
+        self.spin_copias.setValue(1)
+        self.spin_copias.setToolTip(_("Cópias de cada foto que entrar na pasta"))
+        self.form.addRow(_("Cópias"), self.spin_copias)
         self.form.addRow(_("Cor"), self.seletor_cor)
         self.raiz.addLayout(self.form)
         self.erro = QLabel()
@@ -285,8 +290,11 @@ class PastaDialog(QDialog):
             papel = (self.largura.value(), self.altura.value())
             tamanhos.papel_mm(tamanho, papel)   # valida os limites
             preco = precos.ler(self.preco.text())
-        return {"nome": nome, "tamanho": tamanho, "cor": self.seletor_cor.cor(), "papel_mm": papel,
-                "preco_centavos": preco}
+        valores = {"nome": nome, "tamanho": tamanho, "cor": self.seletor_cor.cor(), "papel_mm": papel,
+                   "preco_centavos": preco}
+        if self.spin_copias.value() != 1:
+            valores["copias"] = self.spin_copias.value()
+        return valores
 
     def _validar(self) -> bool:
         return True

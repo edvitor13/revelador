@@ -245,6 +245,21 @@ class Card(QFrame):
 
 
 # ------------------------------------------------------------------ slider
+IMA_PX = 6   # distância (px) em que o trilho "gruda" no zero e nos valores redondos ao arrastar
+
+
+def imantar(v: float, origem: float, faixa: float, tolerancia: float) -> float:
+    """Ímã do trilho: perto da ``origem`` (o zero) gruda nela; perto de um valor redondo (múltiplo de 5, ou de 0,5 /
+    0,05 em faixas pequenas) gruda nele. ``tolerancia`` em unidades do valor (vem dos px do mouse)."""
+    if abs(v - origem) <= tolerancia * 1.5:
+        return origem
+    ima = 5.0 if faixa >= 40 else 0.5 if faixa >= 4 else 0.05
+    redondo = round(v / ima) * ima
+    if abs(v - redondo) <= min(tolerancia, ima * 0.3):
+        return redondo
+    return v
+
+
 class Trilho(QWidget):
     """Só o trilho do slider: arrasta (Shift = ajuste fino), setas do teclado, duplo clique pede o padrão."""
 
@@ -286,7 +301,9 @@ class Trilho(QWidget):
 
     def _de_x(self, x: float) -> float:
         faixa = self.maximo - self.minimo
-        return self._ajustar(self.minimo + (x - self.MARGEM) / max(1.0, self.width() - 2 * self.MARGEM) * faixa)
+        largura = max(1.0, self.width() - 2 * self.MARGEM)
+        v = self.minimo + (x - self.MARGEM) / largura * faixa
+        return self._ajustar(imantar(v, self.origem, faixa, IMA_PX * faixa / largura))
 
     def _ajustar(self, v: float) -> float:
         if self.passo > 0:

@@ -156,6 +156,11 @@ def desenhar(nome: str, p: QPainter, c: QColor) -> None:
         _pen(p, c)
         _poli(p, [(7, 2.5), (7, 17), (21.5, 17)])
         _poli(p, [(2.5, 7), (17, 7), (17, 21.5)])
+    elif nome == "centro":     # moldura com uma mira no meio: enquadramento centralizado
+        _pen(p, c)
+        p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 2, 2)
+        _poli(p, [(12, 9), (12, 15)])
+        _poli(p, [(9, 12), (15, 12)])
     elif nome == "grade":
         _pen(p, c)
         for x in (4, 13.5):
@@ -226,7 +231,7 @@ def desenhar(nome: str, p: QPainter, c: QColor) -> None:
 
 NOMES = (
     "importar", "pasta", "exportar", "salvar", "abrir", "configuracoes", "check", "mais", "fechar", "lixeira",
-    "girar_esquerda", "girar_direita", "endireitar", "zoom_mais", "zoom_menos", "rosto", "recorte", "grade",
+    "girar_esquerda", "girar_direita", "endireitar", "zoom_mais", "zoom_menos", "rosto", "recorte", "centro", "grade",
     "filtro", "dinheiro", "info", "aviso", "chevron", "reset", "foto", "copiar", "colar", "comparar", "opcoes",
 )
 

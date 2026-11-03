@@ -22,7 +22,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QDrag, QFont, QFontMetrics, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QListView, QMenu, QStyle, QStyledItemDelegate,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QListView, QMenu, QPushButton, QStyle,
+                               QStyledItemDelegate,
                                QStyleOptionViewItem, QVBoxLayout, QWidget)
 
 from .. import tamanhos
@@ -50,6 +51,7 @@ RAIO_CARTAO = 12
 RAIO_MINIATURA = 8
 TAMANHO_MARCA = 24
 ALTURA_CHIP = 18
+LARGURA_MAIS = 15       # zona do "−" (à esquerda) e do "+" (à direita) dentro de cada chip
 LIMITE_PIXMAPS = 400
 PAPEL_FOTO = Qt.ItemDataRole.UserRole
 CHAVE_PREF = "grade/miniatura"
@@ -155,14 +157,14 @@ def layout_chips(area: QRect, foto: Foto, compacto: bool = False,
     medidas = QFontMetrics(_fonte_chip())
     if compacto:
         texto = f"×{sum(i.copias for i in foto.impressoes)}"
-        largura = min(medidas.horizontalAdvance(texto) + 16, area.width())
+        largura = min(medidas.horizontalAdvance(texto) + 16 + 2 * LARGURA_MAIS, area.width())
         cor = next((c for c in (_cor_da_impressao(i, por_id) for i in foto.impressoes) if c), None)
         return [Chip(QRect(area.left(), area.top(), largura, ALTURA_CHIP), 0, texto, False, cor)]
     textos = [rotulo_impressao(i.tamanho, i.copias) for i in foto.impressoes]
     saida: list[Chip] = []
     x = area.left()
     for n, texto in enumerate(textos):
-        largura = medidas.horizontalAdvance(texto) + 16
+        largura = medidas.horizontalAdvance(texto) + 16 + 2 * LARGURA_MAIS
         resto = len(textos) - n - 1
         reserva = medidas.horizontalAdvance(f"+{resto}") + 16 + 4 if resto else 0
         if x + largura + reserva > area.right() + 1 and n > 0:
@@ -171,7 +173,8 @@ def layout_chips(area: QRect, foto: Foto, compacto: bool = False,
                               True))
             return saida
         retangulo = QRect(x, area.top(), min(largura, area.right() - x + 1), ALTURA_CHIP)
-        saida.append(Chip(retangulo, n, medidas.elidedText(texto, Qt.TextElideMode.ElideRight, area.right() - x - 14),
+        saida.append(Chip(retangulo, n, medidas.elidedText(texto, Qt.TextElideMode.ElideRight,
+                                                           area.right() - x - 14 - 2 * LARGURA_MAIS),
                           False, _cor_da_impressao(foto.impressoes[n], por_id)))
         x += largura + 4
     return saida
@@ -179,9 +182,24 @@ def layout_chips(area: QRect, foto: Foto, compacto: bool = False,
 
 def chip_em(celula: QRect, foto: Foto, ponto: QPoint) -> int | None:
     """Índice da impressão cujo chip está sob ``ponto`` (None se nenhum, ou se for o "+N")."""
+    achado = chip_e_zona(celula, foto, ponto)
+    return None if achado is None else achado[0]
+
+
+def zona_chip(retangulo: QRect, ponto: QPoint) -> int:
+    """-1 no "−" (ponta esquerda do chip), +1 no "+" (ponta direita), 0 no meio (o texto)."""
+    if ponto.x() < retangulo.left() + LARGURA_MAIS:
+        return -1
+    if ponto.x() > retangulo.right() - LARGURA_MAIS:
+        return +1
+    return 0
+
+
+def chip_e_zona(celula: QRect, foto: Foto, ponto: QPoint) -> tuple[int, int] | None:
+    """(índice da impressão, zona) do chip sob ``ponto`` (zona: -1 "−", 0 texto, +1 "+"), ou None."""
     for retangulo, indice, _texto, _apagado in layout_chips(area_chips(celula), foto, compacta(celula)):
         if indice is not None and retangulo.contains(ponto):
-            return indice
+            return indice, zona_chip(retangulo, ponto)
     return None
 
 
@@ -194,17 +212,21 @@ class ModeloGrade(QAbstractListModel):
         self.estado = estado
         self.so_selecionadas = False
         self.pasta: str | None = None   # id da pasta de tamanho filtrada (None = sem filtro de pasta)
+        self.tamanho: str | None = None  # id do tamanho filtrado (None = todos os tamanhos)
         self._fotos: list[Foto] = []
         self._linha: dict[str, int] = {}
         self._pixmaps: OrderedDict[str, QPixmap] = OrderedDict()
         self.recarregar()
 
     def filtrando(self) -> bool:
-        return self.so_selecionadas or self.pasta is not None
+        return self.so_selecionadas or self.pasta is not None or self.tamanho is not None
 
     def passa(self, foto: Foto) -> bool:
         """A foto passa nos filtros (selecionadas e pasta)?"""
         if self.so_selecionadas and not foto.selecionada:
+            return False
+        if self.tamanho is not None and not (foto.selecionada and any(i.tamanho == self.tamanho
+                                                                      for i in foto.impressoes)):
             return False
         return self.pasta is None or any(i.pasta == self.pasta for i in foto.impressoes)
 
@@ -390,11 +412,12 @@ class DelegadoGrade(QStyledItemDelegate):
             return
         p.setFont(_fonte_chip())
         for chip in layout_chips(area, foto, compacto, self.modelo.estado.trabalho.pastas):
-            retangulo, _indice, texto, apagado = chip
-            self._pilula(p, retangulo, texto, apagado=apagado, cor=chip.cor)
+            retangulo, indice, texto, apagado = chip
+            self._pilula(p, retangulo, texto, apagado=apagado, cor=chip.cor, botoes=indice is not None)
 
     @staticmethod
-    def _pilula(p: QPainter, r: QRect, texto: str, apagado: bool = False, cor: str | None = None) -> None:
+    def _pilula(p: QPainter, r: QRect, texto: str, apagado: bool = False, cor: str | None = None,
+                botoes: bool = False) -> None:
         """Pílula do chip: laranja (impressão avulsa), a cor da pasta (impressão de pasta) ou cinza ("+N")."""
         fundo = QColor(tema.PAINEL3) if apagado else QColor(cor or tema.DESTAQUE)
         if not apagado:
@@ -406,7 +429,16 @@ class DelegadoGrade(QStyledItemDelegate):
             p.setPen(QColor(tema.APAGADO))
         else:
             p.setPen(QColor(cor).lighter(135) if cor else QColor(tema.DESTAQUE_HI))
-        p.drawText(r, Qt.AlignmentFlag.AlignCenter, texto)
+        if not botoes:
+            p.drawText(r, Qt.AlignmentFlag.AlignCenter, texto)
+            return
+        p.drawText(r.adjusted(LARGURA_MAIS, 0, -LARGURA_MAIS, 0), Qt.AlignmentFlag.AlignCenter, texto)
+        cor_mais = QColor(tema.TEXTO)
+        cor_mais.setAlpha(170)
+        p.setPen(cor_mais)
+        p.drawText(QRect(r.left() + 2, r.top(), LARGURA_MAIS, r.height()), Qt.AlignmentFlag.AlignCenter, "−")
+        p.drawText(QRect(r.right() - LARGURA_MAIS - 1, r.top(), LARGURA_MAIS, r.height()),
+                   Qt.AlignmentFlag.AlignCenter, "+")
 
 
 class _Lista(QListView):
@@ -432,9 +464,9 @@ class _Lista(QListView):
                 self.setCurrentIndex(indice)
                 return
             foto = self.grade.modelo.foto(indice.row())
-            n = chip_em(self.visualRect(indice), foto, ponto) if foto is not None else None
-            if n is not None:
-                self.grade.clicar_chip(indice, n, bool(evento.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            achado = chip_e_zona(self.visualRect(indice), foto, ponto) if foto is not None else None
+            if achado is not None:
+                self.grade.clicar_chip(indice, achado[0], achado[1])
                 return
         super().mousePressEvent(evento)
 
@@ -473,6 +505,7 @@ class Grade(QWidget):
     """A grade de miniaturas ligada ao ``Estado``. Rodapé com o tamanho das miniaturas (lembrado nas preferências)."""
 
     tamanho_mudou = Signal(int)
+    repetidas_pedido = Signal()  # botão "Repetidas…" no topo da grade; a janela liga
     procurar_pedido = Signal()   # "Procurar…" no menu de contexto (fotos que faltam no disco); a janela liga
 
     def __init__(self, estado: Estado, parent=None) -> None:
@@ -509,18 +542,36 @@ class Grade(QWidget):
         linha = QHBoxLayout(self.rodape)
         linha.setContentsMargins(12, 6, 12, 6)
         linha.addWidget(self.controle)
+        self.combo_tamanho = QComboBox()
+        self.combo_tamanho.setObjectName("filtro_tamanho")
+        self.combo_tamanho.setToolTip(_("Mostrar só as fotos marcadas neste tamanho"))
+        self.combo_tamanho.currentIndexChanged.connect(self._ao_escolher_tamanho)
+        self.botao_repetidas = QPushButton(_("Repetidas…"))
+        self.botao_repetidas.setToolTip(_("Procurar fotos muito parecidas (arquivos diferentes) no trabalho"))
+        self.botao_repetidas.clicked.connect(self.repetidas_pedido)
+        self.topo = QWidget()
+        topo = QHBoxLayout(self.topo)
+        topo.setContentsMargins(12, 6, 12, 6)
+        topo.setSpacing(8)
+        topo.addWidget(self.combo_tamanho, 1)
+        topo.addWidget(self.botao_repetidas)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        layout.addWidget(self.topo)
         layout.addWidget(self.lista, 1)
         layout.addWidget(self.rodape)
 
         self._sincronizando = False
+        self._preenchendo = False
         self.lista.selectionModel().currentChanged.connect(self._ao_mudar_indice)
         estado.fotos_mudaram.connect(self._ao_mudar_fotos)
         estado.foto_mudou.connect(self.modelo.foto_mudou)
         estado.atual_mudou.connect(self._ao_mudar_atual)
         estado.pastas_mudaram.connect(self._ao_mudar_pastas)
+        estado.pedido_mudou.connect(self._atualizar_tamanhos)
+        estado.fotos_mudaram.connect(self._atualizar_tamanhos)
+        self._atualizar_tamanhos()
         self._ligar_na_tela()
 
     # ------------------------------------------------------------ consulta
@@ -563,6 +614,40 @@ class Grade(QWidget):
     def definir_filtro(self, so_selecionadas: bool) -> None:
         self.modelo.so_selecionadas = so_selecionadas
         self._ao_mudar_fotos()
+
+    def definir_tamanho(self, tamanho_id: str | None) -> None:
+        """Mostra só as fotos marcadas com uma impressão em ``tamanho_id`` (None: todos os tamanhos)."""
+        if tamanho_id == self.modelo.tamanho:
+            return
+        self.modelo.tamanho = tamanho_id
+        self._ao_mudar_fotos()
+        self._atualizar_tamanhos()
+
+    def _ao_escolher_tamanho(self, _i: int) -> None:
+        if not self._preenchendo:
+            self.definir_tamanho(self.combo_tamanho.currentData())
+
+    def _atualizar_tamanhos(self) -> None:
+        """Opções do filtro: "Todos os tamanhos" e os tamanhos em uso no trabalho, com o número de fotos de cada."""
+        contagem: dict[str, int] = {}
+        for foto in self.estado.trabalho.fotos:
+            if foto.selecionada:
+                for t in {i.tamanho for i in foto.impressoes}:
+                    contagem[t] = contagem.get(t, 0) + 1
+        ordem = [t.id for t in tamanhos.TAMANHOS] + [tamanhos.PERSONALIZADO]
+        filtro = self.modelo.tamanho
+        if filtro is not None and filtro not in contagem:
+            contagem[filtro] = 0
+        self._preenchendo = True
+        try:
+            self.combo_tamanho.clear()
+            self.combo_tamanho.addItem(_("Todos os tamanhos"), None)
+            for t in sorted(contagem, key=lambda t: ordem.index(t) if t in ordem else len(ordem)):
+                nome = _("Personalizado") if t == tamanhos.PERSONALIZADO else nome_tamanho(t)
+                self.combo_tamanho.addItem(_("{tamanho} ({n})").format(tamanho=nome, n=contagem[t]), t)
+            self.combo_tamanho.setCurrentIndex(max(0, self.combo_tamanho.findData(filtro)) if filtro else 0)
+        finally:
+            self._preenchendo = False
 
     @property
     def pasta_filtrada(self) -> str | None:
@@ -617,16 +702,19 @@ class Grade(QWidget):
         if foto is not None:
             self.estado.selecionar(foto, not foto.selecionada)
 
-    def clicar_chip(self, indice: QModelIndex, n: int, tirar: bool = False) -> None:
-        """Clique no chip "10x15 ×2": soma uma cópia à impressão n (Shift+clique tira uma), limitado a 1 e 999."""
+    def clicar_chip(self, indice: QModelIndex, n: int, zona: int = 0) -> None:
+        """Clique no chip "− 10x15 ×2 +": o "+" soma uma cópia à impressão n, o "−" tira uma (de 1 a 999) e o texto
+        só escolhe a foto e a impressão (a que o editor mostra)."""
         foto = self.modelo.foto(indice.row())
         if foto is None or not 0 <= n < len(foto.impressoes):
             return
-        imp = foto.impressoes[n]
-        imp.copias = max(1, min(999, imp.copias + (-1 if tirar else 1)))
         self.lista.setCurrentIndex(indice)   # a foto clicada vira a atual (e a impressão, a do editor)
         self.estado.definir_impressao(n)
-        self.estado.alterar(foto, pedido=True)
+        imp = foto.impressoes[n]
+        copias = max(1, min(999, imp.copias + zona))
+        if copias != imp.copias:
+            imp.copias = copias
+            self.estado.alterar(foto, pedido=True)
 
     def alternar_atual(self) -> None:
         escolhidas = self.fotos_escolhidas() or ([self.estado.atual] if self.estado.atual else [])
@@ -698,6 +786,8 @@ class Grade(QWidget):
         self._menu_pastas(menu, fotos)
 
         menu.addSeparator()
+        texto = _("Duplicar foto (outro recorte)") if n == 1 else _("Duplicar {n} fotos").format(n=n)
+        self._item(menu, "duplicar", texto, lambda: self.duplicar(fotos))
         if any(not f.caminho.exists() for f in fotos):
             self._item(menu, "procurar", _("Procurar…"), lambda: self.procurar_pedido.emit())
         texto = _("Remover do trabalho") if n == 1 else _("Remover {n} fotos do trabalho").format(n=n)
@@ -762,6 +852,13 @@ class Grade(QWidget):
         acao.setObjectName(nome)
         acao.triggered.connect(slot)
         return acao
+
+    def duplicar(self, fotos: list[Foto]) -> list[Foto]:
+        """Uma cópia de cada foto no trabalho (mesmo arquivo), para usar outro recorte; a primeira vira a atual."""
+        novas = [self.estado.duplicar(f) for f in fotos]
+        if novas:
+            self.estado.definir_atual(novas[0])
+        return novas
 
     def marcar_fotos(self, fotos: list[Foto], sim: bool = True) -> None:
         """Marca (ou desmarca) as fotos para revelação, num passo só do desfazer."""
