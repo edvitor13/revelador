@@ -480,8 +480,8 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
 │ Revelador [Importar ▾] [Projeto ▾]  Mostrar [Todas|Selecionadas]  Tamanho [10x15 ▾]  (R$ 34,40) [Exportar]  ⚙ │
 ├─ faixas não modais (avisos, recuperação, "Procurar…") ───────────────────────────────────────┤
 ├────────────────┬───────────────────────────────────────────────┬──────────────────────────┤
-│ Grade de        │  Editor: a foto com a moldura do papel          │ Painel em cartões        │
-│ miniaturas      │  · fora do papel escurecido                     │ ▸ Impressões             │
+│ ▾ PASTAS  + Nova│  Editor: a foto com a moldura do papel          │ Painel em cartões        │
+│ ● Família 10x15 │  · fora do papel escurecido                     │ ▸ Impressões             │
 │ ☑ marca         │  · margem de corte tracejada                    │   10x15 ×2  (retrato) ✎  │
 │ 10x15 ×2        │  · aviso de resolução                           │   + Adicionar tamanho    │
 │ ⚠ resolução     │  rodapé: ícones · Automático · Moldura|Resultado │ ▸ Luz  ▸ Cor  ▸ Detalhe │
@@ -518,7 +518,26 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
     ação é **um passo só** do desfazer (`estado.lote`), como Espaço em várias fotos. Tamanho: marca a foto se preciso
     e troca a **primeira impressão avulsa** (recorte automático refeito, manual reencaixado), sem mexer nas outras
     avulsas nem nas de pastas; se alguma avulsa já está nesse tamanho, nada muda; foto só com impressões de pastas
-    ganha uma avulsa. Cópias: todas as impressões da foto, limitadas a 1..999.
+    ganha uma avulsa. Cópias: todas as impressões da foto, limitadas a 1..999. **Adicionar à pasta ▸** (as pastas
+    + "Nova pasta…"; a pasta em que todas as escolhidas já estão aparece desligada, com um anel na bolinha) e **Tirar
+    da pasta ▸** (quando alguma escolhida está numa pasta) vêm logo depois de "Cópias ▸".
+  - **Pastas de tamanho** (#32, `ui/pastas.py`, `SecaoPastas`, ligada em `_ligar_pastas()`): seção no topo da grade,
+    acima da lista, que aparece e some com ela. Cabeçalho "PASTAS" com "+ Nova pasta", recolhível (lembrado em
+    `grade/pastas_recolhidas`; recolhida, mostra o nome da pasta filtrada); "Todas" e uma linha por pasta com a
+    bolinha da cor, o nome, o tamanho, o número de fotos e o botão "⋯". Sem pastas, só o cabeçalho; a partir de 5
+    pastas a lista rola (`MAX_LINHAS`). Com a grade estreita o nome é cortado com "…" e o tamanho some antes da
+    contagem; a seção não aumenta a largura mínima da grade. **Nova pasta** (`PastaDialog`, testável sem `exec()`):
+    nome, tamanho (o padrão já escolhido, inclusive personalizado) e cor (`SeletorCor`, a paleta `CORES_PASTA`, já na
+    próxima cor livre). **Menu da pasta** (clique direito ou "⋯"): renomear, cor, tamanho (inclusive personalizado),
+    cópias padrão, mover para cima/baixo e apagar (com confirmação substituível em teste). **Clicar numa pasta filtra
+    a grade** (`Grade.definir_pasta`) em conjunto com "Mostrar": a grade mostra as fotos que passam nos dois (pasta
+    "Natal" + Selecionadas = as fotos marcadas da "Natal"); clicar de novo na pasta, ou em "Todas", tira o filtro de
+    pasta sem mexer na barra superior; se a pasta filtrada some (apagada ou desfeita), volta a "Todas".
+    **Arrastar fotos da grade para uma pasta** (várias de uma vez) usa o mime próprio `application/x-revelador-fotos`
+    (`MIME_FOTOS`, só os ids, sem URLs: soltar no Explorer nunca copia nem move o original). Na miniatura, o **chip do
+    tamanho ganha a cor da pasta** (`layout_chips(..., pastas=)` devolve `Chip`, uma tupla de 4 com `.cor`; no modo
+    compacto, a cor da primeira impressão de pasta). Nomes de objeto novos no tema: `SecaoPastas` e `SecaoTitulo`;
+    ícone `opcoes` e `icones.bolinha(cor, anel=)`.
   - A grade publica no `Estado` a ordem visível (`definir_visiveis`, com o filtro aplicado: navegação ←/→ do
     editor) e, com espera de 150 ms ao rolar ou redimensionar, as fotos que aparecem no viewport (`definir_na_tela`:
     prioridade dos rostos, seção 5.2).
@@ -542,6 +561,9 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
   com cópias, orientação, modo preencher/caber, "+ Adicionar tamanho", remover, tamanho personalizado), **Luz**,
   **Cor** e **Detalhe** (`ui/painel_ajustes.py`, gerados de `ajustes.PARAMS`/`GRUPOS`; duplo clique no controle volta
   ao padrão, o botão do cartão restaura o grupo) e botões de comparar, copiar, colar e restaurar todos.
+  - **Impressão de pasta** (#32): mostra o nome e a cor da pasta; o combo de tamanho fica desligado, com a dica de
+    mudar pelo menu da pasta (vale para todas as fotos dela); remover essa impressão tira a foto da pasta
+    (`tirar_da_pasta`), mesmo sendo a última — e aí a foto fica desmarcada.
   - **Orientação explícita** (#33): no lugar de um combo com "Automática", um `Segmented` **Retrato | Paisagem**. Com
     `orientacao = "auto"`, vem marcada a opção resolvida pela forma da foto (`tamanhos.orientacao_efetiva` sobre a
     imagem já girada), com o indicador discreto "auto" (dica: "escolhida pela forma da foto"); clicar numa opção fixa
@@ -562,6 +584,13 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
   Ctrl+Shift+C / Ctrl+Shift+V copiar/colar ajustes.
 - **Arrastar e soltar** fotos e pastas na janela importa (recursivo, só formatos suportados); um `.revelador` solto
   abre o trabalho (seção 9).
+- **Importar pasta** (#32, `MainWindow.escolher_pasta`): depois de escolher a pasta do disco, um passo curto
+  (`PassoImportarPasta`, testável sem `exec()`): "Criar pasta de tamanho" já marcado, nome = o da pasta do disco
+  (editável), tamanho = o padrão, cor = a próxima da paleta. Marcado, todas as fotos daquela pasta do disco entram
+  marcadas para revelação na pasta de tamanho (inclusive as que já estavam no trabalho), num passo só do desfazer
+  ("Desfazer importação da pasta “X”"; a importação em si fica fora do desfazer); sem nenhuma foto, nenhuma pasta é
+  criada. Desmarcado, só importa; cancelar não importa nada. Vale para "Importar pasta…" da barra e da tela de
+  boas-vindas; uma pasta arrastada do Explorer continua só importando.
 - **Desfazer/refazer** (#5; modelo na seção 2): `acao_desfazer`/`acao_refazer` ligadas em `_ligar_desfazer()`,
   habilitadas por `canUndo`/`canRedo`, com o texto "Desfazer {o quê}" deduzido da mudança ("Desfazer tamanho 15x21",
   "Desfazer cópias em 3 fotos"). Gestos contínuos viram um passo só: `alterar(foto, *, pedido=False, juntar=None)` —
@@ -598,7 +627,7 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
 - **Preferências** (`ui/prefs.settings()`): `QSettings` no registro (`HKCU\Software\Revelador\Revelador`) ou, com
   `REVELADOR_SETTINGS_DIR`, num `.ini`. Guarda geometria e divisórias da janela, últimas pastas, tamanho padrão, dpi,
   modo de cópias, a organização da exportação (`exportar/organizar`), preços, o tamanho das miniaturas
-  (`grade/miniatura`), `projeto/recentes`, o salvamento automático (`autosalvar/ligado`, `autosalvar/intervalo_min`,
+  (`grade/miniatura`), a seção de pastas recolhida (`grade/pastas_recolhidas`), `projeto/recentes`, o salvamento automático (`autosalvar/ligado`, `autosalvar/intervalo_min`,
   `autosalvar/pasta`, `autosalvar/automaticos`; seção 9), a tela de boas-vindas (`boas_vindas/mostrar_ao_abrir`,
   `boas_vindas/versao_vista`) e as chaves `atualizacao/*` (seção 11).
 - **Erros**: `crashlog.py` instala `sys.excepthook` e `threading.excepthook`, grava em

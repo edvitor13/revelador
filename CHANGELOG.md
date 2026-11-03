@@ -67,9 +67,10 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 - Editor: alças nos cantos da moldura para aproximar com o canto oposto parado e ← / → (Home / End) para ir à foto
   anterior / seguinte sem sair do editor (#6).
 - Soltar um `.revelador` na janela abre o trabalho (#9).
-- Pastas de tamanho no trabalho: uma foto colocada na pasta "10x15" já fica marcada para revelar em 10x15, com nome e
-  cor escolhidos; gravadas no `.revelador` e exportação organizada por pasta, com a seção "Pastas" no `pedido.txt`
-  (#32).
+- Pastas de tamanho: seção Pastas no topo da grade, com nome, cor, tamanho e cópias padrão; uma foto arrastada para
+  a pasta "10x15" (ou pelo menu "Adicionar à pasta ▸") já fica marcada para revelar em 10x15, com o chip na cor da
+  pasta; clicar na pasta filtra a grade; "Importar pasta…" já cria a pasta com o nome da pasta do disco e as fotos
+  marcadas; gravadas no `.revelador` e exportação organizada por pasta, com a seção "Pastas" no `pedido.txt` (#32).
 - Salvamento automático a cada minuto: o trabalho com arquivo grava no próprio `.revelador` e o trabalho novo ganha
   nome e lugar em `Imagens\Revelador\Trabalhos`; indicador "Salvo às…" na barra de status, aviso se a gravação
   falhar e fechar sem a pergunta de salvar; tudo ajustável em engrenagem → Configurações (#34).

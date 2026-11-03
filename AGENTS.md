@@ -47,12 +47,11 @@ exportação, salvar/abrir, atualização) e o **visual novo** estão no `main`.
   atualizações (#35) e rostos aos poucos, com prioridade para a foto aberta e centro na média dos rostos (#36).
 - **#3 (tamanhos)**: tabela, funções de px/qualidade e personalizado prontos e na interface (seletor, painel).
 - **#4 (rostos)**: YuNet, política do recorte e detecção em segundo plano depois da importação.
-- **#5 (seleção)**, **#6 (editor)** e **#9 (salvar/abrir)**: completas — desfazer/refazer (`QUndoStack`) de tudo o
+- **#5 (seleção)**, **#6 (editor)**, **#9 (salvar/abrir)** e **#32 (pastas de tamanho)**: completas — desfazer/refazer (`QUndoStack`) de tudo o
   que a pessoa muda, menu de contexto da grade para aplicar tamanho e cópias a várias fotos e "Procurar…", alças nos
-  cantos da moldura, ←/→ entre as fotos no editor e soltar um `.revelador` na janela.
-- **#32 (pastas de tamanho)**: modelo, `.revelador`, API no `Estado`, paleta e exportação por pasta prontos; a
-  interface (seção Pastas junto da grade, arrastar para a pasta, chip com a cor, passo de "Importar pasta") vem no
-  PR da parte 2.
+  cantos da moldura, ←/→ entre as fotos no editor, soltar um `.revelador` na janela e as pastas de tamanho (seção
+  Pastas na grade com filtro, arrastar fotos para a pasta, chip na cor da pasta, passo de "Importar pasta",
+  `.revelador` e exportação organizada por pasta).
 - **#11 (release) e #12 (depois da 0.1.0)**: não começadas.
 
 Outras pendências pequenas: miniatura da grade sem os ajustes, os títulos dos grupos no submenu "Tamanho ▸" da
@@ -119,6 +118,7 @@ revelador/
     grade.py                  grade de miniaturas, seleção, tamanho e cópias                         [existe]
     tarefas.py                importação em segundo plano: metadados, miniaturas e a fila de rostos  [existe]
     painel_impressoes.py      cartão Impressões e seletor de tamanho padrão                          [existe]
+    pastas.py                 seção Pastas da grade, diálogo da pasta e passo de importar pasta      [existe]
     editor.py                 visor com a moldura do papel: mover, zoom, girar, endireitar, resultado [existe]
     previa.py                 trabalhadores do editor: proxy e prévia pela receita                   [existe]
     painel_ajustes.py         cartões Luz, Cor e Detalhe, gerados de ajustes.PARAMS                  [existe]
