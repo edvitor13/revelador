@@ -20,7 +20,7 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 - Avisos do CI no Discord (`packaging/discord_notify.py`, segredo `DISCORD_WEBHOOK`): release publicada, falha
   no `main` e mensagem de teste pela execução manual.
 - Previsão de custos da revelação planejada (`docs/ARQUITETURA.md`, seção 13; issue #13).
-- Janela principal com áreas de grade, editor e painel lateral, tema que segue o claro/escuro do sistema,
+- Janela principal com áreas de grade, editor e painel lateral, tema escuro,
   preferências e registro de erros em `%LOCALAPPDATA%\Revelador\logs` com aviso "Abrir registro" (#1).
 - Abertura de fotos JPEG, PNG, HEIC/HEIF, WebP e TIFF com orientação EXIF, conversão de cor para sRGB e miniaturas
   em cache (núcleo; a grade vem depois) (#2).
@@ -35,3 +35,22 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 - Previsão de custo por tamanho: valor por cópia em centavos, total estimado e aviso de total parcial quando falta
   preço (#13).
 - Ferramenta `tools/previa_recortes.py` para conferir o enquadramento automático em fotos reais.
+- Interface nova: tema escuro com cinzas neutros e o laranja do logo, barra superior (Importar, Projeto, Mostrar,
+  tamanho padrão, custo do pedido, Exportar e engrenagem), painel lateral em cartões e ícones próprios.
+- Importação e grade de fotos: arquivos, pastas ou arrastar e soltar, miniaturas em cache, fotos que não abrem
+  marcadas com o motivo, rostos detectados em segundo plano (#2, #4).
+- Seleção para revelação: marca na grade, filtro Todas | Selecionadas, tamanho e cópias de cada foto (a mesma foto em
+  vários tamanhos, tamanho personalizado), tamanho padrão lembrado e total estimado do pedido na barra superior,
+  com tabela de preços do laboratório e resumo por tamanho (#5, #13).
+- Editor de enquadramento: moldura do papel, mover, zoom, girar 90°, endireitar, margem de corte, rostos, volta ao
+  recorte automático e a visão "Resultado" igual ao que vai para o papel (#6).
+- Painel de ajustes de luz, cor e detalhe com antes/depois (segure `\`), copiar e colar ajustes e restaurar; a
+  prévia responde em cerca de 70 ms (#7).
+- Exportar para revelação: uma pasta por tamanho, três modos de cópias, JPEG sRGB a 300 dpi com os pixels exatos,
+  `pedido.txt` com o resumo e os valores, cancelamento sem deixar arquivos pela metade (#8).
+- Salvar e abrir o trabalho: Projeto → Novo, Abrir, Recentes, Salvar e Salvar como, aviso ao fechar com mudanças,
+  recuperação depois de uma falha, "Procurar…" para fotos que mudaram de lugar, abrir um `.revelador` pelo
+  Explorer (associação opcional no instalador) (#9).
+- Atualização automática: aviso com as novidades, "Instalar e reiniciar" ou "Pular esta versão"; a consulta é feita ao
+  abrir, no máximo uma vez por dia, e pode ser desligada (#10).
+- Ferramentas de desenvolvimento: `tools/captura_tela.py` (capturas da interface) e `tools/medir_ajustes.py`.
