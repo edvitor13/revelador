@@ -6,8 +6,8 @@
 
 ---
 
-> **Em construção (0.1.0).** O repositório já tem a documentação, o build e o instalador do Windows; as funções
-> estão chegando pelas [issues do marco 0.1.0](https://github.com/edvitor13/revelador/milestone/1).
+> **Em construção (0.1.0).** Importar, selecionar, enquadrar, ajustar, exportar, salvar e atualizar já funcionam no
+> código; ainda não há release publicada (falta o roteiro da #11). O acompanhamento está nas [issues do marco 0.1.0](https://github.com/edvitor13/revelador/milestone/1).
 
 ## Por que
 
@@ -16,7 +16,7 @@ assim para o laboratório, a máquina corta o que sobra pelo meio — e às veze
 ponta. O Revelador mostra **exatamente o que vai sair no papel**, sugere um corte que **preserva os rostos** e
 deixa você ajustar antes de enviar.
 
-## O que ele vai fazer
+## O que ele faz
 
 - **Importar** fotos e pastas (JPEG, PNG, HEIC do iPhone, WebP, TIFF), com a orientação e a cor certas.
 - **Selecionar** as fotos que vão para revelação, com **tamanho** e **quantidade de cópias** para cada uma

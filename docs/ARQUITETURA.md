@@ -220,22 +220,38 @@ grande; criança pequena + adulto grande; panorâmica 3:1; foto quadrada; sem ro
 
 ## 6. Receita única
 
-`receita.renderizar(foto, impressao, destino_px, fonte, trabalho) → np.ndarray` (float32 0..1, H×W×3, sRGB):
+`receita.renderizar(fonte, impressao, ajustes, destino_px) → np.ndarray` (float32 0..1, H×W×3, sRGB). `fonte` é a
+imagem já orientada e em sRGB (seção 3); `ajustes` é o dicionário da foto (ou `None`); `destino_px` é `(largura,
+altura)`. A escala mm/px (para a nitidez) é calculada **dentro**, a partir do papel da impressão e do destino
+(`escala_mm_px`). O módulo é puro (sem Qt) e tem as peças que o editor e a exportação compartilham:
 
-1. **Fonte**: `fonte="proxy"` (prévia) ou `"original"` (exportação), já orientada e em sRGB (seção 3).
-2. **Giro de 90°**: `np.rot90` (sem perda).
-3. **Recorte + endireitar + redimensionar** em uma passagem de qualidade: sem rotação, fatia o retângulo e
-   redimensiona com `cv2.resize` (`INTER_AREA` para reduzir, `INTER_LANCZOS4` para ampliar); com rotação, reduz
-   antes a ~2× o destino e aplica `cv2.warpAffine` (`INTER_LANCZOS4`, borda replicada) com a matriz
-   rotação+escala+translação do `retangulo()`.
-4. **Ajustes** (`ajustes.aplicar`) no tamanho de destino.
-5. **Modo *caber***: compõe a foto inteira (sem recorte) centralizada sobre papel branco com os px exatos.
-6. Saída: para a tela, `uint8` → `QImage`; para a exportação, `uint8` por arredondamento simples (determinístico).
+- `carregar_fonte(caminho, "original" | "proxy")`: a fonte orientada/sRGB (`"proxy"` para a prévia, `"original"`
+  para a exportação); `para_uint8(img)`: arredondamento simples, determinístico.
+- `tamanho_exportacao(impressao, largura, altura, dpi=300)`: os px exatos do papel na orientação da impressão;
+  `destino_na_caixa(impressao, largura, altura, caixa_w, caixa_h)`: a maior imagem com a proporção do papel dentro
+  do visor. `largura`/`altura` são sempre as da imagem orientada **sem giro** (`InfoFoto` ou `fonte.shape`).
+- Geometria (usada também pelo editor, para desenhar exatamente o que a receita vai amostrar):
+  `retangulo_da_impressao`, `matriz_destino_fonte(ret, dw, dh)`, `poligono(ret)`, `encolher(ret, margem)` (margem
+  de corte), `ponto_da_fonte`, `dimensoes_giradas`, `orientacao`, `proporcao`, `papel_orientado_mm`, `girar`.
 
-- `destino_px` da exportação = px exatos do papel (seção 4). Da prévia = tamanho do visor × `devicePixelRatio`,
-  mantendo a proporção.
-- A prévia roda num trabalhador com contador de geração (resultado velho é descartado) e *debounce* de ~60 ms;
-  arrastar o recorte mostra a imagem já calculada transformada pelo Qt e recalcula ao soltar.
+Passos:
+
+1. **Giro de 90°** (`recorte.giro`, sentido horário): `np.rot90` (sem perda).
+2. **Recorte + endireitar + redimensionar numa transformação afim só**: `enquadramento.retangulo` dá o retângulo
+   (centro, tamanho, ângulo) na imagem girada e **uma única** `cv2.warpAffine` (`INTER_LANCZOS4`, borda replicada)
+   amostra do destino para a fonte com `matriz_destino_fonte`. Quando a redução é grande, a região que interessa
+   é reduzida antes com `INTER_AREA` (sem serrilhado), até ~1 px de fonte por px de destino.
+3. **Ajustes** (`ajustes.aplicar`) já no tamanho de destino, com a escala em px por mm de papel.
+4. **Modo *caber***: a foto inteira (só o giro; **ângulo e zoom são ignorados**) centralizada sobre papel branco nos
+   px exatos do destino; os ajustes valem só para a foto, não para a borda.
+5. Saída: para a tela, `para_uint8` → `QImage`; para a exportação, `para_uint8` → JPEG.
+
+- **Convenção do ângulo**: `angulo > 0` gira a **foto** no sentido horário no resultado (o retângulo do recorte
+  gira no sentido anti-horário sobre a imagem).
+- `destino_px` da exportação = `tamanho_exportacao` (px exatos do papel, seção 4). Da prévia = `destino_na_caixa`
+  do visor × `devicePixelRatio`.
+- A prévia roda num trabalhador (`ui/previa.py`) com contador de geração (resultado velho é descartado) e
+  *debounce* de ~60 ms; arrastar o recorte mostra a imagem já calculada transformada pelo Qt e recalcula ao soltar.
 
 ## 7. Ajustes
 
@@ -277,11 +293,14 @@ vibração, nitidez) **não é** a ordem de aplicação; esta é fixa em `aplica
      `Fv = 1 + t·p·(1 − 0,75·pele)` se positivo, `1 + t·(0,3 + 0,7·(1−p))·(1 − 0,75·pele)` se negativo.
   7. Nitidez em `L` (OKLab): `L' = L + 1,5·t·d·d²/(d²+0,01²)`, `d = L − gaussiana(L)`, sigma = 0,1 mm ×
      `escala_mm_px` (sem ela, 1/1000 do lado menor).
-- **Desempenho medido**: ~440–580 ms numa prévia de 1600 × 1067 com tudo ligado, contra o alvo de ~100 ms.
-  Otimização pendente (fica para a interface, #7): tabela de consulta para sRGB↔linear e prévia reduzida durante o
-  arraste do controle. O mesmo código roda na exportação.
-- **Copiar/colar ajustes** entre fotos (Ctrl+C / Ctrl+V; colar em várias selecionadas) e **Redefinir** (por
-  ajuste com duplo clique no controle, por grupo e tudo). **Antes/depois**: mesmo recorte sem ajustes.
+- **Desempenho**: ~65–76 ms numa prévia de 1600 × 1067 com tudo ligado (antes ~440–580 ms), com tabelas de
+  consulta para sRGB↔linear, `cv2.remap` nas curvas e raízes LMS no lugar de `pow`. `tests/ajustes_referencia.py`
+  guarda a versão lenta de referência (os testes comparam contra ela) e `tools/medir_ajustes.py [--referencia]` mede o
+  tempo por ajuste e com tudo ligado. O mesmo código roda na exportação. Durante o arraste de um controle o editor
+  usa uma **prévia reduzida** (lado maior de 640 px, `LADO_RAPIDO`) e refaz no tamanho final ao parar.
+- **Copiar/colar ajustes** entre fotos (Ctrl+Shift+C / Ctrl+Shift+V; colar vale para a foto atual ou para todas as
+  escolhidas na grade) e **Redefinir** (por ajuste com duplo clique no controle, por grupo e tudo). **Antes/depois**:
+  mesmo recorte sem ajustes, enquanto `\` está pressionada ou pelo botão (`estado.comparando`).
 - Depois da 0.1.0 (#12): automático, clareza, redução de ruído, preto e branco, olhos vermelhos.
 
 ## 8. Exportação
@@ -297,8 +316,10 @@ vibração, nitidez) **não é** a ordem de aplicação; esta é fixa em `aplica
   - `nome`: `IMG_1234 (2 cópias).jpg`;
   - `repetir`: o arquivo gravado N vezes (`IMG_1234.jpg`, `IMG_1234 - 2.jpg`), para laboratórios que contam
     arquivos.
-- **Nome**: o nome original sem extensão + `.jpg`; a mesma foto duas vezes no mesmo tamanho ganha ` - 2`; nunca
-  sobrescreve.
+- **Nome**: o nome original sem extensão (caracteres proibidos do Windows viram `_`) + `.jpg`. Colisão dentro do
+  plano (mesma foto duas vezes no mesmo tamanho, fotos de pastas diferentes com o mesmo nome; sem diferenciar
+  maiúsculas) ganha ` - 2`, ` - 3`...; a pasta `Revelação AAAA-MM-DD` nunca é uma que já existe. `planejar()` não
+  toca no disco e guarda uma **cópia** do trabalho, então a exportação roda em outra thread com a interface viva.
 - **JPEG**: `uint8`, qualidade 95, subamostragem 4:4:4, **baseline** (algumas máquinas de laboratório recusam
   progressivo), `dpi=(dpi, dpi)`, perfil sRGB embutido, EXIF mínimo: só a data original (sem GPS, sem orientação,
   sem miniatura). Gravação em `*.tmp` na mesma pasta + `os.replace`.
@@ -306,8 +327,10 @@ vibração, nitidez) **não é** a ordem de aplicação; esta é fixa em `aplica
   cópia e o subtotal (quando houver preço; seção 13), o total estimado e a lista de arquivos com cópias. É o que a
   pessoa mostra ou envia ao laboratório.
 - **Execução**: fila num `QThreadPool` (até `min(4, núcleos − 1)` em paralelo), cada tarefa
-  `receita(original) → JPEG`; progresso por arquivo; cancelar termina o arquivo atual, apaga os `*.tmp` e informa
-  o que ficou pronto. No fim: "Abrir a pasta" (`system.reveal`).
+  `receita(original) → JPEG`; progresso por arquivo; erro de um item não derruba os outros (fica em
+  `Resultado.erros` e no `pedido.txt`); cancelar termina o arquivo atual, apaga os `*.tmp` e informa o que ficou
+  pronto. No fim: "Abrir a pasta" (`system.reveal`). `exportar.py` é puro (sem Qt); o diálogo é testável sem modal
+  (`definir_destino`, `iniciar`, `aguardar`, `cancelar`).
 - Testes: px e dpi exatos, perfil sRGB presente, sem orientação/GPS, nomes e pastas para cada modo de cópias,
   nada sobrescrito, original intacto (SHA-256 antes/depois), cancelamento sem `*.tmp` sobrando.
 
@@ -351,58 +374,100 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
 - Gravação segura por `projeto.gravar_texto_seguro()` (`.tmp` na mesma pasta + `os.replace`). **Recuperação**:
   autossalvamento a cada 2 min em `%LOCALAPPDATA%\Revelador\recuperacao\<nome>.revelador` (ou
   `sem-nome.revelador`), com caminhos absolutos; na abertura depois de uma falha, oferece recuperar.
-- O `.msi` associa `.revelador` ao app (a #9 acrescenta o recurso `AssociacaoRevelador` no `.wxs`).
+- O `.msi` associa `.revelador` ao app (recurso opcional `AssociacaoRevelador` no `.wxs`, ProgId `Revelador.Trabalho`,
+  só em `HKCU\Software\Classes`).
+- **Interface** (`ui/projeto_ui.py`, `ProjetoUi`, na janela como `projeto_ui`): liga `acao_novo`, `acao_abrir`,
+  `acao_salvar`, `acao_salvar_como` e `menu_recentes` (até 10 caminhos na preferência `projeto/recentes`). O título da
+  janela mostra o nome do trabalho e `*` quando há alterações. Trocar de trabalho ou fechar com alterações pergunta
+  Salvar / Descartar / Cancelar (`perguntar_salvar`). Avisos, a oferta de **recuperação** depois de uma falha e o
+  **religar fotos** ("Procurar…": escolhe uma pasta, procura pelo nome nas subpastas e reaproveita o achado para as
+  outras fotos que faltam; teto de 300 mil arquivos olhados) aparecem em **faixas não modais** (`PilhaFaixas`) logo
+  abaixo da barra superior; só as escolhas de arquivo/pasta e a pergunta de salvar abrem diálogo (os testes as
+  substituem). Foto que falta fica na grade com erro, sem derrubar o resto. **Linha de comando**:
+  `app.separar_argumentos` manda o primeiro `.revelador` para `projeto_ui.abrir` e o resto (fotos e pastas) para a
+  importação.
 
 ## 10. Interface
 
+O visual é próprio: **só tema escuro**, cinzas neutros (R = G = B, para não enganar a percepção de cor da foto) e o
+laranja das marcas de corte do logo como única cor de destaque (botão principal, seleção, controle ligado, foco). O
+app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra de ferramentas do Qt.
+
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│ [Importar] [Exportar para revelação]   Tamanho padrão [10x15 ▾]   Mostrar [Todas|Selecionadas] │
+┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Revelador [Importar ▾] [Projeto ▾]  Mostrar [Todas|Selecionadas]  Tamanho [10x15 ▾]  (R$ 34,40) [Exportar]  ⚙ │
+├─ faixas não modais (avisos, recuperação, "Procurar…") ───────────────────────────────────────┤
 ├────────────────┬───────────────────────────────────────────────┬──────────────────────────┤
-│ Grade de        │  Editor: a foto com a moldura do papel          │ Painel lateral           │
+│ Grade de        │  Editor: a foto com a moldura do papel          │ Painel em cartões        │
 │ miniaturas      │  · fora do papel escurecido                     │ ▸ Impressões             │
 │ ☑ marca         │  · margem de corte tracejada                    │   10x15 ×2  (retrato) ✎  │
-│ 10x15 ×2        │  · aviso de resolução                            │   + Adicionar tamanho    │
-│ ⚠ resolução     │  [↻ 90°] [Endireitar ──●──] [Automático]        │ ▸ Luz                    │
-│                 │  [Antes/depois]                                  │ ▸ Cor                    │
-│                 │                                                  │ ▸ Detalhe                │
+│ 10x15 ×2        │  · aviso de resolução                           │   + Adicionar tamanho    │
+│ ⚠ resolução     │  rodapé: ícones · Automático · Moldura|Resultado │ ▸ Luz  ▸ Cor  ▸ Detalhe │
+│                 │          endireitar ──●──                       │ [Comparar][Copiar][Colar]│
 ├────────────────┴───────────────────────────────────────────────┴──────────────────────────┤
-│ 37 fotos · 12 selecionadas · 10x15: 15 cópias · 20x30: 1 cópia · Total estimado: R$ 34,40     │
+│ 37 fotos · 12 selecionadas · 10x15: 15 cópias · 20x30: 1 cópia                                 │
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Grade** (`ui/grade.py`, `QListView` + modelo próprio, miniaturas sob demanda): marca de seleção, tamanho e
-  cópias de cada foto, aviso de resolução. Seleção múltipla para aplicar tamanho, cópias ou ajustes de uma vez.
-- **Editor** (`ui/editor.py`, `QGraphicsView` ou widget próprio): arrastar move o recorte, roda do mouse dá zoom,
-  alças nos cantos mudam o zoom mantendo a proporção; botões de giro, endireitar, "Automático" (volta ao recorte
-  dos rostos) e antes/depois. Mostra os rostos detectados (opção) para entender o recorte.
-- **Painel lateral** (`ui/painel_ajustes.py`): impressões da foto atual e grupos de ajustes gerados de
-  `ajustes.PARAMS`; duplo clique no controle volta ao padrão.
-- **Atalhos**: Espaço marca/desmarca · ←/→ foto anterior/próxima · Ctrl+Z/Ctrl+Y desfazer/refazer · R gira 90° ·
-  `\` antes/depois · Ctrl+C/Ctrl+V copiar/colar ajustes · + / − cópias · Ctrl+E exportar · Ctrl+S salvar ·
-  Ctrl+O abrir · A recorte automático.
+- **Barra superior** (`MainWindow`, `BarraAdaptavel`: some rótulos e botões opcionais quando a janela estreita):
+  logo e nome; **Importar ▾** (arquivos, pasta); **Projeto ▾** (Novo, Abrir, Abrir recente, Salvar, Salvar como);
+  **Mostrar** (Todas | Selecionadas, `filtro_mostrar`); **tamanho padrão** (`SeletorTamanhoPadrao`); a **pílula de
+  custo** (`Pilula`: total estimado do pedido); **Exportar para revelação** (botão `Primary`); e a **engrenagem**
+  (Preços do laboratório…, Resumo do pedido, Verificar atualizações…, Sobre).
+- **Grade** (`ui/grade.py`, `QListView` em modo ícone + modelo e delegate próprios, miniaturas sob demanda do
+  cache em disco): cartão por foto com marca de seleção (clique na marca ou Espaço), etiqueta de tamanho(s) e
+  cópias, aviso de resolução baixa e de erro; Delete tira do trabalho (nunca do disco). Seleção múltipla
+  (`fotos_escolhidas`) vale para Espaço, Delete e para colar ajustes.
+- **Editor** (`ui/editor.py`, widget próprio): seletor **Moldura | Resultado**. Moldura: a foto inteira com a
+  moldura do papel na proporção exata, fora do papel escurecido, margem de corte tracejada, opção de mostrar os
+  rostos; arrastar move o recorte, a roda dá zoom, tudo passa por `enquadramento.reencaixar`. Resultado: a prévia
+  pela receita. Rodapé (`Rodape`) com a informação do tamanho e da resolução, ícones de girar 90°, zoom −/+,
+  rostos, "Enquadrar pelos rostos" e o slider de endireitar. Impressão em modo *caber* mostra sempre o resultado.
+- **Painel lateral**: coluna rolável de **cartões** (`Card`): **Impressões** (`ui/painel_impressoes.py`: tamanhos
+  com cópias, orientação, modo preencher/caber, "+ Adicionar tamanho", remover, tamanho personalizado), **Luz**,
+  **Cor** e **Detalhe** (`ui/painel_ajustes.py`, gerados de `ajustes.PARAMS`/`GRUPOS`; duplo clique no controle volta
+  ao padrão, o botão do cartão restaura o grupo) e botões de comparar, copiar, colar e restaurar todos.
+- **Atalhos** (os que existem hoje): Ctrl+I importar fotos · Ctrl+Shift+I importar pasta · Ctrl+E exportar · Ctrl+N
+  novo · Ctrl+O abrir · Ctrl+S salvar · Ctrl+Shift+S salvar como · Ctrl+Q sair · Espaço marca/desmarca ·
+  Delete remove da grade · R / Shift+R gira 90° (horário / anti-horário) · A recorte automático (pelos rostos) ·
+  Ctrl++ / Ctrl+− zoom · **segurar `\`** mostra o antes/depois · Ctrl+Shift+C / Ctrl+Shift+V copiar/colar ajustes.
+  Desfazer/refazer e ←/→ entre fotos **no editor** ainda não existem (as setas navegam na grade).
 - **Arrastar e soltar** fotos e pastas na janela importa (recursivo, só formatos suportados).
 - **Preferências** (`ui/prefs.settings()`): `QSettings` no registro (`HKCU\Software\Revelador\Revelador`) ou, com
-  `REVELADOR_SETTINGS_DIR`, num `.ini`. Guarda geometria da janela, últimas pastas, tamanho padrão, dpi, modo de
-  cópias e a verificação de atualizações.
+  `REVELADOR_SETTINGS_DIR`, num `.ini`. Guarda geometria e divisórias da janela, últimas pastas, tamanho padrão, dpi,
+  modo de cópias, preços, `projeto/recentes` e as chaves `atualizacao/*` (seção 11).
 - **Erros**: `crashlog.py` instala `sys.excepthook` e `threading.excepthook`, grava em
   `%LOCALAPPDATA%\Revelador\logs\erro-<data>.txt` (até 20 arquivos de 256 KB cada) e mostra uma mensagem curta
   com "Abrir registro".
-- **`MainWindow`** (`ui/main_window.py`): tem `area_grade`, `area_editor` e `area_painel` (com `orientacao_*`, os
-  textos provisórios), `acao_importar`, `acao_exportar`, `espaco_tamanho` (onde entra o seletor de tamanho),
-  `arquivos_iniciais` (caminhos da linha de comando) e `estado`. Cada parte nova se liga num `_ligar_<parte>()`
-  chamado no fim do `__init__`. Tema **Fusion** com a paleta do sistema (segue o claro/escuro do Windows ao vivo);
-  o fundo do editor é cinza neutro `#6b6b6b`, para não enganar a percepção de cor da foto.
+- **Tema e componentes**: `ui/tema.py` tem **todas** as cores, medidas e a folha de estilo (nomes de objeto
+  `TopBar`, `Panel`, `Card`, `Primary`, `Flat`, `Danger`, `Seg`, `Muted`, `Faint`, `PanelTitle`, `Kicker`, `Canvas`,
+  `Rodape`, `Pilula`...); nenhum widget escreve hexadecimal nem `setStyleSheet` próprio (só troca o `objectName`).
+  `ui/icones.py` desenha os ícones com `QPainter` (sem arquivos); `ui/componentes.py` tem `Card`, `Slider`,
+  `Segmented`, `ToggleSwitch`, `Pilula` e `BarraAdaptavel`. `tools/captura_tela.py` gera PNGs da janela, dos
+  diálogos, dos menus e um catálogo dos componentes para a revisão visual (plataforma `windows`; `offscreen` não
+  tem fontes).
+- **`MainWindow`** (`ui/main_window.py`) e o **contrato das ações**: a janela cria `acao_importar`,
+  `acao_importar_pasta`, `acao_exportar`, `acao_novo`, `acao_abrir`, `acao_salvar`, `acao_salvar_como`,
+  `menu_recentes`, `acao_verificar_atualizacoes`, `acao_precos`, `acao_resumo`, `acao_sobre` e `acao_sair`, com
+  atalho valendo na janela inteira; a barra superior só as posiciona. As que ainda não têm dono ficam desligadas;
+  **cada parte conecta e liga as suas** num `_ligar_<parte>()` chamado no fim do `__init__`. Ninguém cria menu ou
+  botão de barra por conta própria. `arquivos_iniciais` guarda os caminhos da linha de comando.
 - **Estado compartilhado** (`ui/estado.py`, `janela.estado`): os widgets **não se conhecem**; leem e mudam o
   modelo por ele e reagem aos sinais. Só a thread principal o toca; workers devolvem por sinal.
   - Sinais: `fotos_mudaram()` (lista mudou), `atual_mudou(foto | None)`, `impressao_mudou(indice)` (impressão do
     editor), `foto_mudou(id)` (qualquer mudança numa foto), `pedido_mudou()` (muda orçamento ou exportação),
-    `modificado_mudou(bool)`.
-  - Atributos: `trabalho`, `atual`, `indice_impressao`, `info` (`InfoFoto` por id), `modificado`, `impressao_atual`.
+    `modificado_mudou(bool)`, `comparando_mudou(bool)`.
+  - Atributos: `trabalho`, `atual`, `indice_impressao`, `info` (`InfoFoto` por id), `miniaturas` (JPEG do cache por
+    id), `erros` (mensagem amigável das fotos que não abriram, por id), `comparando` (antes/depois; não vai para o
+    arquivo), `modificado`, `impressao_atual`.
   - Métodos: `por_id`, `definir_trabalho`, `adicionar`, `remover`, `definir_atual`, `definir_impressao`,
-    `definir_info`, `definir_rostos`, `selecionar` (a primeira seleção cria uma impressão no tamanho padrão),
-    `refazer_recortes_auto` (usa `recorte_sugerido` nas impressões não manuais), `alterar(foto, pedido=False)` e
-    `marcar_modificado`. Mexeu no modelo → `estado.alterar(foto, pedido=...)`.
+    `definir_info`, `definir_miniatura`, `definir_erro`, `definir_rostos`, `definir_comparando`, `selecionar` (a
+    primeira seleção cria uma impressão no tamanho padrão), `refazer_recortes_auto` (usa `recorte_sugerido` nas
+    impressões não manuais), `alterar(foto, pedido=False)` e `marcar_modificado`. Mexeu no modelo →
+    `estado.alterar(foto, pedido=...)`.
+- **Pendências conhecidas**: desfazer/refazer (`QUndoStack`), alças de canto no editor, ←/→ entre fotos no editor,
+  arrastar um `.revelador` para a janela, "Procurar…" no menu de contexto da grade, miniatura da grade com os
+  ajustes, aplicar o tamanho a várias fotos de uma vez e o aviso inofensivo do OpenCV no stderr.
 
 ## 11. Atualização automática
 
@@ -421,9 +486,14 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   `ProcessStartInfo` com `UseShellExecute = false`. O PowerShell sobe com `CREATE_NO_WINDOW` (nunca
   `DETACHED_PROCESS`, que faz o PowerShell sair sem rodar o script quando o pai não tem console). Registro em
   `atualizar.log` e `instalar.log` na pasta do download.
-- Interface: verificação ao abrir, no máximo uma vez por dia, silenciosa sem internet (preferência para
-  desligar); diálogo com as notas da versão, "Instalar e reiniciar", "Depois" e "Pular esta versão"; item
-  "Procurar atualizações" no menu Ajuda.
+- Interface (`ui/atualizacao.py`): `Verificador.verificar_ao_abrir()` roda **2 s depois** de a janela aparecer
+  (`ATRASO_ATUALIZACAO_MS`), em segundo plano, no máximo **uma vez por dia** (`atualizacao/ultima_verificacao`) e só
+  com `atualizacao/automatica` ligada (padrão); sem internet é silenciosa. `atualizacao/pulada` guarda a tag que a
+  pessoa mandou pular. O diálogo (não modal) mostra as notas da versão, "Instalar e reiniciar", "Depois" e "Pular
+  esta versão", avisa se há alterações não salvas antes de fechar o app e, sem instalação automática (código-fonte,
+  release sem o pacote), mostra só o link. "Verificar atualizações…" (engrenagem) sempre responde, inclusive com
+  "já está na versão mais recente". **`REVELADOR_SEM_REDE`** (qualquer valor) desliga a consulta ao abrir: testes e
+  capturas de tela a definem.
 
 ## 12. Empacotamento
 

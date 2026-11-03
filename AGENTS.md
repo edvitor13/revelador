@@ -37,10 +37,23 @@ proporção certa e não precisa cortar nada além da margem de corte (sangria).
 
 ## Estado atual
 
-Versão **0.1.0 em construção**. O repositório tem a documentação, o CI, o empacotamento do Windows, o `--diagnostico`
-e a **fase A**: a #1 está feita (janela principal, preferências, registro de erros) e o **núcleo** das #2, #3, #4, #7,
-#9, #10 e #13 está pronto e testado, **faltando só a interface** de cada uma. As #5, #6, #8, #11 e #12 não foram
-começadas. As funções chegam pelas issues do marco **0.1.0**, nesta ordem sugerida:
+Versão **0.1.0 em construção**. As fases A (núcleo), B (importação, grade, seleção, custo, editor) e C (ajustes,
+exportação, salvar/abrir, atualização) e o **visual novo** estão no `main`. O que cada issue já tem:
+
+- **#1, #2, #7, #8, #10, #13: feitas** (fechadas). Ajustes com painel e prévia rápida, exportação com diálogo,
+  atualização com diálogo e verificação ao abrir, preços e custo do pedido.
+- **#3 (tamanhos)**: tabela, funções de px/qualidade e personalizado prontos e na interface (seletor, painel).
+- **#4 (rostos)**: YuNet, política do recorte e detecção em segundo plano depois da importação.
+- **#5 (seleção)**: marca na grade, filtro Todas | Selecionadas, painel de impressões, tamanho padrão, status. Falta
+  desfazer/refazer (`QUndoStack`) e aplicar o tamanho a várias fotos de uma vez.
+- **#6 (editor)**: receita única, moldura, mover, zoom, girar, endireitar, margem de corte, prévia. Faltam alças de
+  canto, ←/→ entre fotos e o desfazer.
+- **#9 (salvar/abrir)**: formato, recentes, recuperação, religar fotos, linha de comando e associação no `.wxs`.
+  Falta arrastar um `.revelador` para a janela e "Procurar…" no menu de contexto da grade.
+- **#11 (release) e #12 (depois da 0.1.0)**: não começadas.
+
+Outras pendências pequenas: miniatura da grade sem os ajustes e um aviso inofensivo do OpenCV no stderr. As funções
+vieram pelas issues do marco **0.1.0**, nesta ordem sugerida:
 
 | Issue | Assunto | Módulos |
 |---|---|---|
@@ -53,7 +66,7 @@ começadas. As funções chegam pelas issues do marco **0.1.0**, nesta ordem sug
 | #7 | Ajustes no painel lateral | `ajustes.py`, `ui/painel_ajustes.py` |
 | #8 | Exportar para revelação | `exportar.py`, `ui/exportar_dialog.py` |
 | #13 | Previsão de custos: valor base por tamanho e total do pedido | `precos.py`, `ui/precos_dialog.py` |
-| #9 | Salvar e abrir o trabalho (`.revelador`) | `projeto.py` |
+| #9 | Salvar e abrir o trabalho (`.revelador`) | `projeto.py`, `ui/projeto_ui.py` |
 | #10 | Atualização automática | `updater.py`, `ui/atualizar_dialog.py` |
 | #11 | Roteiro da 0.1.0 (release) | — |
 
@@ -62,14 +75,14 @@ Ideias para depois da 0.1.0 ficam na issue #12. Antes de começar uma issue, lei
 
 ## Mapa do código
 
-Legenda: **[existe]** já está no repositório; **(#n)** chega com a issue *n*.
+Legenda: **[existe]** já está no repositório; **(#n)** chega com a issue *n* (hoje só a #11, o roteiro da release).
 
 ```
 Revelador.pyw                 entrada sem console (pythonw); python -m revelador também funciona   [existe]
 revelador/
   __init__.py                 __version__, __date__, APP_NAME                                        [existe]
   __main__.py                 python -m revelador                                                     [existe]
-  app.py                      main(): --diagnostico, QApplication, janela (provisória até #1)         [existe]
+  app.py                      main(): --diagnostico, QApplication, janela, .revelador na linha de comando [existe]
   diagnostico.py              confere as dependências nativas de verdade (usado pelo CI no .exe)      [existe]
   i18n.py                     _() e N_(): por enquanto devolvem o texto; tradução depois            [existe]
   system.py                   open_path()/reveal() no explorador, pastas do usuário                  [existe]
@@ -80,21 +93,29 @@ revelador/
   rostos.py                   detecção de rostos com YuNet (cv2.FaceDetectorYN), modelo no pacote    [existe]
   enquadramento.py            geometria do recorte e recorte automático (funções puras)              [existe]
   ajustes.py                  PARAMS (esquema) e aplicar(): ajustes de luz e cor em numpy            [existe]
-  receita.py                  receita única: foto + impressão + tamanho de destino → imagem (#6, #7, #8)
+  receita.py                  receita única: renderizar(fonte, impressao, ajustes, destino_px) e geometria [existe]
   projeto.py                  modelo (Trabalho, Foto, Impressao, Recorte, Rosto) e .revelador         [existe]
-  exportar.py                 pastas por tamanho, JPEG, cópias, resumo do pedido, fila (#8)
+  exportar.py                 pastas por tamanho, JPEG, cópias, pedido.txt, execução em paralelo     [existe]
   precos.py                   tabela de preços (centavos por tamanho) e orcamento() do pedido        [existe]
   updater.py                  atualização pelas releases do GitHub com SHA-256                       [existe]
   ui/
-    main_window.py            janela principal: áreas da grade, do editor e do painel lateral        [existe]
+    main_window.py            janela: barra superior, áreas, contrato das ações acao_*, _ligar_<parte>() [existe]
     prefs.py                  settings(): única porta para as preferências (QSettings)               [existe]
     estado.py                 estado compartilhado da interface: os widgets conversam só por ele     [existe]
-    grade.py                  grade de miniaturas, seleção, tamanho e cópias (#2, #5)
-    editor.py                 visor com a moldura do papel: mover, zoom, girar, endireitar (#6)
-    painel_ajustes.py         painel lateral de ajustes, gerado a partir de ajustes.PARAMS (#7)
-    exportar_dialog.py        diálogo de exportação e progresso (#8)
-    precos_dialog.py          tabela de preços por tamanho e resumo do custo do pedido (#13)
-    atualizar_dialog.py       aviso e instalação da atualização (#10)
+    tema.py                   cores, medidas e folha de estilo (tema escuro neutro, destaque laranja) [existe]
+    icones.py                 ícones vetoriais desenhados com QPainter                               [existe]
+    componentes.py            Card, Slider, Segmented, ToggleSwitch, Pilula, BarraAdaptavel          [existe]
+    grade.py                  grade de miniaturas, seleção, tamanho e cópias                         [existe]
+    tarefas.py                importação em segundo plano: metadados, miniaturas e rostos            [existe]
+    painel_impressoes.py      cartão Impressões e seletor de tamanho padrão                          [existe]
+    editor.py                 visor com a moldura do papel: mover, zoom, girar, endireitar, resultado [existe]
+    previa.py                 trabalhadores do editor: proxy e prévia pela receita                   [existe]
+    painel_ajustes.py         cartões Luz, Cor e Detalhe, gerados de ajustes.PARAMS                  [existe]
+    exportar_dialog.py        diálogo de exportação e progresso                                      [existe]
+    precos_dialog.py          tabela de preços por tamanho                                           [existe]
+    resumo.py                 texto da barra de status e janela do resumo/custo do pedido            [existe]
+    projeto_ui.py             Novo/Abrir/Salvar, recentes, título, recuperação, religar fotos        [existe]
+    atualizacao.py            verificação ao abrir e diálogo da atualização                          [existe]
   data/modelos/               face_detection_yunet_2023mar.onnx + LICENSE (MIT), SHA-256 em teste    [existe]
   novidades/release_vX.Y.Z.md notas da release (lidas pelo CI na tag)
 packaging/
@@ -109,7 +130,10 @@ packaging/
 Revelador.spec                receita do PyInstaller (pasta única dist/Revelador)                    [existe]
 tools/gerar_icone.py          assets/logo.svg → logo.ico e PNGs                                       [existe]
 tools/previa_recortes.py      prévia do enquadramento automático em fotos reais (valida a política)   [existe]
+tools/captura_tela.py         PNGs da janela, diálogos, menus e catálogo de componentes (revisão visual) [existe]
+tools/medir_ajustes.py        tempo de ajustes.aplicar por ajuste e total, contra a referência lenta [existe]
 tests/                        pytest; widgets do Qt só em subprocesso offscreen                       [existe]
+tests/ajustes_referencia.py   versão lenta e simples dos ajustes, para comparar com a otimizada         [existe]
 .github/workflows/build.yml   testes, pacotes Windows e release                                       [existe]
 ```
 
@@ -181,6 +205,14 @@ tests/                        pytest; widgets do Qt só em subprocesso offscreen
     mudam o modelo com `estado.alterar(...)` e reagem aos sinais. Cada parte se liga na `MainWindow` num método
     próprio `_ligar_<parte>()`, chamado no fim do `__init__`.
 
+18. **Visual só pelo tema.** Nenhuma cor fixa (hexadecimal, `QColor("#...")`) nem `setStyleSheet` próprio fora de
+    `ui/tema.py`: use as constantes e os nomes de objeto da folha de estilo (`Primary`, `Flat`, `Danger`, `Card`,
+    `Muted`...), os componentes de `ui/componentes.py` e os ícones de `ui/icones.py`. Só tema escuro e cinzas neutros
+    (a interface não pode tingir a percepção de cor da foto). Mexeu em tela? Rode `tools/captura_tela.py` (plataforma
+    `windows`; `offscreen` não tem fontes) e **olhe o PNG** antes de entregar.
+19. **Nada de rede em teste ou captura.** A verificação de atualização ao abrir não roda com a variável
+    `REVELADOR_SEM_REDE` definida; testes e `captura_tela.py` a definem. Nenhum teste fala com a internet.
+
 ## Rodar
 
 ```bash
@@ -198,6 +230,7 @@ Variáveis de ambiente:
 | Variável | Efeito |
 |---|---|
 | `REVELADOR_SETTINGS_DIR` | Preferências num `revelador.ini` nesta pasta em vez do registro (testes). |
+| `REVELADOR_SEM_REDE` | Qualquer valor: não consulta atualizações ao abrir (testes e capturas de tela). |
 | `REVELADOR_GITHUB_TOKEN` | Token para o atualizador consultar releases de um repositório privado (#10). |
 | `QT_QPA_PLATFORM=offscreen` | Qt sem tela (CI, testes). Sem fontes reais no Windows: não use para capturas. |
 | `LOCALAPPDATA` | Base do cache de miniaturas e dos registros (os testes redirecionam). |
@@ -287,7 +320,7 @@ A pasta do PyInstaller (`dist/Revelador/`, com `Revelador.exe` e `_internal/`) �
 - **`.msi`**: o `UpgradeCode` nunca muda — é ele que faz um `.msi` novo substituir o antigo no mesmo lugar
   (`MajorUpgrade`, inclusive na mesma versão). A pasta escolhida fica em `HKCU\Software\Revelador\InstallDir` e é
   reaproveitada nas atualizações. Recurso opcional: `AtalhoDesktop`. `ABRIR_APOS_INSTALAR=1` abre o app no fim de
-  uma instalação silenciosa. A associação do `.revelador` entra com a #9. Versão do MSI: só `x.y.z`.
+  uma instalação silenciosa. Recurso opcional `AssociacaoRevelador` associa o `.revelador` ao app (só em `HKCU`). Versão do MSI: só `x.y.z`.
 - **Conferências de verdade no CI**: `diagnosticar.ps1` roda `Revelador.exe --diagnostico` (codifica e decodifica
   JPEG com perfil e dpi, HEIF, redimensiona com OpenCV e confere `cv2.FaceDetectorYN`) no executável recém-gerado e
   no instalado; `verificar_msi.ps1` instala, confere, atualiza para uma versão maior (e numa pasta escolhida) e
