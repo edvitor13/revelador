@@ -95,6 +95,22 @@ class MainWindow(QMainWindow):
         self.acao_sair.triggered.connect(self.close)
         self.acao_sobre = QAction(_("Sobre o {app}").format(app=APP_NAME), self)
         self.acao_sobre.triggered.connect(self.mostrar_sobre)
+        # Contrato: ações criadas aqui, desligadas; cada issue só as conecta e liga no seu _ligar_<parte>() e a barra
+        # superior (visual) só as posiciona. Ninguém mais cria menu próprio para elas.
+        self.acao_novo = QAction(_("Novo trabalho"), self)                    # #9
+        self.acao_novo.setShortcut("Ctrl+N")
+        self.acao_abrir = QAction(_("Abrir trabalho…"), self)                 # #9
+        self.acao_abrir.setShortcut("Ctrl+O")
+        self.acao_salvar = QAction(_("Salvar"), self)                         # #9
+        self.acao_salvar.setShortcut("Ctrl+S")
+        self.acao_salvar_como = QAction(_("Salvar como…"), self)              # #9
+        self.acao_salvar_como.setShortcut("Ctrl+Shift+S")
+        self.menu_recentes = QMenu(_("Abrir recente"), self)                  # #9 (preenchido por ela)
+        self.acao_verificar_atualizacoes = QAction(_("Verificar atualizações…"), self)  # #10
+        for acao in (self.acao_novo, self.acao_abrir, self.acao_salvar, self.acao_salvar_como,
+                     self.acao_verificar_atualizacoes):
+            acao.setEnabled(False)
+        self.menu_recentes.setEnabled(False)
 
     def _criar_barra_de_ferramentas(self) -> None:
         barra = QToolBar(_("Ferramentas"), self)
@@ -113,11 +129,18 @@ class MainWindow(QMainWindow):
 
     def _criar_menus(self) -> None:
         arquivo = self.menuBar().addMenu(_("&Arquivo"))
+        for acao in (self.acao_novo, self.acao_abrir):
+            arquivo.addAction(acao)
+        arquivo.addMenu(self.menu_recentes)
+        for acao in (self.acao_salvar, self.acao_salvar_como):
+            arquivo.addAction(acao)
+        arquivo.addSeparator()
         arquivo.addAction(self.acao_importar)
         arquivo.addAction(self.acao_exportar)
         arquivo.addSeparator()
         arquivo.addAction(self.acao_sair)
         ajuda = self.menuBar().addMenu(_("A&juda"))
+        ajuda.addAction(self.acao_verificar_atualizacoes)
         ajuda.addAction(self.acao_sobre)
         self.menu_arquivo, self.menu_ajuda = arquivo, ajuda
 
