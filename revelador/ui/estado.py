@@ -21,16 +21,27 @@ Pastas de tamanho (#32): grupos virtuais do trabalho (nada muda no disco). Estar
 da seção "pastas de tamanho" (``criar_pasta``, ``alterar_pasta``, ``apagar_pasta``, ``mover_pasta``,
 ``adicionar_a_pasta``, ``tirar_da_pasta``, ``fotos_da_pasta``, ``pastas_da_foto``, ``impressao_da_pasta``): ela
 mantém o tamanho das impressões igual ao da pasta, refaz/reencaixa os recortes e agrupa tudo num passo do desfazer.
+
+Desfazer/refazer (#5, ``ui/desfazer.py``): ``pilha`` é o ``QUndoStack`` do trabalho. O ``Estado`` guarda uma
+fotografia do estado editável de cada foto (``selecionada``, ``impressoes``, ``ajustes``) e de ``trabalho.pastas``;
+``alterar``, ``alterar_pastas`` e ``remover`` comparam com ela e empilham um passo quando algo mudou. Mudanças que vêm
+do sistema (metadados, rostos, importação, trabalho aberto) só atualizam a fotografia (``absorver``), sem passo.
+``lote(texto)`` junta tudo o que acontecer dentro dele num passo só. Gestos contínuos (arrastar, rolar o zoom,
+sliders) chamam ``alterar(foto, juntar="chave")``: chamadas seguidas com a mesma chave na mesma foto, sem outro passo
+no meio, viram um passo só até ``fim_gesto()`` (soltar o mouse) ou ~1 s sem mexer (fora de um ``comecar_gesto()``).
+Trocar de trabalho (``definir_trabalho``) limpa a pilha.
 """
 
 from __future__ import annotations
 
+import copy
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QTimer, Signal
+from PySide6.QtGui import QUndoStack
 
 from .. import enquadramento, tamanhos
 from ..enquadramento import recorte_sugerido
@@ -38,8 +49,11 @@ from ..i18n import _
 from ..imagem import InfoFoto
 from ..projeto import COPIAS_MAX, COPIAS_MIN, Foto, Impressao, Pasta, Rosto, Trabalho
 from . import tema
+from .desfazer import (Fotografia, Mudanca, MudancaFoto, MudancaPastas, MudancaRemocao, Passo, descrever, fotografar,
+                       restaurar)
 
 _MANTER = object()   # valor padrão de ``alterar_pasta``: "não mexer neste campo"
+JUNTAR_MS = 1000   # um gesto sem fim explícito (roda do mouse, teclas repetidas) termina depois disso sem mexer
 
 
 def novo_id() -> str:
@@ -70,6 +84,7 @@ class Estado(QObject):
         self._modificado = False
         self.comparando = False               # antes/depois: mostrar a foto sem ajustes (não vai para o arquivo)
         self.visiveis: list[str] = []          # ids das fotos visíveis na grade, na ordem dela (a grade publica)
+        self._iniciar_desfazer()
 
     # ------------------------------------------------------------ consulta
     @property
@@ -94,6 +109,7 @@ class Estado(QObject):
         self.miniaturas.clear()
         self.erros.clear()
         self.atual = None
+        self._limpar_desfazer()
         self.fotos_mudaram.emit()
         self.pastas_mudaram.emit()
         self.atual_mudou.emit(None)
@@ -112,22 +128,24 @@ class Estado(QObject):
             novas.append(Foto(id=novo_id(), caminho=Path(caminho)))
         if novas:
             self.trabalho.fotos.extend(novas)
+            for foto in novas:
+                self.absorver(foto)
             self.fotos_mudaram.emit()
             self.marcar_modificado()
         return novas
 
     def remover(self, fotos: list[Foto]) -> None:
-        """Tira fotos do trabalho (o arquivo original não é tocado)."""
+        """Tira fotos do trabalho (o arquivo original não é tocado). Entra no desfazer: desfazer as põe de volta."""
         ids = {f.id for f in fotos}
-        if not ids:
+        itens = [(i, f) for i, f in enumerate(self.trabalho.fotos) if f.id in ids]
+        if not itens:
             return
-        self.trabalho.fotos = [f for f in self.trabalho.fotos if f.id not in ids]
-        for foto_id in ids:
-            self.info.pop(foto_id, None)
-            self.miniaturas.pop(foto_id, None)
-            self.erros.pop(foto_id, None)
-        if self.atual is not None and self.atual.id in ids:
-            self.definir_atual(None)
+        ids = {f.id for _i, f in itens}
+        mudanca = MudancaRemocao(itens, {i: self.info[i] for i in ids if i in self.info},
+                                 {i: self.miniaturas[i] for i in ids if i in self.miniaturas},
+                                 {i: self.erros[i] for i in ids if i in self.erros})
+        self._tirar(ids)
+        self._registrar(mudanca)
         self.fotos_mudaram.emit()
         self.pedido_mudou.emit()
         self.marcar_modificado()
@@ -175,6 +193,7 @@ class Estado(QObject):
         foto.bytes = info.bytes
         foto.mtime = info.mtime / 1e9   # Foto.mtime em segundos; InfoFoto.mtime em ns
         self.refazer_recortes_auto(foto)
+        self.absorver(foto)
         self.foto_mudou.emit(foto_id)
 
     def definir_miniatura(self, foto_id: str, caminho: Path) -> None:
@@ -198,6 +217,7 @@ class Estado(QObject):
             return
         foto.rostos = list(rostos)
         self.refazer_recortes_auto(foto)
+        self.absorver(foto)
         self.foto_mudou.emit(foto_id)
         self.marcar_modificado()
 
@@ -225,8 +245,13 @@ class Estado(QObject):
                 imp.recorte = recorte_sugerido(imp, info.largura, info.altura, foto.rostos,
                                                self.trabalho.margem_corte_mm)
 
-    def alterar(self, foto: Foto, *, pedido: bool = False) -> None:
-        """Avisa que a foto mudou (quem mexeu no modelo chama isto). ``pedido=True`` se afeta orçamento/exportação."""
+    def alterar(self, foto: Foto, *, pedido: bool = False, juntar: str | None = None) -> None:
+        """Avisa que a foto mudou (quem mexeu no modelo chama isto). ``pedido=True`` se afeta orçamento/exportação.
+
+        Entra no desfazer. ``juntar``: chave de um gesto contínuo (ex.: ``"recorte"``, ``"ajuste:exposicao"``);
+        chamadas seguidas com a mesma chave na mesma foto viram um passo só (veja ``fim_gesto``).
+        """
+        self._registrar_foto(foto, juntar)
         self.foto_mudou.emit(foto.id)
         if pedido:
             self.pedido_mudou.emit()
@@ -238,6 +263,10 @@ class Estado(QObject):
         Quem mexe nas pastas chama isto (as impressões das fotos afetadas avisam por ``alterar``, de preferência
         tudo dentro de um ``lote``). Entra no desfazer/refazer (#5).
         """
+        antes, depois = self._pastas_foto, copy.deepcopy(self.trabalho.pastas)
+        self._pastas_foto = depois
+        if antes != depois:
+            self._registrar(MudancaPastas(antes, copy.deepcopy(depois)))
         self.pastas_mudaram.emit()
         self.pedido_mudou.emit()
         self.marcar_modificado()
@@ -246,10 +275,22 @@ class Estado(QObject):
     def lote(self, texto: str = "") -> Iterator[None]:
         """Agrupa várias mudanças (em uma ou várias fotos) num passo só do desfazer/refazer.
 
-        ``with estado.lote(_("Aplicar 15x21")): ...`` — quem mexe em várias fotos de uma vez usa isto. Os lotes podem
-        ser aninhados (vale o de fora). O desfazer/refazer (#5) é ligado aqui; sem ele, só executa o bloco.
+        ``with estado.lote(_("tamanho 15x21")): ...`` — quem mexe em várias fotos de uma vez usa isto. Os lotes podem
+        ser aninhados (vale o de fora, inclusive o texto). ``texto`` completa "Desfazer {texto}"; vazio, ele é
+        deduzido das mudanças. Um lote sem mudança nenhuma não empilha nada.
         """
-        yield
+        self._nivel_lote += 1
+        if self._nivel_lote == 1:
+            self.fim_gesto()
+            self._mudancas_lote, self._texto_lote = [], texto
+        try:
+            yield
+        finally:
+            self._nivel_lote -= 1
+            if self._nivel_lote == 0:
+                mudancas, self._mudancas_lote = self._mudancas_lote, []
+                if mudancas:
+                    self._empilhar(Passo(self, self._texto_lote or descrever(mudancas), mudancas))
 
     def definir_comparando(self, sim: bool) -> None:
         """Liga/desliga o antes/depois (o editor mostra a foto sem ajustes, com o mesmo recorte)."""
@@ -513,6 +554,186 @@ class Estado(QObject):
         w, h = (info.altura, info.largura) if int(imp.recorte.giro) % 2 else (info.largura, info.altura)
         orient = tamanhos.orientacao_efetiva(imp.orientacao, w, h)
         imp.recorte = enquadramento.reencaixar(imp.recorte, w, h, tamanhos.proporcao(imp.tamanho, orient, imp.papel_mm))
+
+    # ------------------------------------------------------------ desfazer/refazer (#5)
+    def _iniciar_desfazer(self) -> None:
+        self.pilha = QUndoStack(self)
+        self._fotografias: dict[str, Fotografia] = {}
+        self._pastas_foto = copy.deepcopy(self.trabalho.pastas)
+        self._nivel_lote = 0
+        self._mudancas_lote: list[Mudanca] = []
+        self._texto_lote = ""
+        self._aberto: tuple[str, str] | None = None   # (foto, chave) do passo que ainda aceita juntar
+        self._indice_aberto = -1
+        self._ultimo: Passo | None = None
+        self._segurando = False
+        self._mexendo_pilha = False
+        self._aplicando = False
+        self._timer_juntar: QTimer | None = None
+        self.pilha.indexChanged.connect(self._indice_mudou)
+
+    def _limpar_desfazer(self) -> None:
+        """Trabalho novo: pilha vazia e fotografias refeitas (sem marcar modificado)."""
+        self.fim_gesto()
+        self._mexendo_pilha = True
+        try:
+            self.pilha.clear()
+        finally:
+            self._mexendo_pilha = False
+        self._ultimo = None
+        self._fotografias = {f.id: fotografar(f) for f in self.trabalho.fotos}
+        self._pastas_foto = copy.deepcopy(self.trabalho.pastas)
+
+    def absorver(self, foto: Foto) -> None:
+        """Mudança feita pelo sistema (recorte automático refeito, metadados): entra na fotografia, sem passo."""
+        self._fotografias[foto.id] = fotografar(foto)
+
+    def desfazer(self) -> None:
+        self.fim_gesto()
+        if self._nivel_lote == 0:
+            self.pilha.undo()
+
+    def refazer(self) -> None:
+        self.fim_gesto()
+        if self._nivel_lote == 0:
+            self.pilha.redo()
+
+    def comecar_gesto(self) -> None:
+        """Começo de um gesto (apertou o mouse): fecha o passo anterior e segura a junção até ``fim_gesto``."""
+        self.fim_gesto()
+        self._segurando = True
+
+    def fim_gesto(self) -> None:
+        """Fim de um gesto (soltou o mouse ou o slider): a próxima mudança começa um passo novo."""
+        self._aberto = None
+        self._segurando = False
+        if self._timer_juntar is not None:
+            self._timer_juntar.stop()
+
+    def _registrar_foto(self, foto: Foto, juntar: str | None) -> None:
+        antes = self._fotografias.get(foto.id)
+        depois = fotografar(foto)
+        self._fotografias[foto.id] = depois
+        if antes is None or antes == depois:
+            return
+        self._registrar(MudancaFoto(foto.id, antes, fotografar(foto)), (foto.id, juntar) if juntar else None)
+
+    def _registrar(self, mudanca: Mudanca, juntar: tuple[str, str] | None = None) -> None:
+        """Guarda a mudança: dentro de um lote, acumula; senão, junta ao passo aberto ou empilha um passo novo."""
+        if self._aplicando:   # alguém reagiu a um desfazer mexendo no modelo: não vira passo
+            return
+        if self._nivel_lote:
+            for m in self._mudancas_lote:
+                if isinstance(mudanca, MudancaFoto) and isinstance(m, MudancaFoto) and m.foto_id == mudanca.foto_id:
+                    m.depois = mudanca.depois
+                    return
+                if isinstance(mudanca, MudancaPastas) and isinstance(m, MudancaPastas):
+                    m.depois = mudanca.depois
+                    return
+            self._mudancas_lote.append(mudanca)
+            return
+        if juntar is not None and isinstance(mudanca, MudancaFoto) and self._pode_juntar(juntar):
+            self._ultimo.juntar(mudanca)
+            self._reiniciar_timer()
+            return
+        self._empilhar(Passo(self, descrever([mudanca]), [mudanca]), juntar)
+
+    def _pode_juntar(self, chave: tuple[str, str]) -> bool:
+        n = self.pilha.count()
+        return self._aberto == chave and self._ultimo is not None and self.pilha.index() == n == self._indice_aberto
+
+    def _empilhar(self, passo: Passo, juntar: tuple[str, str] | None = None) -> None:
+        self._mexendo_pilha = True
+        try:
+            self.pilha.push(passo)
+        finally:
+            self._mexendo_pilha = False
+        self._ultimo = passo
+        self._aberto = juntar
+        self._indice_aberto = self.pilha.index()
+        if juntar is not None:
+            self._reiniciar_timer()
+        elif self._timer_juntar is not None:
+            self._timer_juntar.stop()
+
+    def _reiniciar_timer(self) -> None:
+        if QCoreApplication.instance() is None:   # sem laço de eventos (testes do modelo): só o fim_gesto fecha
+            return
+        if self._timer_juntar is None:
+            self._timer_juntar = QTimer(self)
+            self._timer_juntar.setSingleShot(True)
+            self._timer_juntar.setInterval(JUNTAR_MS)
+            self._timer_juntar.timeout.connect(self._tempo_juntar)
+        self._timer_juntar.start()
+
+    def _tempo_juntar(self) -> None:
+        if not self._segurando:
+            self._aberto = None
+
+    def _indice_mudou(self, _indice: int) -> None:
+        if not self._mexendo_pilha:   # desfez/refez: nada mais se junta ao passo de antes
+            self._aberto = None
+
+    def _tirar(self, ids: set[str]) -> None:
+        self.trabalho.fotos = [f for f in self.trabalho.fotos if f.id not in ids]
+        for foto_id in ids:
+            self.info.pop(foto_id, None)
+            self.miniaturas.pop(foto_id, None)
+            self.erros.pop(foto_id, None)
+            self._fotografias.pop(foto_id, None)
+        if self.atual is not None and self.atual.id in ids:
+            self.definir_atual(None)
+
+    def _repor(self, m: MudancaRemocao) -> None:
+        for posicao, foto in m.itens:   # posições crescentes: cada foto volta ao lugar de antes
+            self.trabalho.fotos.insert(min(posicao, len(self.trabalho.fotos)), foto)
+            self._fotografias[foto.id] = fotografar(foto)
+        self.info.update(m.info)
+        self.miniaturas.update(m.miniaturas)
+        self.erros.update(m.erros)
+
+    def _aplicar_mudancas(self, mudancas: list[Mudanca], depois: bool) -> None:
+        """Refazer (``depois=True``) ou desfazer (mudanças já em ordem inversa): recoloca as fotografias e avisa."""
+        fotos: list[str] = []
+        lista = pastas = False
+        self._aplicando = True
+        try:
+            for m in mudancas:
+                if isinstance(m, MudancaFoto):
+                    foto = self.por_id(m.foto_id)
+                    if foto is None:
+                        continue
+                    restaurar(foto, m.depois if depois else m.antes)
+                    self.refazer_recortes_auto(foto)   # o automático segue os metadados e rostos de agora
+                    self.absorver(foto)
+                    fotos.append(foto.id)
+                elif isinstance(m, MudancaPastas):
+                    self.trabalho.pastas = copy.deepcopy(m.depois if depois else m.antes)
+                    self._pastas_foto = copy.deepcopy(self.trabalho.pastas)
+                    pastas = True
+                else:
+                    if depois:
+                        self._tirar({f.id for _i, f in m.itens})
+                    else:
+                        self._repor(m)
+                    lista = True
+            if lista:
+                self.fotos_mudaram.emit()
+            if pastas:
+                self.pastas_mudaram.emit()
+            fotos = list(dict.fromkeys(fotos))
+            for foto_id in fotos:
+                self.foto_mudou.emit(foto_id)
+            atual = self.atual
+            if atual is not None and atual.id in fotos and self.indice_impressao >= max(1, len(atual.impressoes)):
+                self.indice_impressao = max(0, len(atual.impressoes) - 1)
+                self.impressao_mudou.emit(self.indice_impressao)
+            self.pedido_mudou.emit()
+            if len(fotos) == 1 and not lista:   # passo de uma foto só: ela vira a atual, para ver o que voltou
+                self.definir_atual(self.por_id(fotos[0]))
+        finally:
+            self._aplicando = False
+        self.marcar_modificado()
 
 
 def _sem_repetir(fotos: list[Foto]) -> list[Foto]:

@@ -24,6 +24,7 @@ from ..i18n import _
 from ..projeto import Foto
 from . import tema
 from .componentes import Card, Slider, botao_plano
+from .desfazer import ligar_gestos
 from .estado import Estado
 
 
@@ -50,6 +51,7 @@ class PainelAjustes(QWidget):
             for p in (q for q in ajustes.PARAMS if q.grupo == grupo):
                 s = Slider(_(p.nome), p.minimo, p.maximo, p.passo, p.padrao)
                 s.valor_mudou.connect(lambda v, c=p.chave: self._mudou(c, v))
+                s.soltou.connect(estado.fim_gesto)
                 card.adicionar(s)
                 self.sliders[p.chave] = s
             raiz.addWidget(card)
@@ -78,6 +80,8 @@ class PainelAjustes(QWidget):
             posicoes = ((0, 0, 1, 2), (2, 0, 1, 2), (1, 0, 1, 1), (1, 1, 1, 1))   # comparar, restaurar, copiar, colar
             grade.addWidget(b, *posicoes[i])
         raiz.addLayout(grade)
+        # desfazer: arrastar um slider é um passo só (apertar começa o gesto, soltar termina)
+        self._filtro_gesto = ligar_gestos(estado, *(s.trilho for s in self.sliders.values()))
 
         for chave, slot in (("Ctrl+Shift+C", self.copiar), ("Ctrl+Shift+V", self.colar)):
             QShortcut(QKeySequence(chave), self, activated=slot, context=Qt.ShortcutContext.WindowShortcut)
@@ -117,7 +121,7 @@ class PainelAjustes(QWidget):
             foto.ajustes.pop(chave, None)
         else:
             foto.ajustes[chave] = float(valor)
-        self.estado.alterar(foto)
+        self.estado.alterar(foto, juntar=f"ajuste:{chave}")
 
     def restaurar_grupo(self, grupo: str) -> None:
         """Volta ao padrão todos os ajustes do grupo na foto atual."""
@@ -161,12 +165,13 @@ class PainelAjustes(QWidget):
         if self._copiado is None or self._foco_em_campo():
             return 0
         n = 0
-        for foto in self.alvos_da_colagem():
-            novo = dict(self._copiado)
-            if ajustes.sanitizar(foto.ajustes) != novo:
-                foto.ajustes = novo
-                self.estado.alterar(foto)
-                n += 1
+        with self.estado.lote(_("colar ajustes")):
+            for foto in self.alvos_da_colagem():
+                novo = dict(self._copiado)
+                if ajustes.sanitizar(foto.ajustes) != novo:
+                    foto.ajustes = novo
+                    self.estado.alterar(foto)
+                    n += 1
         self.recarregar()
         return n
 
