@@ -1,6 +1,7 @@
 """Diálogo "Exportar para revelação" (docs/ARQUITETURA.md, seção 8).
 
-Escolhe a pasta de destino (lembrada nas preferências), o modo das cópias e o dpi, mostra o resumo (fotos, cópias,
+Escolhe a pasta de destino (lembrada nas preferências), como organizar (por tamanho ou por pasta de tamanho, #32;
+lembrado; a linha só aparece quando o trabalho tem pastas), o modo das cópias e o dpi, mostra o resumo (fotos, cópias,
 custo estimado), os avisos de conferência e a estrutura que será criada. A exportação roda num ``QThreadPool``
 próprio (até 4 em paralelo); o progresso e o fim chegam por sinal na thread principal.
 
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QHB
 from .. import exportar, precos, system
 from ..i18n import N_, _
 from . import prefs, tema
+from .componentes import Segmented
 from .estado import Estado
 from .precos_dialog import tabela_precos
 
@@ -31,6 +33,11 @@ MODOS_TEXTO = {
 CHAVE_PASTA = "exportar/pasta"
 CHAVE_MODO = "exportar/copias"
 CHAVE_DPI = "exportar/dpi"
+CHAVE_ORGANIZAR = "exportar/organizar"
+ORGANIZAR_TEXTO = (
+    (exportar.ORGANIZAR_TAMANHO, N_("Tamanho"), N_("Uma subpasta por tamanho (10x15, 15x21...)")),
+    (exportar.ORGANIZAR_PASTA, N_("Pasta"), N_("Uma subpasta por pasta de tamanho; as fotos avulsas, por tamanho")),
+)
 LINHAS_ESTRUTURA = 8
 
 
@@ -148,6 +155,17 @@ class ExportarDialog(QDialog):
         self.combo_copias.setCurrentIndex(max(0, self.combo_copias.findData(modo_salvo)))
         form.addRow(_("Cópias"), self.combo_copias)
 
+        self.seg_organizar = Segmented([(k, _(t), _(d)) for k, t, d in ORGANIZAR_TEXTO])
+        organizar_salvo = str(s.value(CHAVE_ORGANIZAR, exportar.ORGANIZAR_TAMANHO, str))
+        if organizar_salvo not in exportar.ORGANIZACOES:
+            organizar_salvo = exportar.ORGANIZAR_TAMANHO
+        self.seg_organizar.definir_atual(organizar_salvo)
+        linha_org = QHBoxLayout()
+        linha_org.addWidget(self.seg_organizar)
+        linha_org.addStretch(1)
+        form.addRow(_("Organizar por"), linha_org)
+        form.setRowVisible(linha_org, bool(self.estado.trabalho.pastas))
+
         self.spin_dpi = QSpinBox()
         self.spin_dpi.setRange(72, 1200)
         self.spin_dpi.setSuffix(" dpi")
@@ -202,6 +220,7 @@ class ExportarDialog(QDialog):
 
         self.campo_pasta.textChanged.connect(self.atualizar)
         self.combo_copias.currentIndexChanged.connect(self.atualizar)
+        self.seg_organizar.mudou.connect(lambda _k: self.atualizar())
         self.spin_dpi.valueChanged.connect(self.atualizar)
         self.atualizar()
 
@@ -209,6 +228,17 @@ class ExportarDialog(QDialog):
     @property
     def modo_copias(self) -> str:
         return str(self.combo_copias.currentData())
+
+    @property
+    def organizar(self) -> str:
+        """``exportar.ORGANIZAR_TAMANHO`` ou ``ORGANIZAR_PASTA`` (sem pastas no trabalho, sempre por tamanho)."""
+        if not self.estado.trabalho.pastas:
+            return exportar.ORGANIZAR_TAMANHO
+        return self.seg_organizar.chave_atual() or exportar.ORGANIZAR_TAMANHO
+
+    def definir_organizar(self, chave: str) -> None:
+        self.seg_organizar.definir_atual(chave)
+        self.atualizar()
 
     def definir_destino(self, pasta: str | Path) -> None:
         self.campo_pasta.setText(str(pasta))
@@ -220,7 +250,7 @@ class ExportarDialog(QDialog):
 
     def montar_plano(self) -> exportar.Plano:
         return exportar.planejar(self.estado.trabalho, self.campo_pasta.text().strip(), self.modo_copias,
-                                 self.spin_dpi.value(), tabela_precos())
+                                 self.spin_dpi.value(), tabela_precos(), organizar=self.organizar)
 
     def atualizar(self) -> None:
         """Refaz resumo, avisos e a prévia da estrutura (instantâneo: não toca no disco além de ver o que existe)."""
@@ -275,10 +305,12 @@ class ExportarDialog(QDialog):
         s = prefs.settings()
         s.setValue(CHAVE_PASTA, self.campo_pasta.text().strip())
         s.setValue(CHAVE_MODO, self.modo_copias)
+        if self.estado.trabalho.pastas:
+            s.setValue(CHAVE_ORGANIZAR, self.organizar)
         s.sync()
         self.exportacao = exportacao
         self.resultado = None
-        for w in (self.campo_pasta, self.botao_pasta, self.combo_copias, self.spin_dpi):
+        for w in (self.campo_pasta, self.botao_pasta, self.combo_copias, self.spin_dpi, self.seg_organizar):
             w.setEnabled(False)
         self.botao_exportar.hide()
         self.botao_cancelar.show()
