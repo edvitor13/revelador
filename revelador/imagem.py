@@ -344,7 +344,7 @@ def proxy(caminho: str | os.PathLike, lado: int = LADO_PROXY) -> np.ndarray:
         _cache[chave] = a
         _cache_bytes += a.nbytes
         while _cache_bytes > LIMITE_CACHE_BYTES and len(_cache) > 1:
-            _, saiu = _cache.popitem(last=False)
+            _chave, saiu = _cache.popitem(last=False)
             _cache_bytes -= saiu.nbytes
     return a
 

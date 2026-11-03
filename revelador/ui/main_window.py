@@ -7,15 +7,22 @@ orientação correspondente, ``orientacao_grade`` etc.). Geometria da janela e d
 
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Qt
-from PySide6.QtGui import QAction, QColor, QPalette
-from PySide6.QtWidgets import (QApplication, QLabel, QMainWindow, QMessageBox, QSplitter, QToolBar, QVBoxLayout,
-                               QWidget)
+from pathlib import Path
 
-from .. import APP_NAME, __version__
+from PySide6.QtCore import QByteArray, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QPalette
+from PySide6.QtWidgets import (QApplication, QComboBox, QFileDialog, QLabel, QMainWindow, QMenu, QMessageBox,
+                               QPushButton, QScrollArea, QSplitter, QToolBar, QVBoxLayout, QWidget)
+
+from .. import APP_NAME, __version__, imagem, precos
 from ..i18n import _
 from . import prefs
 from .estado import Estado
+from .grade import Grade
+from .painel_impressoes import PainelImpressoes, SeletorTamanhoPadrao, tamanho_padrao_salvo
+from .precos_dialog import PrecosDialog, tabela_precos
+from .resumo import ResumoDialog, texto_barra
+from .tarefas import Importacao
 
 CINZA_EDITOR = "#6b6b6b"  # cinza neutro: um fundo colorido enganaria a percepção de cor da foto
 TAMANHO_INICIAL = (1280, 800)
@@ -72,6 +79,9 @@ class MainWindow(QMainWindow):
         self._criar_areas()
         self.statusBar().showMessage(_("Pronto."))
         self.restaurar_estado()
+        self._ligar_grade()
+        self._ligar_selecao()
+        self._ligar_editor()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -127,6 +137,149 @@ class MainWindow(QMainWindow):
         self.divisor.setSizes(PROPORCAO_INICIAL)
         self.setCentralWidget(self.divisor)
         self.setAcceptDrops(True)
+
+    # ------------------------------------------------------------ importação e grade (#2, #4)
+    def _ligar_grade(self) -> None:
+        """Grade de miniaturas, importação (botão, arrastar e soltar, linha de comando) e filtro "Mostrar"."""
+        self.grade = Grade(self.estado)
+        self.area_grade.layout().addWidget(self.grade)
+        self.importacao = Importacao(self.estado, self)
+        self.importacao.mensagem.connect(self.statusBar().showMessage)
+        self.estado.fotos_mudaram.connect(self._atualizar_orientacao_grade)
+
+        self.acao_importar_pasta = QAction(_("Importar pasta…"), self)
+        self.acao_importar_pasta.setShortcut("Ctrl+Shift+I")
+        self.acao_importar.triggered.connect(self.escolher_arquivos)
+        self.acao_importar_pasta.triggered.connect(self.escolher_pasta)
+        self.barra.insertAction(self.acao_exportar, self.acao_importar_pasta)
+        self.menu_arquivo.insertAction(self.acao_exportar, self.acao_importar_pasta)
+
+        self.filtro_mostrar = QComboBox()
+        self.filtro_mostrar.setObjectName("filtro_mostrar")
+        self.filtro_mostrar.addItem(_("Todas"), False)
+        self.filtro_mostrar.addItem(_("Selecionadas"), True)
+        self.filtro_mostrar.currentIndexChanged.connect(
+            lambda _i: self.grade.definir_filtro(bool(self.filtro_mostrar.currentData())))
+        self.barra.addSeparator()
+        self.barra.addWidget(QLabel(_("Mostrar:") + " "))
+        self.barra.addWidget(self.filtro_mostrar)
+
+    def _atualizar_orientacao_grade(self) -> None:
+        self.orientacao_grade.setVisible(not self.estado.trabalho.fotos)
+
+    def importar(self, caminhos) -> list:
+        """Importa arquivos e pastas (recursivo, só formatos aceitos); devolve as fotos novas."""
+        return self.estado.adicionar(imagem.listar_fotos(caminhos))
+
+    def escolher_arquivos(self) -> None:
+        s = prefs.settings()
+        formatos = " ".join(f"*{e}" for e in sorted(imagem.FORMATOS))
+        nomes, _filtro = QFileDialog.getOpenFileNames(
+            self, _("Importar fotos"), str(s.value("importar/ultima_pasta", "", str)),
+            _("Fotos") + f" ({formatos})")
+        if nomes:
+            s.setValue("importar/ultima_pasta", str(Path(nomes[0]).parent))
+            self.importar(nomes)
+
+    def escolher_pasta(self) -> None:
+        s = prefs.settings()
+        inicio = str(s.value("importar/ultima_pasta", "", str))
+        pasta = QFileDialog.getExistingDirectory(self, _("Importar pasta"), inicio)
+        if pasta:
+            s.setValue("importar/ultima_pasta", pasta)
+            self.importar([pasta])
+
+    def showEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        super().showEvent(evento)
+        if self.arquivos_iniciais:
+            QTimer.singleShot(0, self._importar_iniciais)
+
+    def _importar_iniciais(self) -> None:
+        iniciais, self.arquivos_iniciais = self.arquivos_iniciais, []
+        self.importar(iniciais)
+
+    def dragEnterEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        if evento.mimeData().hasUrls():
+            evento.acceptProposedAction()
+
+    def dropEvent(self, evento) -> None:  # noqa: N802 - nome do Qt
+        caminhos = [u.toLocalFile() for u in evento.mimeData().urls() if u.isLocalFile()]
+        if caminhos:
+            self.importar(caminhos)
+            evento.acceptProposedAction()
+
+    # ------------------------------------------------------------ seleção, tamanhos e custo (#5, #13)
+    def _ligar_selecao(self) -> None:
+        """Painel de impressões, tamanho padrão, menu/ação de preços e o custo na barra de status.
+
+        O painel lateral é uma coluna rolável (``coluna_painel``): a seção de impressões fica no topo e há um
+        espaçador no fim; quem acrescentar seções insere antes dele (``insertWidget(count() - 1, ...)``).
+        """
+        padrao = tamanho_padrao_salvo()
+        if padrao:
+            self.estado.trabalho.tamanho_padrao = padrao
+        self.orientacao_painel.hide()
+        rolagem = QScrollArea()
+        rolagem.setWidgetResizable(True)
+        rolagem.setFrameShape(QScrollArea.Shape.NoFrame)
+        conteudo = QWidget()
+        self.coluna_painel = QVBoxLayout(conteudo)
+        self.coluna_painel.setContentsMargins(0, 0, 0, 0)
+        self.painel_impressoes = PainelImpressoes(self.estado)
+        self.coluna_painel.addWidget(self.painel_impressoes)
+        self.coluna_painel.addStretch(1)
+        rolagem.setWidget(conteudo)
+        self.rolagem_painel = rolagem
+        self.area_painel.layout().addWidget(rolagem)
+
+        self.seletor_tamanho = SeletorTamanhoPadrao(self.estado)
+        self.espaco_tamanho.layout().addWidget(self.seletor_tamanho)
+
+        self.acao_precos = QAction(_("Preços do laboratório…"), self)
+        self.acao_precos.triggered.connect(self.abrir_precos)
+        self.acao_resumo = QAction(_("Resumo do pedido…"), self)
+        self.acao_resumo.triggered.connect(self.abrir_resumo)
+        self.menu_pedido = QMenu(_("&Pedido"), self)
+        self.menu_pedido.addAction(self.acao_resumo)
+        self.menu_pedido.addAction(self.acao_precos)
+        self.menuBar().insertMenu(self.menu_ajuda.menuAction(), self.menu_pedido)
+        self.barra.addAction(self.acao_precos)
+
+        self.botao_custo = QPushButton()
+        self.botao_custo.setFlat(True)
+        self.botao_custo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.botao_custo.setToolTip(_("Estimativa — clique para ver o resumo do pedido"))
+        self.botao_custo.clicked.connect(self.abrir_resumo)
+        self.statusBar().addPermanentWidget(self.botao_custo)
+        self.resumo: ResumoDialog | None = None
+        self.estado.pedido_mudou.connect(self.atualizar_custo)
+        self.atualizar_custo()
+
+    def atualizar_custo(self) -> None:
+        orc = precos.orcamento(self.estado.trabalho, tabela_precos())
+        self.botao_custo.setText(texto_barra(self.estado.trabalho, orc))
+
+    def abrir_resumo(self) -> None:
+        if self.resumo is None:
+            self.resumo = ResumoDialog(self.estado, self)
+        self.resumo.atualizar()
+        self.resumo.show()
+        self.resumo.raise_()
+
+    def abrir_precos(self) -> None:
+        PrecosDialog(self.estado, self).exec()
+
+    # ------------------------------------------------------------ editor
+    def _ligar_editor(self) -> None:
+        """Encaixa o editor de enquadramento na área central (esconde o texto de orientação)."""
+        from .editor import Editor   # importação tardia: o editor puxa a receita (numpy/cv2), que a janela não precisa antes
+
+        self.editor = Editor(self.estado, self.area_editor)
+        self.area_editor.layout().addWidget(self.editor)
+        self.orientacao_editor.hide()
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.editor.encerrar)
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:

@@ -37,9 +37,10 @@ proporção certa e não precisa cortar nada além da margem de corte (sangria).
 
 ## Estado atual
 
-Versão **0.1.0 em construção**. O repositório tem a documentação, o CI e o empacotamento do Windows funcionando e um
-app mínimo: a janela provisória e o `--diagnostico` (que confere Pillow, pillow-heif, OpenCV, numpy e Qt dentro do
-executável empacotado). As funções chegam pelas issues do marco **0.1.0**, nesta ordem sugerida:
+Versão **0.1.0 em construção**. O repositório tem a documentação, o CI, o empacotamento do Windows, o `--diagnostico`
+e a **fase A**: a #1 está feita (janela principal, preferências, registro de erros) e o **núcleo** das #2, #3, #4, #7,
+#9, #10 e #13 está pronto e testado, **faltando só a interface** de cada uma. As #5, #6, #8, #11 e #12 não foram
+começadas. As funções chegam pelas issues do marco **0.1.0**, nesta ordem sugerida:
 
 | Issue | Assunto | Módulos |
 |---|---|---|
@@ -71,29 +72,30 @@ revelador/
   app.py                      main(): --diagnostico, QApplication, janela (provisória até #1)         [existe]
   diagnostico.py              confere as dependências nativas de verdade (usado pelo CI no .exe)      [existe]
   i18n.py                     _() e N_(): por enquanto devolvem o texto; tradução depois            [existe]
-  system.py                   open_path()/reveal() no explorador, pastas do usuário (#1)
-  crashlog.py                 registro de erros não tratados em %LOCALAPPDATA%\Revelador\logs (#1)
-  imagem.py                   carregar (Pillow + pillow-heif), orientação EXIF, ICC → sRGB, proxy (#2)
-  miniaturas.py               cache de miniaturas em disco, chave (caminho, tamanho, mtime) (#2)
-  tamanhos.py                 TAMANHOS: tabela única dos tamanhos de revelação (mm, proporção, px) (#3)
-  rostos.py                   detecção de rostos com YuNet (cv2.FaceDetectorYN), modelo no pacote (#4)
-  enquadramento.py            geometria do recorte e recorte automático (funções puras) (#4, #6)
-  ajustes.py                  PARAMS (esquema) e aplicar(): ajustes de luz e cor em numpy (#7)
+  system.py                   open_path()/reveal() no explorador, pastas do usuário                  [existe]
+  crashlog.py                 registro de erros não tratados em %LOCALAPPDATA%\Revelador\logs        [existe]
+  imagem.py                   carregar (Pillow + pillow-heif), orientação EXIF, ICC → sRGB, proxy    [existe]
+  miniaturas.py               cache de miniaturas em disco, chave (caminho, tamanho, mtime)          [existe]
+  tamanhos.py                 TAMANHOS: tabela única dos tamanhos de revelação (mm, proporção, px)   [existe]
+  rostos.py                   detecção de rostos com YuNet (cv2.FaceDetectorYN), modelo no pacote    [existe]
+  enquadramento.py            geometria do recorte e recorte automático (funções puras)              [existe]
+  ajustes.py                  PARAMS (esquema) e aplicar(): ajustes de luz e cor em numpy            [existe]
   receita.py                  receita única: foto + impressão + tamanho de destino → imagem (#6, #7, #8)
-  projeto.py                  modelo (Trabalho, Foto, Impressao, Recorte, Rosto) [existe]; .revelador (#9)
+  projeto.py                  modelo (Trabalho, Foto, Impressao, Recorte, Rosto) e .revelador         [existe]
   exportar.py                 pastas por tamanho, JPEG, cópias, resumo do pedido, fila (#8)
-  precos.py                   tabela de preços (centavos por tamanho) e orcamento() do pedido (#13)
-  updater.py                  atualização pelas releases do GitHub com SHA-256 (#10)
+  precos.py                   tabela de preços (centavos por tamanho) e orcamento() do pedido        [existe]
+  updater.py                  atualização pelas releases do GitHub com SHA-256                       [existe]
   ui/
-    main_window.py            janela principal: grade, editor, painel lateral (#1)
-    prefs.py                  settings(): única porta para as preferências (QSettings) (#1)
+    main_window.py            janela principal: áreas da grade, do editor e do painel lateral        [existe]
+    prefs.py                  settings(): única porta para as preferências (QSettings)               [existe]
+    estado.py                 estado compartilhado da interface: os widgets conversam só por ele     [existe]
     grade.py                  grade de miniaturas, seleção, tamanho e cópias (#2, #5)
     editor.py                 visor com a moldura do papel: mover, zoom, girar, endireitar (#6)
     painel_ajustes.py         painel lateral de ajustes, gerado a partir de ajustes.PARAMS (#7)
     exportar_dialog.py        diálogo de exportação e progresso (#8)
     precos_dialog.py          tabela de preços por tamanho e resumo do custo do pedido (#13)
     atualizar_dialog.py       aviso e instalação da atualização (#10)
-  data/modelos/               face_detection_yunet_2023mar.onnx + LICENSE (MIT), SHA-256 em teste (#4)
+  data/modelos/               face_detection_yunet_2023mar.onnx + LICENSE (MIT), SHA-256 em teste    [existe]
   novidades/release_vX.Y.Z.md notas da release (lidas pelo CI na tag)
 packaging/
   install_marker.py           grava revelador-install.json {"kind": "msi"|"zip", "version"}          [existe]
@@ -106,6 +108,7 @@ packaging/
   windows/license_rtf.py      LICENSE → .rtf da tela de licença do .msi                              [existe]
 Revelador.spec                receita do PyInstaller (pasta única dist/Revelador)                    [existe]
 tools/gerar_icone.py          assets/logo.svg → logo.ico e PNGs                                       [existe]
+tools/previa_recortes.py      prévia do enquadramento automático em fotos reais (valida a política)   [existe]
 tests/                        pytest; widgets do Qt só em subprocesso offscreen                       [existe]
 .github/workflows/build.yml   testes, pacotes Windows e release                                       [existe]
 ```
@@ -169,11 +172,14 @@ tests/                        pytest; widgets do Qt só em subprocesso offscreen
     temporárias. Widgets do Qt em teste só num subprocesso *offscreen* com `QApplication` própria.
 15. **Fotos de pessoas são privadas.** Nada sai do computador: sem telemetria, sem envio de fotos, detecção de
     rostos local guardando só retângulos. Nenhuma foto pessoal entra no repositório: imagens de teste são geradas
-    no código ou têm licença livre registrada em `tests/data/LICENCAS.md`.
+    no código; a única exceção é foto em domínio público em `tests/data/`, registrada em `tests/data/LICENCAS.md`.
 
 16. **Dinheiro em centavos inteiros.** Preços e totais são `int` em centavos (nunca `float`); a conversão de e para
     texto ("R$ 1.234,56", "1,50") fica só em `precos.formatar()`/`precos.ler()`. Tamanho sem preço é "sem preço" e
     deixa o total marcado como parcial — nunca vira zero calado. O valor é uma **estimativa** e a interface diz isso.
+17. **Interface por um estado só.** Widgets não se conhecem: conversam apenas pelo `ui/estado.py` (`janela.estado`),
+    mudam o modelo com `estado.alterar(...)` e reagem aos sinais. Cada parte se liga na `MainWindow` num método
+    próprio `_ligar_<parte>()`, chamado no fim do `__init__`.
 
 ## Rodar
 
@@ -253,7 +259,7 @@ Variáveis de ambiente:
 
 ### Gravar arquivos do usuário
 
-- Use a função de gravação segura de `exportar.py`/`projeto.py` (arquivo temporário na mesma pasta + `os.replace`)
+- Use `projeto.gravar_texto_seguro()` (arquivo temporário na mesma pasta + `os.replace`)
   e o nome livre (` (2)`, ` (3)`...). Nunca grave na pasta da foto original sem a pessoa escolher, nunca
   sobrescreva sem perguntar, nunca apague nada que o app não criou.
 
