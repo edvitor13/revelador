@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self._ligar_grade()
         self._ligar_selecao()
         self._ligar_editor()
+        self._ligar_exportacao()
 
     # ------------------------------------------------------------ montagem
     def _criar_acoes(self) -> None:
@@ -364,6 +365,23 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self.editor.encerrar)
+
+    # ------------------------------------------------------------ exportação
+    def _ligar_exportacao(self) -> None:
+        """Liga ``acao_exportar``: habilitada quando há pelo menos uma foto selecionada com impressão."""
+        self.acao_exportar.triggered.connect(self.abrir_exportacao)
+        self.estado.pedido_mudou.connect(self.atualizar_acao_exportar)
+        self.atualizar_acao_exportar()
+
+    def atualizar_acao_exportar(self) -> None:
+        self.acao_exportar.setEnabled(any(f.impressoes for f in self.estado.trabalho.selecionadas()))
+
+    def criar_dialogo_exportacao(self):
+        from .exportar_dialog import ExportarDialog   # importação tardia: puxa a receita (numpy/cv2)
+        return ExportarDialog(self.estado, self)
+
+    def abrir_exportacao(self) -> None:
+        self.criar_dialogo_exportacao().exec()
 
     # ------------------------------------------------------------ preferências
     def salvar_estado(self) -> None:
