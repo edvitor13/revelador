@@ -81,7 +81,7 @@ class AjustarImagem(QRunnable):
     o trabalhador a reescala se reduzir a imagem.
     """
 
-    def __init__(self, sinais: Sinais, geracao: int, fonte: np.ndarray, giro: int, valores: dict,
+    def __init__(self, sinais: Sinais, geracao: int, fonte: np.ndarray, giro: tuple[int, bool, bool], valores: dict,
                  escala_mm_px: float | None, max_lado: int | None, final: bool) -> None:
         super().__init__()
         self.sinais, self.geracao, self.fonte, self.giro = sinais, geracao, fonte, giro
@@ -90,7 +90,7 @@ class AjustarImagem(QRunnable):
 
     def run(self) -> None:
         try:
-            img = receita.girar(self.fonte, self.giro)
+            img = receita.girar(self.fonte, *self.giro)
             escala = self.escala
             maior = max(img.shape[:2])
             if self.max_lado and maior > self.max_lado:

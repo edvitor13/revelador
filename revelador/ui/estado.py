@@ -344,7 +344,8 @@ class Estado(QObject):
                     continue
                 for imp in foto.impressoes:
                     imp.recorte = Recorte(cx=0.5, cy=0.5, zoom=ZOOM_MINIMO, angulo=imp.recorte.angulo,
-                                          giro=imp.recorte.giro, origem="manual")
+                                          giro=imp.recorte.giro, espelho_h=imp.recorte.espelho_h,
+                                          espelho_v=imp.recorte.espelho_v, origem="manual")
                 self.alterar(foto)
 
     def alterar(self, foto: Foto, *, pedido: bool = False, juntar: str | None = None) -> None:

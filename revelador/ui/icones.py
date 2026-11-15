@@ -226,6 +226,21 @@ def desenhar(nome: str, p: QPainter, c: QColor) -> None:
         p.drawRoundedRect(QRectF(3.5, 3.5, 17, 17), 2.4, 2.4)
         p.drawRect(QRectF(6.5, 8, 11, 8))
         _poli(p, [(7, 15.5), (10.5, 12), (13, 14.2), (14.5, 13), (17, 15.5)])
+    elif nome in ("espelhar_h", "espelhar_v"):
+        # Dois triângulos espelhados num eixo tracejado: o contorno é a foto, o cheio é o reflexo.
+        p.save()
+        if nome == "espelhar_v":
+            p.translate(12, 12)
+            p.rotate(90)
+            p.translate(-12, -12)
+        _pen(p, c, 1.6)
+        _poli(p, [(10, 5), (10, 19), (3.5, 19)], fechar=True)
+        _cheio(p, c)
+        _poli(p, [(14, 5), (14, 19), (20.5, 19)], fechar=True)
+        _pen(p, c, 1.4)
+        for y in (3.0, 7.5, 12.0, 16.5):
+            p.drawLine(QPointF(12, y), QPointF(12, y + 2.5))
+        p.restore()
     elif nome in ("estrela", "estrela_cheia"):
         pontos = []
         for i in range(10):
@@ -260,7 +275,7 @@ NOMES = (
     "importar", "pasta", "exportar", "salvar", "abrir", "configuracoes", "check", "mais", "fechar", "lixeira",
     "girar_esquerda", "girar_direita", "endireitar", "zoom_mais", "zoom_menos", "rosto", "recorte", "centro", "grade",
     "filtro", "dinheiro", "info", "aviso", "chevron", "reset", "foto", "copiar", "colar", "comparar", "opcoes",
-    "foto_inteira", "estrela", "estrela_cheia", "tela_cheia", "maximizar",
+    "foto_inteira", "estrela", "estrela_cheia", "tela_cheia", "maximizar", "espelhar_h", "espelhar_v",
 )
 
 

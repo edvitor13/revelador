@@ -101,6 +101,8 @@ def _descrever_foto(m: MudancaFoto) -> str:
         if ia.modo != idp.modo:
             return _("modo de impressão")
     for ia, idp in zip(a.impressoes, d.impressoes):
+        if (ia.recorte.espelho_h, ia.recorte.espelho_v) != (idp.recorte.espelho_h, idp.recorte.espelho_v):
+            return _("espelhar")
         if ia.recorte != idp.recorte:
             return _("enquadramento")
     return _("impressões")

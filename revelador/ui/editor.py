@@ -29,7 +29,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import (QColor, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
                            QShortcut)
-from PySide6.QtWidgets import (QColorDialog, QFrame, QHBoxLayout, QLabel, QMenu, QSizePolicy, QToolButton,
+from PySide6.QtWidgets import (QBoxLayout, QColorDialog, QFrame, QHBoxLayout, QLabel, QMenu, QSizePolicy, QToolButton,
                                QVBoxLayout, QWidget)
 
 from .. import ajustes as ajustes_mod
@@ -475,12 +475,12 @@ class Editor(QWidget):
         self.previa_geracao = 0
         self.mostrar_previa = False
         self._caminho: str | None = None
-        self._imagens: dict[int, QImage] = {}       # foto inteira girada, por giro
+        self._imagens: dict[tuple, QImage] = {}     # foto inteira girada, por (giro, espelho_h, espelho_v)
         self._ger_proxy = 0
         self._erro = ""
         self._dpr_previa = 1.0
         self._ajustada: QImage | None = None        # a foto inteira girada com os ajustes (moldura)
-        self._ajustada_giro = 0
+        self._ajustada_giro: tuple = (0, False, False)
         self._ajustada_final = False
         self._chave_ajustada: tuple | None = None   # (giro, ajustes) da última versão pedida
         self._ger_ajuste = 0
@@ -512,6 +512,15 @@ class Editor(QWidget):
             sinal.connect(slot)
         self._atualizar()
 
+    LARGURA_VISTA_AO_LADO = 560   # abaixo disso, Moldura | Resultado vai para baixo do endireitar
+
+    def resizeEvent(self, e) -> None:  # noqa: N802 - nome do Qt
+        super().resizeEvent(e)
+        direcao = (QBoxLayout.Direction.LeftToRight if self.width() >= self.LARGURA_VISTA_AO_LADO
+                   else QBoxLayout.Direction.TopToBottom)
+        if self._linha_vista.direction() != direcao:
+            self._linha_vista.setDirection(direcao)
+
     # ------------------------------------------------------------ montagem
     def _montar(self) -> None:
         self.tela = Tela(self)
@@ -525,6 +534,17 @@ class Editor(QWidget):
         self.botao_girar_dir = botao_plano("girar_direita", _("Girar 90° para a direita (R)"))
         self.botao_girar_esq.clicked.connect(lambda: self.girar(-1))
         self.botao_girar_dir.clicked.connect(lambda: self.girar(+1))
+        self.botao_espelhar = botao_plano("espelhar_h", _("Espelhar a foto (H: horizontal · Shift+H: vertical)"),
+                                          _("Espelhar"))
+        menu = QMenu(self)
+        menu.setObjectName("menu_espelhar")
+        self.acao_espelhar_h = menu.addAction(icones.icone("espelhar_h", tema.TEXTO, 18),
+                                              _("Na horizontal (esquerda ↔ direita)") + "	H")
+        self.acao_espelhar_v = menu.addAction(icones.icone("espelhar_v", tema.TEXTO, 18),
+                                              _("Na vertical (cima ↔ baixo)") + "	Shift+H")
+        self.acao_espelhar_h.triggered.connect(lambda _c=False: self.espelhar(True))
+        self.acao_espelhar_v.triggered.connect(lambda _c=False: self.espelhar(False))
+        com_menu(self.botao_espelhar, menu)
         self.botao_papel = botao_plano("foto", _("Girar o papel: retrato ↔ paisagem (O)"), _("Girar papel"))
         self.botao_papel.clicked.connect(self.girar_papel)
         self.botao_zoom_menos = botao_plano("zoom_menos", _("Afastar a foto (Ctrl+−)"))
@@ -567,7 +587,7 @@ class Editor(QWidget):
         barra = QHBoxLayout(controles)
         barra.setContentsMargins(0, 0, 0, 0)
         barra.setSpacing(6)
-        for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_papel):
+        for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_espelhar, self.botao_papel):
             barra.addWidget(w)
         for w in (self.botao_zoom_menos, self.botao_zoom_mais):
             barra.addWidget(w)
@@ -577,10 +597,12 @@ class Editor(QWidget):
         barra.addWidget(self.botao_inteira)
         barra.addWidget(self.botao_fundo)
         barra.addStretch(1)
-        barra.addWidget(self.modo_vista)
         controles.definir_adaptacao(compactos=[self.caixa_rostos, self.botao_auto, self.botao_centro,
-                                               self.botao_inteira, self.botao_fundo, self.botao_papel],
-                                    opcionais=[self.botao_zoom_menos, self.botao_zoom_mais])
+                                               self.botao_inteira, self.botao_fundo, self.botao_papel,
+                                               self.botao_espelhar],
+                                    # estreito: somem os que têm atalho ou são pouco usados (Ctrl+±, C, rostos)
+                                    opcionais=[self.botao_zoom_menos, self.botao_zoom_mais, self.botao_centro,
+                                               self.caixa_rostos])
 
         self.rodape = QWidget()
         self.rodape.setObjectName("Rodape")
@@ -590,7 +612,13 @@ class Editor(QWidget):
         coluna.setSpacing(8)
         coluna.addWidget(self.rotulo_info)
         coluna.addWidget(controles)
-        coluna.addWidget(self.slider_angulo)
+        # Moldura | Resultado ao lado do endireitar (a barra de cima fica para os botões); estreito, embaixo dele
+        self._linha_vista = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+        self._linha_vista.setContentsMargins(0, 0, 0, 0)
+        self._linha_vista.setSpacing(12)
+        self._linha_vista.addWidget(self.slider_angulo, 1)
+        self._linha_vista.addWidget(self.modo_vista, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        coluna.addLayout(self._linha_vista)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -605,6 +633,8 @@ class Editor(QWidget):
 
         atalho("R", lambda: self.girar(+1))
         atalho("Shift+R", lambda: self.girar(-1))
+        atalho("H", lambda: self.espelhar(True))
+        atalho("Shift+H", lambda: self.espelhar(False))
         atalho("A", self.enquadrar_pelos_rostos)
         atalho("C", self.centralizar)
         atalho("O", self.girar_papel)
@@ -777,6 +807,33 @@ class Editor(QWidget):
         novo = replace(imp.recorte, cx=cx, cy=cy, giro=giro)
         return self._aplicar(foto, imp, self._limitado(imp, novo))
 
+    def espelhar(self, horizontal: bool = True) -> bool:
+        """Espelha a foto como ela aparece: ``horizontal`` troca esquerda ↔ direita; senão, cima ↔ baixo.
+
+        O resultado é o espelho exato do anterior: o centro do recorte e o ângulo de endireitar também espelham, e a
+        origem do recorte (automático ou manual) fica como estava. Com um giro ímpar, o espelho que a pessoa vê é o
+        outro eixo da imagem sem giro. Vale para todas as impressões da foto; um passo próprio do desfazer.
+        """
+        ctx = self._contexto()
+        if ctx is None:
+            return False
+        foto, imp = ctx
+        a = imp.recorte
+        W, H = receita.dimensoes_giradas(imp, *self._dims())
+        r = self._retangulo(imp) if imp.modo != receita.MODO_CABER else None
+        cx, cy = (r.cx / W, r.cy / H) if r else (a.cx, a.cy)
+        if horizontal:
+            cx = 1.0 - cx
+        else:
+            cy = 1.0 - cy
+        eixo_h = horizontal == (a.giro % 2 == 0)     # o eixo da imagem sem giro que corresponde ao que se vê
+        novo = replace(a, cx=cx, cy=cy, angulo=0.0 - a.angulo,
+                       espelho_h=a.espelho_h != eixo_h, espelho_v=a.espelho_v != (not eixo_h))
+        imp.recorte = self._limitado(imp, novo)
+        self.estado.compartilhar_recorte(foto, imp)
+        self.estado.alterar(foto)
+        return True
+
     def endireitar(self, graus: float) -> bool:
         """Define o ângulo de endireitar (−45 a 45, passo 0,1). Mantém o centro e o zoom escolhidos."""
         ctx = self._editavel()
@@ -816,7 +873,8 @@ class Editor(QWidget):
         if ctx is None:
             return False
         foto, imp = ctx
-        novo = self._limitado(imp, Recorte(giro=imp.recorte.giro, origem="manual"))
+        novo = self._limitado(imp, Recorte(giro=imp.recorte.giro, espelho_h=imp.recorte.espelho_h,
+                                           espelho_v=imp.recorte.espelho_v, origem="manual"))
         a = imp.recorte
         if (novo.cx, novo.cy, novo.zoom, novo.angulo, a.origem) == (a.cx, a.cy, a.zoom, a.angulo, "manual"):
             return False
@@ -1049,7 +1107,7 @@ class Editor(QWidget):
         if not valores:
             self._limpar_ajustada()
             return
-        giro = imp.recorte.giro % 4 if imp is not None else 0
+        giro = receita.transformacao(imp.recorte) if imp is not None else (0, False, False)
         chave = (giro, tuple(sorted(valores.items())))
         if chave == self._chave_ajustada:
             return
@@ -1076,7 +1134,7 @@ class Editor(QWidget):
         if self.estado.atual is None or self.proxy is None or self._chave_ajustada is None:
             return
         giro = self._chave_ajustada[0]
-        W = self.proxy.shape[1] if giro % 2 == 0 else self.proxy.shape[0]
+        W = self.proxy.shape[1] if giro[0] % 2 == 0 else self.proxy.shape[0]
         escala = self._escala_moldura(imp, W)
         self._pool.start(AjustarImagem(self._sinais, self._ger_ajuste, self.proxy, giro,
                                        dict(self._chave_ajustada[1]), escala, max_lado, final))
@@ -1087,7 +1145,7 @@ class Editor(QWidget):
         if self._ajustada is not None and self._ajustada_final and not final:
             return          # a versão reduzida chegou depois da final da mesma geração
         self._ajustada, self._ajustada_final = imagem, final
-        self._ajustada_giro = self._chave_ajustada[0] if self._chave_ajustada else 0
+        self._ajustada_giro = self._chave_ajustada[0] if self._chave_ajustada else (0, False, False)
         self._atualizar()
         self.ajustada_atualizada.emit()
 
@@ -1126,9 +1184,9 @@ class Editor(QWidget):
             self._atualizar()
 
     # ------------------------------------------------------------ atualizar o visor e os controles
-    def _imagem_girada(self, giro: int) -> QImage:
+    def _imagem_girada(self, giro: tuple[int, bool, bool]) -> QImage:
         if giro not in self._imagens:
-            self._imagens[giro] = para_qimage(receita.para_uint8(receita.girar(self.proxy, giro)))
+            self._imagens[giro] = para_qimage(receita.para_uint8(receita.girar(self.proxy, *giro)))
         return self._imagens[giro]
 
     def _atualizar(self) -> None:
@@ -1147,7 +1205,7 @@ class Editor(QWidget):
             t.mensagem = _("Carregando a foto…")
         else:
             t.mensagem = ""
-            giro = imp.recorte.giro % 4 if imp is not None else 0
+            giro = receita.transformacao(imp.recorte) if imp is not None else (0, False, False)
             bruta = self._imagem_girada(giro)
             t.largura_ref = bruta.width()
             usar = (self._ajustada is not None and self._ajustada_giro == giro and not self.estado.comparando
@@ -1192,7 +1250,7 @@ class Editor(QWidget):
             texto += " · " + _("com fundo")
         if foto.rostos:
             t.rostos = [(c.x * W, c.y * H, c.w * W, c.h * H)
-                        for c in enquadramento.girar_rostos(foto.rostos, imp.recorte.giro)]
+                        for c in enquadramento.girar_rostos(foto.rostos, *receita.transformacao(imp.recorte))]
         info = self.estado.info.get(foto.id)
         qualidade = None
         if info is not None:
@@ -1209,7 +1267,8 @@ class Editor(QWidget):
         com_foto = self._contexto() is not None
         for w in (self.slider_angulo, self.botao_zoom_menos, self.botao_zoom_mais):
             w.setEnabled(ativo)
-        for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_papel, self.botao_auto, self.modo_vista):
+        for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_espelhar, self.botao_papel,
+                  self.botao_auto, self.modo_vista):
             w.setEnabled(com_foto)
         self.botao_inteira.setEnabled(ativo)
         foto = self.estado.atual

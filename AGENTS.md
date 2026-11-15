@@ -37,7 +37,7 @@ proporção certa e não precisa cortar nada além da margem de corte (sangria).
 
 ## Estado atual
 
-Versão **0.2.0** (0.1.0 e 0.1.1 publicadas em 2026-11-03). As fases A (núcleo), B (importação, grade, seleção,
+Versão **0.2.1** (0.1.0 e 0.1.1 em 2026-11-03; 0.2.0 e 0.2.1 em 2026-11-15; a 0.2.1 trouxe espelhar a foto, #59). As fases A (núcleo), B (importação, grade, seleção,
 custo, editor) e C (ajustes, exportação, salvar/abrir, atualização) e o **visual novo** estão no `main`. Na 0.2.0:
 afastar além da foto com cor de fundo por foto (#53), botão "Foto inteira" (#54), continuar na última foto aberta
 (#55), favoritas com estrela e filtro (#56) e tela cheia e maximizar no Visualizar (#57), tudo compatível com os
@@ -85,6 +85,7 @@ vieram pelas issues do marco **0.1.0**, nesta ordem sugerida:
 | #55 | Continuar na última foto | `projeto.py`, `ui/estado.py`, `ui/projeto_ui.py` |
 | #56 | Favoritas | `projeto.py`, `ui/estado.py`, `ui/grade.py`, `ui/editor.py`, `ui/visualizar.py` |
 | #57 | Tela cheia e maximizar no Visualizar | `ui/visualizar.py` |
+| #59 | Espelhar na horizontal e na vertical | `projeto.py`, `receita.py`, `enquadramento.py`, `ui/editor.py` |
 
 Ideias para depois da 0.1.0 ficam na issue #12. Antes de começar uma issue, leia a seção correspondente de
 [docs/ARQUITETURA.md](docs/ARQUITETURA.md): ela é o contrato técnico.
@@ -373,8 +374,8 @@ A pasta do PyInstaller (`dist/Revelador/`, com `Revelador.exe` e `_internal/`) �
 ### Versão e release
 
 1. Atualize `revelador/__init__.py` (`__version__` e `__date__`; o `pyproject.toml` e o `Revelador.spec` leem a
-   versão de lá), o `CHANGELOG.md` (a seção "Não lançado" vira `[X.Y.Z] - data`) e escreva
-   `revelador/novidades/release_vX.Y.Z.md`.
+   versão de lá), o `CHANGELOG.md` (a seção "Não lançado" vira `[X.Y.Z] - data`), o `README.md` (o que o app faz e
+   a tabela de versões) e escreva `revelador/novidades/release_vX.Y.Z.md`.
 2. Valide a branch com `gh workflow run build.yml --ref <branch>` (pacotes completos).
 3. Crie a tag `vX.Y.Z` e envie. O workflow gera os pacotes, publica a Release e avisa no Discord. Release só quando
    o autor pedir.

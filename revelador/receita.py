@@ -6,7 +6,8 @@ exportação grava o arquivo pelo MESMO caminho, ``renderizar()``; quem chama s�
 
 Passos de ``renderizar(fonte, impressao, ajustes, destino_px)``
 ---------------------------------------------------------------
-1. **Giro de 90°** (``recorte.giro``, sentido horário): ``np.rot90``, sem perda.
+1. **Espelhar e girar 90°** (``recorte.espelho_h``/``espelho_v``, depois ``recorte.giro`` no sentido horário):
+   ``np.rot90`` sobre a visão espelhada, sem perda.
 2. **Recorte + endireitar + redimensionar numa transformação afim só** (modo *preencher*): ``enquadramento.retangulo``
    dá o retângulo (centro, tamanho, ângulo) na imagem girada e ``cv2.warpAffine`` amostra, do destino para a fonte,
    com ``INTER_LANCZOS4``. Quando a redução é grande, a região que interessa é reduzida antes com ``INTER_AREA``
@@ -147,8 +148,18 @@ def encolher(ret: Retangulo, margem: float) -> Retangulo:
 
 # ------------------------------------------------------------------------------------------ renderizar
 
-def girar(fonte: np.ndarray, giro: int) -> np.ndarray:
-    """``giro`` × 90° no sentido horário, sem perda (visão do array, sem cópia)."""
+def transformacao(recorte) -> tuple[int, bool, bool]:
+    """``(giro, espelho_h, espelho_v)`` do recorte: o que ``girar`` aplica (chave de cache da imagem girada)."""
+    return int(recorte.giro) % 4, bool(recorte.espelho_h), bool(recorte.espelho_v)
+
+
+def girar(fonte: np.ndarray, giro: int, espelho_h: bool = False, espelho_v: bool = False) -> np.ndarray:
+    """Espelha (``espelho_h``: esquerda ↔ direita; ``espelho_v``: cima ↔ baixo) e gira ``giro`` × 90° no sentido
+    horário, sem perda (visão do array, sem cópia)."""
+    if espelho_h:
+        fonte = fonte[:, ::-1]
+    if espelho_v:
+        fonte = fonte[::-1]
     return np.rot90(fonte, -(int(giro) % 4))
 
 
@@ -230,7 +241,7 @@ def renderizar(fonte: np.ndarray, impressao: Impressao, ajustes: dict | None,
     if fonte.ndim != 3 or fonte.shape[2] != 3 or fonte.shape[0] < 1 or fonte.shape[1] < 1:
         raise ValueError(f"a fonte precisa ser H×W×3, veio {fonte.shape}")
     altura, largura = fonte.shape[:2]
-    img = girar(fonte, impressao.recorte.giro)
+    img = girar(fonte, *transformacao(impressao.recorte))
     escala = escala_mm_px(impressao, largura, altura, dw)
 
     if impressao.modo == MODO_CABER:
