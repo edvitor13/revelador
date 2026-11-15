@@ -53,6 +53,8 @@ class Recorte:
                              # < 1 = papel além da foto, com fundo (até a foto inteira; ZOOM_MINIMO = 0,05)
     angulo: float = 0.0      # endireitar, graus, -45..45, em torno do centro do recorte
     giro: int = 0            # giros de 90° no sentido horário (0..3), sem perda
+    espelho_h: bool = False  # espelhar esquerda ↔ direita a imagem SEM giro, antes do giro (#59)
+    espelho_v: bool = False  # espelhar cima ↔ baixo a imagem SEM giro, antes do giro (#59)
     origem: str = "auto"     # "auto" (rostos) | "centro" (sem rosto) | "manual" (a pessoa mexeu)
 
 @dataclass
@@ -294,7 +296,10 @@ altura)`. A escala mm/px (para a nitidez) é calculada **dentro**, a partir do p
 
 Passos:
 
-1. **Giro de 90°** (`recorte.giro`, sentido horário): `np.rot90` (sem perda).
+1. **Espelhar e girar 90°** (`receita.girar(fonte, *receita.transformacao(recorte))`): espelha a imagem sem giro
+   (`espelho_h`: colunas; `espelho_v`: linhas) e depois `np.rot90` no sentido horário (`giro`), tudo sem perda. Os
+   rostos vão para o mesmo espaço por `enquadramento.girar_rostos(rostos, giro, espelho_h, espelho_v)`; `cx`/`cy`
+   são normalizados nesse espaço (espelhado e girado).
 2. **Recorte + endireitar + redimensionar numa transformação afim só**: `enquadramento.retangulo` dá o retângulo
    (centro, tamanho, ângulo) na imagem girada e **uma única** `cv2.warpAffine` (`INTER_LANCZOS4`, borda replicada)
    amostra do destino para a fonte com `matriz_destino_fonte`. Quando a redução é grande, a região que interessa
@@ -463,6 +468,8 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   pasta); impressão com uma pasta que não existe, ou a segunda da mesma pasta na mesma foto, vira avulsa; o tamanho de
   uma impressão de pasta é sempre o da pasta. Arquivo antigo sem pastas abre igual; `tests/data/exemplo_pastas.revelador`
   é o exemplo do formato com pastas.
+- **Espelhar (0.2.1, #59)**: `espelho_h`/`espelho_v` no recorte, só quando `true` (outro valor vale falso). Uma
+  versão anterior ignora os dois e mostra a foto sem espelhar.
 - **Campos da 0.2.0 (ainda no formato 1, compatíveis com as versões anteriores)**: na foto, `favorita: true` (#56)
   e `fundo: "#rrggbb"` (#53) só quando fora do padrão; no recorte, `zoom` pode ficar abaixo de 1 (até `ZOOM_MINIMO`
   = 0,05); no topo, `ultima_foto` (#55, id de uma foto do trabalho). Uma versão anterior abre o arquivo normalmente:
@@ -598,6 +605,14 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
     `Estado.foto_inteira`) grava `zoom = ZOOM_MINIMO` centralizado em todas as impressões. **Fundo** (botão com a
     amostra da cor): Branco, Preto ou "Outra cor…" (`QColorDialog`), por foto (`Estado.definir_fundo`, desfazer).
   - **Favorita** (#56): estrela na faixa do topo do editor (e `F` na janela).
+  - **Espelhar** (#59, `Editor.espelhar(horizontal)`, botão "Espelhar" com menu, H / Shift+H): espelha a foto como
+    ela aparece; com giro ímpar, o espelho visto na horizontal é o `espelho_v` da imagem sem giro. O resultado é o
+    espelho exato do anterior: `cx` (ou `cy`) vira `1 − cx` e o ângulo de endireitar troca de sinal; a `origem` do
+    recorte fica como estava; vale para todas as impressões (`compartilhar_recorte`) e é um passo próprio do
+    desfazer ("Desfazer espelhar").
+  - **Rodapé**: a barra de botões é uma `BarraAdaptavel` (textos viram ícones; estreita, somem zoom −/+,
+    Centralizar e Mostrar rostos, que têm atalho ou são pouco usados). "Moldura | Resultado" fica na linha do
+    Endireitar e, com o editor abaixo de `LARGURA_VISTA_AO_LADO` (560 px), desce para baixo dele.
   - **Alças nos cantos** (#6): um "L" em cada canto do papel, laranja sob o mouse. Arrastar uma alça muda só o zoom
     com o **canto oposto parado** (o tamanho acompanha o mouse ao longo da diagonal do papel, da foto inteira a
     `ZOOM_MAXIMO`), com a proporção exata e o recorte dentro da imagem enquanto o zoom é ≥ 1 (empurrado para dentro
@@ -628,7 +643,8 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
 - **Atalhos** (os que existem hoje): Ctrl+I importar fotos · Ctrl+Shift+I importar pasta · Ctrl+E exportar · Ctrl+N
   novo · Ctrl+O abrir · Ctrl+S salvar · Ctrl+Shift+S salvar como · Ctrl+Q sair · Espaço marca/desmarca ·
   Delete remove da grade · Ctrl+Z desfazer · Ctrl+Y / Ctrl+Shift+Z refazer · ← / → foto anterior / seguinte e
-  Home / End primeira / última (foco no editor) · R / Shift+R gira 90° (horário / anti-horário) · O gira o papel
+  Home / End primeira / última (foco no editor) · R / Shift+R gira 90° (horário / anti-horário) · H / Shift+H
+  espelha na horizontal / vertical · O gira o papel
   (retrato ↔ paisagem) ·
   A recorte automático (pelos rostos) · C centralizar · I foto inteira no papel · F favorita (fotos escolhidas na
   grade ou a atual) · `+` / `−` uma cópia a mais / a menos na impressão atual · Ctrl++ / Ctrl+−

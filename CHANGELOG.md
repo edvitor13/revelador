@@ -6,6 +6,23 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.2.1] - 2026-11-15
+
+### Adicionado
+- Espelhar a foto (#59): botão "Espelhar" no editor, na horizontal (H) ou na vertical (Shift+H). Vale para a
+  prévia, o Visualizar e a exportação e para todas as impressões da foto, com desfazer; o enquadramento e o
+  endireitar espelham junto.
+- README atualizado com o que o app faz hoje e a lista de versões.
+
+### Mudado
+- Rodapé do editor: "Moldura | Resultado" foi para a linha do Endireitar (embaixo dele quando o editor está
+  estreito); com pouco espaço, "Centralizar" e "Mostrar rostos" somem da barra (C continua valendo), em vez de os
+  botões ficarem espremidos.
+
+### Compatibilidade
+- `espelho_h`/`espelho_v` no recorte só são gravados quando usados (formato 1); uma versão anterior abre o
+  trabalho sem o espelho.
+
 ## [0.2.0] - 2026-11-15
 
 ### Adicionado

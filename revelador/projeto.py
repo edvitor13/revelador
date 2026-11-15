@@ -55,6 +55,8 @@ class Recorte:
     #                          abaixo de 1 o papel cresce além da foto (fundo em ``Foto.fundo``), até a foto inteira
     angulo: float = 0.0      # endireitar, graus (-45..45), em torno do centro do recorte
     giro: int = 0            # giros de 90° no sentido horário (0..3), sem perda
+    espelho_h: bool = False  # espelhar (esquerda ↔ direita) a imagem orientada SEM giro, antes do giro
+    espelho_v: bool = False  # espelhar (cima ↔ baixo) a imagem orientada SEM giro, antes do giro
     origem: str = "auto"     # "auto" (rostos) | "centro" (sem rosto) | "manual" (a pessoa mexeu)
 
 
@@ -168,6 +170,8 @@ def _recorte_de(d: object, avisos: list[str]) -> Recorte:
         zoom=float(_numero(d.get("zoom"), 1.0, ZOOM_MINIMO, ZOOM_MAXIMO_ARQUIVO, "zoom", avisos)),
         angulo=float(_numero(d.get("angulo"), 0.0, -45.0, 45.0, "angulo", avisos)),
         giro=_inteiro(d.get("giro"), 0, 0, 3, "giro", avisos),
+        espelho_h=d.get("espelho_h") is True,
+        espelho_v=d.get("espelho_v") is True,
         origem=_escolha(d.get("origem"), ORIGENS_RECORTE, "auto", "origem", avisos),
     )
 
@@ -418,7 +422,7 @@ def _impressao_para_dict(i: Impressao) -> dict:
     if i.modo != "preencher":
         d["modo"] = i.modo
     padrao = Recorte()
-    r = {k: getattr(i.recorte, k) for k in ("cx", "cy", "zoom", "angulo", "giro", "origem")
+    r = {k: getattr(i.recorte, k) for k in ("cx", "cy", "zoom", "angulo", "giro", "espelho_h", "espelho_v", "origem")
          if getattr(i.recorte, k) != getattr(padrao, k)}
     if r:
         d["recorte"] = r

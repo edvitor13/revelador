@@ -175,11 +175,17 @@ def reencaixar(recorte: Recorte, W: float, H: float, proporcao: float) -> Recort
     return replace(recorte, cx=r.cx / W, cy=r.cy / H, zoom=max(ZOOM_MINIMO, float(recorte.zoom)), angulo=r.angulo)
 
 
-def girar_rostos(rostos: Iterable[Rosto], giro: int) -> list[Rosto]:
-    """Leva rostos do espaço sem giro para o espaço girado ``giro`` × 90° no sentido horário (normalizado)."""
+def girar_rostos(rostos: Iterable[Rosto], giro: int, espelho_h: bool = False,
+                 espelho_v: bool = False) -> list[Rosto]:
+    """Leva rostos do espaço sem giro para o espaço girado ``giro`` × 90° no sentido horário (normalizado), depois de
+    espelhar (``espelho_h``: esquerda ↔ direita; ``espelho_v``: cima ↔ baixo), como ``receita.girar``."""
     k = int(giro) % 4
 
     def ponto(x: float, y: float) -> tuple[float, float]:
+        if espelho_h:
+            x = 1.0 - x
+        if espelho_v:
+            y = 1.0 - y
         if k == 1:
             return 1.0 - y, x
         if k == 2:
@@ -340,8 +346,8 @@ def recorte_sugerido(impressao: Impressao, largura: int, altura: int, rostos: It
 
     ``largura × altura`` e ``rostos`` são da imagem orientada SEM giro (como ``imagem.InfoFoto`` e ``Foto.rostos``).
     Aplica o giro da impressão, resolve a orientação ("auto" segue a imagem girada) e a proporção do papel, converte a
-    margem de corte (mm) em fração do lado menor do papel e chama ``recorte_automatico``. O giro da impressão é
-    mantido. Quem chama só substitui o recorte quando ``origem != "manual"``.
+    margem de corte (mm) em fração do lado menor do papel e chama ``recorte_automatico``. O giro e o espelhamento da
+    impressão são mantidos. Quem chama só substitui o recorte quando ``origem != "manual"``.
     """
     giro = int(impressao.recorte.giro) % 4
     W, H = (altura, largura) if giro % 2 else (largura, altura)
@@ -349,5 +355,6 @@ def recorte_sugerido(impressao: Impressao, largura: int, altura: int, rostos: It
     prop = tamanhos.proporcao(impressao.tamanho, orientacao, impressao.papel_mm)
     menor, _maior = tamanhos.papel_mm(impressao.tamanho, impressao.papel_mm)
     margem = margem_corte_mm / menor if menor > 0 else 0.0
-    recorte = recorte_automatico(W, H, prop, girar_rostos(rostos or (), giro), margem)
-    return replace(recorte, giro=giro)
+    h, v = bool(impressao.recorte.espelho_h), bool(impressao.recorte.espelho_v)
+    recorte = recorte_automatico(W, H, prop, girar_rostos(rostos or (), giro, h, v), margem)
+    return replace(recorte, giro=giro, espelho_h=h, espelho_v=v)
