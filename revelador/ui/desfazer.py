@@ -1,7 +1,7 @@
 """Desfazer/refazer do trabalho (#5): passos de antes/depois sobre "fotografias" do estado editável.
 
 O ``Estado`` guarda uma fotografia do que a pessoa edita em cada foto (``selecionada``, cópia profunda de
-``impressoes`` e de ``ajustes``) e de ``trabalho.pastas``. Quando alguém avisa uma mudança (``alterar``,
+``impressoes`` e de ``ajustes``, ``favorita`` e ``fundo``) e de ``trabalho.pastas``. Quando alguém avisa uma mudança (``alterar``,
 ``alterar_pastas``, ``remover``), o ``Estado`` compara com a fotografia anterior e, se mudou, empilha um ``Passo``
 com o antes e o depois. Desfazer/refazer só recoloca fotografias (e refaz os recortes automáticos, que dependem dos
 metadados e dos rostos do momento); nada aqui conhece widget.
@@ -21,7 +21,7 @@ from PySide6.QtGui import QUndoCommand
 
 from ..i18n import _
 from ..imagem import InfoFoto
-from ..projeto import Foto, Impressao, Pasta
+from ..projeto import FUNDO_PADRAO, Foto, Impressao, Pasta
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -31,15 +31,17 @@ if TYPE_CHECKING:
 
 @dataclass
 class Fotografia:
-    """O que a pessoa edita numa foto: marca de revelação, impressões (com recortes) e ajustes."""
+    """O que a pessoa edita numa foto: marca de revelação, impressões (com recortes), ajustes, estrela e fundo."""
 
     selecionada: bool
     impressoes: list[Impressao]
     ajustes: dict[str, float]
+    favorita: bool = False
+    fundo: str = FUNDO_PADRAO
 
 
 def fotografar(foto: Foto) -> Fotografia:
-    return Fotografia(foto.selecionada, copy.deepcopy(foto.impressoes), dict(foto.ajustes))
+    return Fotografia(foto.selecionada, copy.deepcopy(foto.impressoes), dict(foto.ajustes), foto.favorita, foto.fundo)
 
 
 def restaurar(foto: Foto, f: Fotografia) -> None:
@@ -47,6 +49,8 @@ def restaurar(foto: Foto, f: Fotografia) -> None:
     foto.selecionada = f.selecionada
     foto.impressoes = copy.deepcopy(f.impressoes)
     foto.ajustes = dict(f.ajustes)
+    foto.favorita = f.favorita
+    foto.fundo = f.fundo
 
 
 @dataclass
@@ -81,6 +85,10 @@ def _descrever_foto(m: MudancaFoto) -> str:
         return _("marcação") if d.selecionada else _("desmarcação")
     if a.ajustes != d.ajustes:
         return _("ajustes")
+    if a.favorita != d.favorita:
+        return _("favorita") if d.favorita else _("tirar das favoritas")
+    if a.fundo != d.fundo:
+        return _("cor de fundo")
     if len(a.impressoes) != len(d.impressoes):
         return _("novo tamanho") if len(d.impressoes) > len(a.impressoes) else _("remoção de tamanho")
     for ia, idp in zip(a.impressoes, d.impressoes):

@@ -50,6 +50,7 @@ class Recorte:
     cx: float = 0.5          # centro, normalizado à imagem orientada E girada (giro aplicado)
     cy: float = 0.5
     zoom: float = 1.0        # 1 = maior recorte possível nessa proporção; 2 = metade da largura...
+                             # < 1 = papel além da foto, com fundo (até a foto inteira; ZOOM_MINIMO = 0,05)
     angulo: float = 0.0      # endireitar, graus, -45..45, em torno do centro do recorte
     giro: int = 0            # giros de 90° no sentido horário (0..3), sem perda
     origem: str = "auto"     # "auto" (rostos) | "centro" (sem rosto) | "manual" (a pessoa mexeu)
@@ -59,7 +60,7 @@ class Impressao:
     tamanho: str = "10x15"   # id de tamanhos.TAMANHOS
     copias: int = 1
     orientacao: str = "auto" # "auto" (segue a foto) | "retrato" | "paisagem"
-    modo: str = "preencher"  # "preencher" (corta na proporção) | "caber" (foto inteira com borda branca)
+    modo: str = "preencher"  # "preencher" (corta na proporção) | "caber" (foto inteira sobre o fundo da foto)
     recorte: Recorte = field(default_factory=Recorte)
     papel_mm: tuple[float, float] | None = None  # só no tamanho "personalizado" (seção 4)
     preco_centavos: int | None = None            # só no personalizado: valor por cópia (seção 13)
@@ -84,6 +85,8 @@ class Foto:
     ajustes: dict[str, float] = field(default_factory=dict)   # só chaves fora do padrão
     rostos: list[Rosto] | None = None                         # None = ainda não detectado; [] = nenhum
     impressoes: list[Impressao] = field(default_factory=list) # vazia até ser selecionada
+    favorita: bool = False   # estrela da pessoa (#56): filtro "Favoritas"; não muda a revelação
+    fundo: str = "#ffffff"   # "#rrggbb" onde a foto não cobre o papel (#53: zoom < 1 e modo caber)
 
 @dataclass
 class Trabalho:
@@ -93,6 +96,7 @@ class Trabalho:
     margem_corte_mm: float = 2.0
     caminho: Path | None = None  # o .revelador, quando salvo
     pastas: list[Pasta] = field(default_factory=list)  # na ordem da tela
+    ultima_foto: str | None = None  # id da última foto aberta (#55): o trabalho reabre nela
 ```
 
 - Os **ajustes são da foto** (valem para todas as impressões dela); o **recorte é da impressão** (cada papel tem
@@ -106,7 +110,8 @@ class Trabalho:
   (mantém cópias e recorte), em vez de a foto sair revelada duas vezes; uma foto desmarcada descarta as avulsas que
   guardava e entra só no tamanho da pasta. Tudo pela API do `Estado` (seção 10), nunca mexendo nas listas à mão.
 - **Desfazer/refazer** (#5, `ui/desfazer.py`): um `QUndoStack` por trabalho (`Estado.pilha`). O `Estado` guarda uma
-  *fotografia* do que é editável em cada foto (`selecionada`, `impressoes`, `ajustes`) e de `trabalho.pastas`;
+  *fotografia* do que é editável em cada foto (`selecionada`, `impressoes`, `ajustes`, `favorita`, `fundo`) e de
+  `trabalho.pastas`;
   `alterar`, `alterar_pastas` e `remover` comparam com ela e empilham o antes/depois. Entram marcar/desmarcar,
   impressões (tamanho, cópias, orientação, modo, adicionar/remover), recortes, ajustes, pastas e tirar fotos do
   trabalho (desfazer põe a foto de volta no mesmo lugar, com metadados e miniatura). Mudanças do sistema (importação,
@@ -184,7 +189,15 @@ coluna de px é a 300 dpi (`round(mm / 25,4 × dpi)`). IDs sem acento e **nunca 
 Imagem orientada e girada com `W × H` px; proporção do papel `r = largura/altura` (na orientação da impressão).
 
 - **Maior recorte sem rotação**: se `W/H > r`, `h₀ = H, w₀ = H·r`; senão `w₀ = W, h₀ = W/r`. Com zoom:
-  `w = w₀/zoom`, `h = h₀/zoom` (`zoom ≥ 1` no modo *preencher*).
+  `w = w₀/zoom`, `h = h₀/zoom` (`zoom ≥ 1`: o recorte nunca sai da imagem).
+- **Afastar além da foto** (#53, `zoom < 1`): o papel cresce `1/zoom` vezes a partir do maior recorte que cabe no
+  ângulo (`w_θ/zoom`) até conter a foto inteira (`tamanho_foto_inteira(W, H, r, θ)`: a caixa da imagem vista girada
+  no papel, na proporção `r`) e não passa disso. Onde ele passa da imagem, a receita pinta a cor de fundo da foto. No
+  lado em que o papel é maior que a imagem, o centro é limitado para a imagem não sair do papel (ela anda dentro
+  dele). `zoom = ZOOM_MINIMO` (0,05) é sempre "a foto inteira", em qualquer papel (botão "Foto inteira", #54).
+  `zoom_efetivo` (o que se vê: `w₀/w`), `zoom_minimo` (o da foto inteira) e `zoom_gravado` (inverso do efetivo no
+  ângulo) servem ao editor; `com_fundo(ret, W, H)` diz se há fundo à vista. Com `zoom ≥ 1` a geometria é exatamente
+  a de antes (trabalhos antigos não mudam).
 - **Com endireitar (ângulo θ)**: o recorte girado cabe na imagem se a caixa envolvente cabe:
   `w·|cos θ| + h·|sin θ| ≤ W` e `w·|sin θ| + h·|cos θ| ≤ H`. Daí o maior `w` possível; o zoom efetivo nunca deixa
   o recorte sair da imagem (sem cantos vazios).
@@ -287,9 +300,13 @@ Passos:
    amostra do destino para a fonte com `matriz_destino_fonte`. Quando a redução é grande, a região que interessa
    é reduzida antes com `INTER_AREA` (sem serrilhado), até ~1 px de fonte por px de destino.
 3. **Ajustes** (`ajustes.aplicar`) já no tamanho de destino, com a escala em px por mm de papel.
-4. **Modo *caber***: a foto inteira (só o giro; **ângulo e zoom são ignorados**) centralizada sobre papel branco nos
-   px exatos do destino; os ajustes valem só para a foto, não para a borda.
-5. Saída: para a tela, `para_uint8` → `QImage`; para a exportação, `para_uint8` → JPEG.
+4. **Fundo** (#53, só quando o recorte passa da imagem, `zoom < 1`): `renderizar(..., fundo="#rrggbb")` (a cor da
+   foto; `None` = branco) pinta onde o destino cai fora da imagem, **depois** dos ajustes (eles valem só para a
+   foto). A borda é suavizada pela cobertura de cada px (distância do centro do px à borda da imagem, em px de
+   destino, mais meio px, limitada a 0..1 nos dois eixos), em blocos de linhas para limitar a memória.
+5. **Modo *caber***: a foto inteira (só o giro; **ângulo e zoom são ignorados**) centralizada sobre a cor de fundo
+   da foto (branco por padrão) nos px exatos do destino; os ajustes valem só para a foto, não para a borda.
+6. Saída: para a tela, `para_uint8` → `QImage`; para a exportação, `para_uint8` → JPEG.
 
 - **Convenção do ângulo**: `angulo > 0` gira a **foto** no sentido horário no resultado (o retângulo do recorte
   gira no sentido anti-horário sobre a imagem).
@@ -446,6 +463,12 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   pasta); impressão com uma pasta que não existe, ou a segunda da mesma pasta na mesma foto, vira avulsa; o tamanho de
   uma impressão de pasta é sempre o da pasta. Arquivo antigo sem pastas abre igual; `tests/data/exemplo_pastas.revelador`
   é o exemplo do formato com pastas.
+- **Campos da 0.2.0 (ainda no formato 1, compatíveis com as versões anteriores)**: na foto, `favorita: true` (#56)
+  e `fundo: "#rrggbb"` (#53) só quando fora do padrão; no recorte, `zoom` pode ficar abaixo de 1 (até `ZOOM_MINIMO`
+  = 0,05); no topo, `ultima_foto` (#55, id de uma foto do trabalho). Uma versão anterior abre o arquivo normalmente:
+  ignora os campos que não conhece e limita o zoom a 1 (com o aviso de valor fora da faixa) — a foto sai cortada
+  como antes, sem o fundo. Na leitura: `favorita` que não é `true` vale falso; `fundo` inválido vira branco, com
+  aviso; `ultima_foto` de uma foto que não existe é ignorada.
 - Gravação segura por `projeto.gravar_texto_seguro()` (`.tmp` na mesma pasta + `os.replace`).
 - **Salvamento automático** (#34, `ui/autosalvar.py`, `AutoSalvar`, na janela como `autosalvar`): a cada intervalo
   (padrão **1 min**), se o trabalho tem alterações, ele é gravado sozinho, sem perguntar: o texto é montado na thread
@@ -483,6 +506,12 @@ aviso. Formato maior que `FORMATO` é recusado com aviso ("feito por uma versão
   fotos e pastas soltas junto entram depois no trabalho aberto (se a pessoa cancelar, nada entra). **Linha de comando**:
   `app.separar_argumentos` manda o primeiro `.revelador` para `projeto_ui.abrir` e o resto (fotos e pastas) para a
   importação.
+- **Continuar de onde parou** (#55): `Estado.definir_atual` guarda o id em `trabalho.ultima_foto` (não conta como
+  alteração) e `ProjetoUi.lembrar_foto` guarda também na preferência `projeto/ultimas_fotos` (JSON `{caminho do
+  .revelador: id}`, as 50 mais recentes) — assim vale mesmo quando a pessoa só navegou e não havia nada para salvar.
+  Ao abrir (inclusive pelos recentes, boas-vindas, linha de comando e recuperação), `ProjetoUi.retomar` escolhe a foto
+  da preferência ou, sem ela, a do arquivo; a grade a seleciona e rola até ela, o editor a abre e a barra de status
+  diz "Continuando de onde você parou: …".
 
 ## 10. Interface
 
@@ -562,10 +591,17 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
   pela receita. Rodapé (`Rodape`) com a informação do tamanho e da resolução, ícones de girar 90°, **Girar papel**
   (retrato ↔ paisagem, `O`), zoom −/+, rostos, "Enquadrar pelos rostos" (numa foto ainda sem detecção, pede os
   rostos na hora e refaz o recorte quando chegam) e o slider de endireitar.
+  - **Fundo e foto inteira** (#53, #54): afastar (roda, Ctrl+−, −, alças) continua depois de encostar na foto: o
+    papel cresce até a foto inteira e as sobras mostram a cor de fundo da foto ("· com fundo" na informação); o visor
+    passa a caber o papel inteiro (`Tela.extensao`) e pinta o fundo dentro dele (`Tela.cor_fundo`). **Foto inteira**
+    (`I`, `Editor.foto_inteira`, também "Foto inteira no papel" no menu da grade para várias fotos:
+    `Estado.foto_inteira`) grava `zoom = ZOOM_MINIMO` centralizado em todas as impressões. **Fundo** (botão com a
+    amostra da cor): Branco, Preto ou "Outra cor…" (`QColorDialog`), por foto (`Estado.definir_fundo`, desfazer).
+  - **Favorita** (#56): estrela na faixa do topo do editor (e `F` na janela).
   - **Alças nos cantos** (#6): um "L" em cada canto do papel, laranja sob o mouse. Arrastar uma alça muda só o zoom
-    com o **canto oposto parado** (o tamanho acompanha o mouse ao longo da diagonal do papel, zoom de 1 a
-    `ZOOM_MAXIMO`), com a proporção exata e o recorte sempre dentro da imagem (empurrado para dentro quando o canto
-    oposto não pode ficar parado); o cursor de redimensionar acompanha o endireitar; o recorte vira `"manual"`.
+    com o **canto oposto parado** (o tamanho acompanha o mouse ao longo da diagonal do papel, da foto inteira a
+    `ZOOM_MAXIMO`), com a proporção exata e o recorte dentro da imagem enquanto o zoom é ≥ 1 (empurrado para dentro
+    quando o canto oposto não pode ficar parado); puxado para fora, o papel passa da foto (com fundo); o cursor de redimensionar acompanha o endireitar; o recorte vira `"manual"`.
     Durante o arrasto só a moldura é redesenhada. Sem alças no modo *caber* e no Resultado. Gesto chamável direto:
     `Editor.puxar_canto(canto, ponto)`.
   - **←/→ entre as fotos** (#6): com o foco no visor ou no rodapé do editor (o editor aceita foco por clique), ← e →
@@ -594,8 +630,10 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
   Delete remove da grade · Ctrl+Z desfazer · Ctrl+Y / Ctrl+Shift+Z refazer · ← / → foto anterior / seguinte e
   Home / End primeira / última (foco no editor) · R / Shift+R gira 90° (horário / anti-horário) · O gira o papel
   (retrato ↔ paisagem) ·
-  A recorte automático (pelos rostos) · `+` / `−` uma cópia a mais / a menos na impressão atual · Ctrl++ / Ctrl+−
-  zoom · Ctrl + roda do mouse sobre a grade muda o tamanho das miniaturas · **segurar `\`** mostra o antes/depois ·
+  A recorte automático (pelos rostos) · C centralizar · I foto inteira no papel · F favorita (fotos escolhidas na
+  grade ou a atual) · `+` / `−` uma cópia a mais / a menos na impressão atual · Ctrl++ / Ctrl+−
+  zoom (afastar passa da foto, com fundo) · F5 Visualizar (lá: F favorita, F11 tela cheia, Esc sai da tela cheia ou
+  fecha) · Ctrl + roda do mouse sobre a grade muda o tamanho das miniaturas · **segurar `\`** mostra o antes/depois ·
   Ctrl+Shift+C / Ctrl+Shift+V copiar/colar ajustes.
 - **Arrastar e soltar** fotos e pastas na janela importa (recursivo, só formatos suportados); um `.revelador` solto
   abre o trabalho (seção 9).

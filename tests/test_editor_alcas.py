@@ -17,7 +17,7 @@ from PySide6.QtGui import QDropEvent, QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 app = QApplication(sys.argv[:1])
-from revelador import imagem, projeto, receita
+from revelador import enquadramento, imagem, projeto, receita
 from revelador.projeto import Foto, Impressao, Recorte, Trabalho
 from revelador.ui.editor import Editor, ZOOM_MAXIMO
 from revelador.ui.estado import Estado
@@ -117,10 +117,11 @@ for canto in range(4):
     assert math.dist(cantos(ed, imp)[(canto + 2) % 4], op) < 1e-6
     dentro(ed, imp)
 
-# para fora da imagem: zoom 1 (o maior papel), empurrado para dentro
+# para fora da imagem: o papel passa da foto até a foto inteira (com fundo), nunca mais que isso
 assert ed.puxar_canto(2, (5.0, 5.0))
-assert imp.recorte.zoom == 1.0
-dentro(ed, imp)
+prop = receita.proporcao(imp, *ed._dims())
+r = receita.retangulo_da_impressao(imp, *ed._dims())
+assert imp.recorte.zoom < 1.0 and abs(r.w - enquadramento.tamanho_foto_inteira(W, H, prop)[0]) < 1e-6
 # por cima do canto oposto: o menor papel (ZOOM_MAXIMO), nunca invertido
 ed.puxar_canto(0, (5.0, 5.0))
 assert imp.recorte.zoom == ZOOM_MAXIMO
@@ -137,7 +138,13 @@ assert math.dist(cantos(ed, imp)[3], op) < 1e-6 and imp.recorte.angulo == 12.0
 for alvo in ((0.0, 0.0), (1.0, 1.0), (0.5, 0.5), (-3.0, 2.0)):
     for canto in range(4):
         ed.puxar_canto(canto, alvo)
-        dentro(ed, imp)
+        if imp.recorte.zoom >= 1.0:
+            dentro(ed, imp)
+        else:      # puxado para fora: o papel passa da foto (com fundo), na proporção e no máximo a foto inteira
+            r = receita.retangulo_da_impressao(imp, *ed._dims())
+            prop = receita.proporcao(imp, *ed._dims())
+            assert abs(r.w / r.h - prop) < 1e-9
+            assert r.w <= enquadramento.tamanho_foto_inteira(W, H, prop, r.angulo)[0] + 1e-6
 
 # sem mudança real: nada acontece
 n = len(avisos)

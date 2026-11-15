@@ -1,7 +1,11 @@
 """Visualizar: passa pelas fotos e mostra como cada uma vai sair no papel, em cada tamanho que vai ser revelado.
 
 Cada impressão é desenhada pela receita única (``RenderizarPrevia``, a mesma da prévia do editor), lado a lado,
-com o rótulo "10x15 ×2" embaixo. ←/→ (ou os botões) passam as fotos; Esc fecha. Nada é alterado no trabalho.
+com o rótulo "10x15 ×2" embaixo. ←/→ (ou os botões) passam as fotos; Esc fecha. Só a estrela de favorita (F ou o botão)
+muda o trabalho.
+
+A janela tem os botões de maximizar e minimizar do sistema, "Maximizar" e "Tela cheia" (F11; Esc sai da tela cheia
+antes de fechar). Ela lembra se estava maximizada (``visualizar/maximizada`` nas preferências).
 """
 
 from __future__ import annotations
@@ -13,11 +17,14 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLa
 from .. import receita
 from ..i18n import _
 from ..projeto import Foto
+from . import icones, prefs, tema
+from .componentes import botao_plano
 from .editor import rotulo_impressao
 from .estado import Estado
 from .previa import CarregarProxy, RenderizarPrevia, Sinais, para_qimage
 
 ESPACO = 16   # px entre as impressões lado a lado
+PREF_MAXIMIZADA = "visualizar/maximizada"
 INTEIRA = -1  # chave da coluna da foto inteira (modo comparar)
 
 
@@ -35,6 +42,8 @@ class VisualizarDialog(QDialog):
         self.indice = max(0, min(inicio, len(fotos) - 1))
         self.setWindowTitle(_("Comparar fotos parecidas") if comparar else _("Visualizar a revelação"))
         self.setObjectName("Panel")
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowSystemMenuHint
+                            | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
         self.resize(1200, 820)
         self.sinais = Sinais(self)
         self.sinais.proxy_pronto.connect(self._proxy_pronto)
@@ -62,12 +71,22 @@ class VisualizarDialog(QDialog):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
         self.botao_ant.clicked.connect(lambda: self.passar(-1))
         self.botao_prox.clicked.connect(lambda: self.passar(+1))
+        self.botao_favorita = botao_plano("estrela", _("Favorita: põe ou tira a estrela desta foto (F)"))
+        self.botao_favorita.clicked.connect(self.alternar_favorita)
+        self.botao_maximizar = botao_plano("maximizar", _("Maximizar a janela"), _("Maximizar"))
+        self.botao_maximizar.clicked.connect(self.alternar_maximizada)
+        self.botao_tela_cheia = botao_plano("tela_cheia", _("Tela cheia (F11)"), _("Tela cheia"))
+        self.botao_tela_cheia.clicked.connect(self.alternar_tela_cheia)
         topo = QHBoxLayout()
+        topo.addWidget(self.botao_favorita)
         topo.addWidget(self.titulo, 1)
         topo.addWidget(self.contador)
+        topo.addSpacing(8)
+        topo.addWidget(self.botao_maximizar)
+        topo.addWidget(self.botao_tela_cheia)
         base = QHBoxLayout()
         base.addWidget(self.botao_ant)
-        dica = QLabel(_("← → passam as fotos · Esc fecha"))
+        dica = QLabel(_("← → passam as fotos · F favorita · F11 tela cheia · Esc fecha"))
         dica.setObjectName("Faint")
         base.addStretch(1)
         base.addWidget(dica)
@@ -81,7 +100,68 @@ class VisualizarDialog(QDialog):
         raiz.addLayout(base)
         self._timer = QTimer(self, singleShot=True, interval=80)
         self._timer.timeout.connect(self._renderizar)
+        self._maximizada_antes = False   # como estava antes da tela cheia (para voltar igual)
+        if _preferencia_maximizada():
+            self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
+        self._atualizar_botoes_janela()
         self.mostrar()
+
+    # ------------------------------------------------------------ janela: maximizar e tela cheia
+    @property
+    def tela_cheia(self) -> bool:
+        return bool(self.windowState() & Qt.WindowState.WindowFullScreen)
+
+    @property
+    def maximizada(self) -> bool:
+        return bool(self.windowState() & Qt.WindowState.WindowMaximized)
+
+    def alternar_tela_cheia(self) -> None:
+        """Entra ou sai da tela cheia (F11). Ao sair, volta como estava (maximizada ou não)."""
+        if self.tela_cheia:
+            estado = Qt.WindowState.WindowMaximized if self._maximizada_antes else Qt.WindowState.WindowNoState
+            self.setWindowState(estado)
+        else:
+            self._maximizada_antes = self.maximizada
+            self.setWindowState(Qt.WindowState.WindowFullScreen)
+        self._atualizar_botoes_janela()
+
+    def alternar_maximizada(self) -> None:
+        """Maximiza ou restaura a janela (na tela cheia, sai dela maximizada). Lembrado para a próxima vez."""
+        if self.tela_cheia or not self.maximizada:
+            self.setWindowState(Qt.WindowState.WindowMaximized)
+        else:
+            self.setWindowState(Qt.WindowState.WindowNoState)
+        self._atualizar_botoes_janela()
+
+    def changeEvent(self, e) -> None:  # noqa: N802 - nome do Qt
+        super().changeEvent(e)
+        if e.type() == e.Type.WindowStateChange and hasattr(self, "botao_tela_cheia"):
+            self._atualizar_botoes_janela()
+            if not self.tela_cheia:
+                _lembrar_maximizada(self.maximizada)
+
+    def _atualizar_botoes_janela(self) -> None:
+        cheia = self.tela_cheia
+        self.botao_tela_cheia.setText(_("Sair da tela cheia") if cheia else _("Tela cheia"))
+        self.botao_tela_cheia.setToolTip(_("Sair da tela cheia (F11 ou Esc)") if cheia else _("Tela cheia (F11)"))
+        restaurar = self.maximizada and not cheia
+        self.botao_maximizar.setText(_("Restaurar") if restaurar else _("Maximizar"))
+        self.botao_maximizar.setToolTip(_("Restaurar o tamanho da janela") if restaurar else _("Maximizar a janela"))
+
+    # ------------------------------------------------------------ favorita
+    def alternar_favorita(self) -> None:
+        """Põe ou tira a estrela da foto mostrada (entra no desfazer do trabalho)."""
+        foto = self.foto
+        if foto is not None:
+            self.estado.favoritar([foto], not foto.favorita)
+            self._atualizar_favorita()
+
+    def _atualizar_favorita(self) -> None:
+        foto = self.foto
+        favorita = foto is not None and foto.favorita
+        self.botao_favorita.setEnabled(foto is not None)
+        self.botao_favorita.setIcon(icones.icone("estrela_cheia", tema.FAVORITA, 18) if favorita
+                                    else icones.icone("estrela", tema.APAGADO, 18))
 
     # ------------------------------------------------------------ navegação
     @property
@@ -99,6 +179,12 @@ class VisualizarDialog(QDialog):
             self.passar(-1)
         elif e.key() in (Qt.Key.Key_Right, Qt.Key.Key_Down, Qt.Key.Key_PageDown, Qt.Key.Key_Space):
             self.passar(+1)
+        elif e.key() == Qt.Key.Key_F11:
+            self.alternar_tela_cheia()
+        elif e.key() == Qt.Key.Key_Escape and self.tela_cheia:
+            self.alternar_tela_cheia()     # Esc na tela cheia só sai dela; outro Esc fecha
+        elif e.key() == Qt.Key.Key_F and e.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self.alternar_favorita()
         else:
             super().keyPressEvent(e)
 
@@ -118,6 +204,7 @@ class VisualizarDialog(QDialog):
             if item.widget() is not None:
                 item.widget().deleteLater()
         foto = self.foto
+        self._atualizar_favorita()
         self.botao_ant.setEnabled(self.indice > 0)
         self.botao_prox.setEnabled(self.indice < len(self.fotos) - 1)
         if foto is None:
@@ -202,7 +289,7 @@ class VisualizarDialog(QDialog):
             w, h = receita.destino_na_caixa(imp, largura, altura, imagem.width() - 8, imagem.height() - 8)
             ger = self._geracao * 1000 + n
             QThreadPool.globalInstance().start(RenderizarPrevia(self.sinais, ger, self._proxy, imp,
-                                                                foto.ajustes, (w, h)))
+                                                                foto.ajustes, (w, h), foto.fundo))
 
     def _previa_pronta(self, geracao: int, imagem) -> None:
         if geracao // 1000 != self._geracao:
@@ -210,6 +297,15 @@ class VisualizarDialog(QDialog):
         alvo = self._imagens.get(geracao % 1000)
         if alvo is not None:
             alvo.setPixmap(QPixmap.fromImage(imagem))
+
+
+def _preferencia_maximizada() -> bool:
+    valor = prefs.settings().value(PREF_MAXIMIZADA, False)
+    return valor is True or str(valor).lower() == "true"
+
+
+def _lembrar_maximizada(sim: bool) -> None:
+    prefs.settings().setValue(PREF_MAXIMIZADA, bool(sim))
 
 
 def fotos_para_visualizar(estado: Estado, visiveis: list[Foto]) -> list[Foto]:

@@ -55,6 +55,7 @@ SELECAO = "rgba(255, 122, 69, 0.20)"  # fundo de item selecionado (grade, tabela
 OK = "#4cc38a"
 AVISO = "#f2c14e"    # resolução aceitável
 PERIGO = "#f06573"   # resolução baixa, erro
+FAVORITA = AVISO     # a estrela das fotos favoritas (grade, editor, Visualizar)
 
 # ---------------------------------------------------------------- editor
 CANVAS_EDITOR = "#262626"  # fundo atrás da foto no editor: cinza escuro sem matiz

@@ -13,6 +13,7 @@ Sinais:
 - ``modificado_mudou(bool)``: o trabalho passou a ter (ou deixou de ter) alterações não salvas.
 - ``comparando_mudou(bool)``: antes/depois (``comparando``): enquanto verdadeiro, o editor mostra a foto sem ajustes.
 - ``pastas_mudaram()``: a lista de pastas de tamanho (``trabalho.pastas``) ou algo de uma pasta mudou (#32).
+- ``favoritas_mudaram()``: alguma foto ganhou ou perdeu a estrela (``favoritar``; desfazer avisa por ``pedido_mudou``).
 - ``rostos_pedidos(id)``: alguém quer os rostos desta foto já (``pedir_rostos``); a fila de rostos a põe na frente.
 - ``exportando_mudou(bool)``: a exportação começou/terminou (``definir_exportando``); a fila de rostos pausa.
 
@@ -47,7 +48,8 @@ from .. import enquadramento, tamanhos
 from ..enquadramento import recorte_sugerido
 from ..i18n import _
 from ..imagem import InfoFoto
-from ..projeto import COPIAS_MAX, COPIAS_MIN, Foto, Impressao, Pasta, Rosto, Trabalho
+from ..projeto import (COPIAS_MAX, COPIAS_MIN, FUNDO_PADRAO, ZOOM_MINIMO, Foto, Impressao, Pasta, Recorte, Rosto,
+                       Trabalho, cor_valida)
 from . import tema
 from .desfazer import (Fotografia, Mudanca, MudancaFoto, MudancaPastas, MudancaRemocao, Passo, descrever, fotografar,
                        restaurar)
@@ -72,6 +74,7 @@ class Estado(QObject):
     modificado_mudou = Signal(bool)
     comparando_mudou = Signal(bool)
     pastas_mudaram = Signal()
+    favoritas_mudaram = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -159,9 +162,13 @@ class Estado(QObject):
         self.marcar_modificado()
 
     def definir_atual(self, foto: Foto | None) -> None:
+        """Outra foto passa a ser a atual. Ela fica lembrada no trabalho (``ultima_foto``) para reabrir nela; isso não
+        conta como alteração (não pede para salvar)."""
         if foto is self.atual:
             return
         self.atual = foto
+        if foto is not None:
+            self.trabalho.ultima_foto = foto.id
         self.indice_impressao = 0
         self.atual_mudou.emit(foto)
 
@@ -305,6 +312,40 @@ class Estado(QObject):
             self.refazer_recortes_auto(principal)
             self.alterar(principal, pedido=True)
             self.remover(outras)
+
+    def favoritar(self, fotos: list[Foto], sim: bool = True) -> None:
+        """Põe (ou tira) a estrela de favorita nas fotos, num passo só do desfazer. Não muda o pedido."""
+        mudar = [f for f in fotos if f.favorita != sim]
+        if not mudar:
+            return
+        with self.lote(_("favorita") if sim else _("tirar das favoritas")):
+            for foto in mudar:
+                foto.favorita = sim
+                self.alterar(foto)
+        self.favoritas_mudaram.emit()
+
+    def definir_fundo(self, fotos: list[Foto], cor: str) -> None:
+        """Cor de fundo (``"#rrggbb"``) das fotos: aparece onde a foto não cobre o papel. Um passo só do desfazer."""
+        cor = cor_valida(cor) or FUNDO_PADRAO
+        mudar = [f for f in fotos if f.fundo != cor]
+        if not mudar:
+            return
+        with self.lote(_("cor de fundo")):
+            for foto in mudar:
+                foto.fundo = cor
+                self.alterar(foto)
+
+    def foto_inteira(self, fotos: list[Foto]) -> None:
+        """A foto inteira no papel, centralizada, com o fundo nas sobras (``zoom = ZOOM_MINIMO``): vira recorte manual
+        e vale para todas as impressões (cada papel mostra a foto inteira). Fotos sem impressão não mudam."""
+        with self.lote(_("foto inteira")):
+            for foto in fotos:
+                if not foto.impressoes:
+                    continue
+                for imp in foto.impressoes:
+                    imp.recorte = Recorte(cx=0.5, cy=0.5, zoom=ZOOM_MINIMO, angulo=imp.recorte.angulo,
+                                          giro=imp.recorte.giro, origem="manual")
+                self.alterar(foto)
 
     def alterar(self, foto: Foto, *, pedido: bool = False, juntar: str | None = None) -> None:
         """Avisa que a foto mudou (quem mexeu no modelo chama isto). ``pedido=True`` se afeta orçamento/exportação.

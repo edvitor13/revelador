@@ -5,8 +5,11 @@ Fala só com o ``Estado``: lê ``trabalho.fotos``, ``miniaturas`` e ``erros`` e 
 Delete tira do trabalho (nunca do disco, sem confirmação); setas navegam. A miniatura é lida do cache em disco
 sob demanda, só das células visíveis, com um cache pequeno de ``QPixmap``.
 
-Clique direito abre o menu de contexto das fotos escolhidas (``Grade.menu_contexto``): marcar/desmarcar, tamanho e
-cópias para todas de uma vez, "Adicionar à pasta ▸"/"Tirar da pasta ▸" (pastas de tamanho, #32), "Procurar…" (se
+A estrela no canto superior direito da miniatura (``rect_estrela``) põe ou tira a foto das favoritas; o filtro
+"Favoritas" mostra só elas.
+
+Clique direito abre o menu de contexto das fotos escolhidas (``Grade.menu_contexto``): marcar/desmarcar, favoritar,
+tamanho e cópias para todas de uma vez, "Foto inteira no papel", "Adicionar à pasta ▸"/"Tirar da pasta ▸" (pastas de tamanho, #32), "Procurar…" (se
 alguma falta no disco; sinal ``procurar_pedido``) e remover. Cada ação em várias fotos é um passo só do desfazer
 (``estado.lote``).
 
@@ -54,7 +57,8 @@ SEM_PASTA = "__sem_pasta__"   # valor do filtro da grade: fotos marcadas fora de
 COM_COPIAS = "__com_copias__"  # filtro: fotos marcadas com algum tamanho em mais de uma cópia
 UMA_COPIA = "__uma_copia__"    # filtro: fotos marcadas só com uma cópia de cada tamanho
 REPETIDAS = "__repetidas__"    # filtro: fotos parecidas com outra (arquivos diferentes; ui/repetidas.py)
-FILTROS_ESPECIAIS = (SEM_PASTA, COM_COPIAS, UMA_COPIA, REPETIDAS)
+FAVORITAS = "__favoritas__"    # filtro: fotos com a estrela
+FILTROS_ESPECIAIS = (SEM_PASTA, COM_COPIAS, UMA_COPIA, REPETIDAS, FAVORITAS)
 LARGURA_MAIS = 15       # zona do "−" (à esquerda) e do "+" (à direita) dentro de cada chip
 LIMITE_PIXMAPS = 400
 PAPEL_FOTO = Qt.ItemDataRole.UserRole
@@ -109,6 +113,13 @@ def rect_marca(celula: QRect) -> QRect:
     miniatura = rect_miniatura(celula)
     lado = max(14, min(TAMANHO_MARCA, round(miniatura.width() * 0.16)))
     return QRect(miniatura.left() + 8, miniatura.top() + 8, lado, lado)
+
+
+def rect_estrela(celula: QRect) -> QRect:
+    """Retângulo da estrela de favorita (canto superior direito da miniatura); mesmo tamanho da marca."""
+    miniatura = rect_miniatura(celula)
+    lado = rect_marca(celula).width()
+    return QRect(miniatura.right() - 7 - lado, miniatura.top() + 8, lado, lado)
 
 
 def compacta(celula: QRect) -> bool:
@@ -241,6 +252,9 @@ class ModeloGrade(QAbstractListModel):
                 return False
         elif self.tamanho == REPETIDAS:
             if foto.id not in (self.repetidas or ()):
+                return False
+        elif self.tamanho == FAVORITAS:
+            if not foto.favorita:
                 return False
         elif self.tamanho is not None and not (foto.selecionada and any(i.tamanho == self.tamanho
                                                                         for i in foto.impressoes)):
@@ -395,6 +409,7 @@ class DelegadoGrade(QStyledItemDelegate):
             p.drawRoundedRect(QRectF(miniatura).adjusted(1, 1, -1, -1), RAIO_MINIATURA, RAIO_MINIATURA)
 
         self._marca(p, option.rect, foto, atual or sobre)
+        self._estrela(p, option.rect, foto, sobre)
 
         # nome do arquivo (apagado, cortado com "…"); nas miniaturas pequenas ele some
         if not compacto:
@@ -422,6 +437,24 @@ class DelegadoGrade(QStyledItemDelegate):
             p.setBrush(QColor(0, 0, 0, 120))
             p.setPen(QPen(QColor(255, 255, 255, 215), 1.6))
             p.drawEllipse(QRectF(marca).adjusted(1, 1, -1, -1))
+
+    @staticmethod
+    def _estrela(p: QPainter, celula: QRect, foto: Foto, visivel: bool) -> None:
+        """Estrela de favorita: cheia (amarela) na favorita; vazada só com o mouse em cima."""
+        if not (foto.favorita or visivel):
+            return
+        r = rect_estrela(celula)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 120))
+        p.drawEllipse(r)
+        p.save()
+        p.translate(r.left() + r.width() * 0.14, r.top() + r.height() * 0.12)
+        p.scale(r.width() * 0.72 / 24.0, r.height() * 0.72 / 24.0)
+        if foto.favorita:
+            icones.desenhar("estrela_cheia", p, QColor(tema.FAVORITA))
+        else:
+            icones.desenhar("estrela", p, QColor(255, 255, 255, 215))
+        p.restore()
 
     def _chips(self, p: QPainter, area: QRect, foto: Foto, compacto: bool = False) -> None:
         """Um chip em pílula por impressão ("10x15 ×2"); o que não couber vira "+N". Compacto: só o total de cópias."""
@@ -479,6 +512,9 @@ class _Lista(QListView):
             if rect_marca(self.visualRect(indice)).contains(ponto):
                 self.grade.alternar(indice)
                 self.setCurrentIndex(indice)
+                return
+            if rect_estrela(self.visualRect(indice)).contains(ponto):
+                self.grade.alternar_favorita(indice)
                 return
             foto = self.grade.modelo.foto(indice.row())
             achado = chip_e_zona(self.visualRect(indice), foto, ponto) if foto is not None else None
@@ -598,6 +634,7 @@ class Grade(QWidget):
         estado.atual_mudou.connect(self._ao_mudar_atual)
         estado.pastas_mudaram.connect(self._ao_mudar_pastas)
         estado.pedido_mudou.connect(self._atualizar_tamanhos)
+        estado.favoritas_mudaram.connect(self._atualizar_tamanhos)
         estado.fotos_mudaram.connect(self._atualizar_tamanhos)
         estado.fotos_mudaram.connect(self._repetidas_velhas)
         self._atualizar_tamanhos()
@@ -694,6 +731,9 @@ class Grade(QWidget):
         try:
             self.combo_tamanho.clear()
             self.combo_tamanho.addItem(_("Todas as fotos"), None)
+            favoritas = sum(1 for f in self.estado.trabalho.fotos if f.favorita)
+            self.combo_tamanho.addItem(icones.icone("estrela_cheia", tema.FAVORITA, 16),
+                                       _("Favoritas ({n})").format(n=favoritas), FAVORITAS)
             for t in sorted(contagem, key=lambda t: ordem.index(t) if t in ordem else len(ordem)):
                 nome = _("Personalizado") if t == tamanhos.PERSONALIZADO else nome_tamanho(t)
                 self.combo_tamanho.addItem(_("{tamanho} ({n})").format(tamanho=nome, n=contagem[t]), t)
@@ -763,6 +803,18 @@ class Grade(QWidget):
         if foto is not None:
             self.estado.selecionar(foto, not foto.selecionada)
 
+    def alternar_favorita(self, indice: QModelIndex) -> None:
+        """Clique na estrela: põe ou tira a foto das favoritas (sem mudar a foto atual)."""
+        foto = self.modelo.foto(indice.row())
+        if foto is not None:
+            self.estado.favoritar([foto], not foto.favorita)
+
+    def favoritar_escolhidas(self) -> None:
+        """Atalho F: estrela nas fotos escolhidas (ou na atual); se todas já são favoritas, tira."""
+        fotos = self.fotos_escolhidas() or ([self.estado.atual] if self.estado.atual else [])
+        if fotos:
+            self.estado.favoritar(fotos, not all(f.favorita for f in fotos))
+
     def clicar_chip(self, indice: QModelIndex, n: int, zona: int = 0) -> None:
         """Clique no chip "− 10x15 ×2 +": o "+" soma uma cópia à impressão n, o "−" tira uma (de 1 a 999) e o texto
         só escolhe a foto e a impressão (a que o editor mostra)."""
@@ -817,6 +869,12 @@ class Grade(QWidget):
         if any(f.selecionada for f in fotos):
             texto = _("Desmarcar") if n == 1 else _("Desmarcar {n} fotos").format(n=n)
             self._item(menu, "desmarcar", texto, lambda: self.marcar_fotos(fotos, False))
+        if any(not f.favorita for f in fotos):
+            acao = self._item(menu, "favoritar", _("Favoritar") if n == 1 else _("Favoritar {n} fotos").format(n=n),
+                              lambda: self.estado.favoritar(fotos, True))
+        else:
+            acao = self._item(menu, "desfavoritar", _("Tirar das favoritas"), lambda: self.estado.favoritar(fotos, False))
+        acao.setIcon(icones.icone("estrela", tema.APAGADO, 16))
         menu.addSeparator()
 
         marcadas = all(f.selecionada for f in fotos)
@@ -845,6 +903,9 @@ class Grade(QWidget):
         self._item(copias, "copias_mais", _("Uma cópia a mais"), lambda: self.somar_copias(fotos, +1))
         self._item(copias, "copias_menos", _("Uma cópia a menos"), lambda: self.somar_copias(fotos, -1))
         self._menu_pastas(menu, fotos)
+        if any(f.impressoes for f in fotos):
+            acao = self._item(menu, "foto_inteira", _("Foto inteira no papel"), lambda: self.estado.foto_inteira(fotos))
+            acao.setIcon(icones.icone("foto_inteira", tema.APAGADO, 16))
 
         menu.addSeparator()
         texto = _("Duplicar foto (outro recorte)") if n == 1 else _("Duplicar {n} fotos").format(n=n)

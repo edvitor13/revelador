@@ -10,6 +10,9 @@ Gera, em SAIDA (padrão ``saida/``):
   alterados); ``resumo.png``, ``precos.png``, ``personalizado.png`` e ``exportar.png``: os diálogos do pedido;
   ``menu_projeto.png`` e ``menu_engrenagem.png``: os menus da barra superior; ``configuracoes.png``: o diálogo de
   Configurações; ``barra_status.png``: a barra de status com o indicador do salvamento automático ("Salvo às...");
+- fundo e favoritas (#53, #54, #56, #57): ``janela_fundo.png`` (a foto inteira no papel com fundo preto e duas
+  favoritas na grade), ``editor_fundo_resultado.png`` (o mesmo no "Resultado"), ``menu_fundo.png`` (o menu de cor
+  de fundo) e ``visualizar.png`` (o Visualizar com a estrela, "Maximizar" e "Tela cheia");
 - pastas de tamanho (#32): ``janela_pastas.png`` (quatro pastas, fotos em duas delas), ``janela_pastas_filtrada.png``
   (a grade filtrada por uma pasta), ``janela_pastas_estreita.png`` e ``grade_pastas_estreita.png`` (a grade com duas
   colunas de 80 px), ``menu_pasta.png`` e ``menu_pasta_cor.png``, ``menu_grade_pastas.png`` e ``menu_adicionar_pasta.png`` (o menu de contexto
@@ -203,6 +206,31 @@ def capturar_janelas(app, fotos: list[Path], saida: Path) -> list[tuple[str, int
         janela.editor.tela._alca_sob_mouse = 2
         gravar(janela.editor, "editor_alcas.png")
         janela.editor.tela._alca_sob_mouse = None
+        # fundo (#53, #54): a foto inteira no papel com fundo preto; favoritas (#56) na grade
+        janela.editor.endireitar(0.0)
+        janela.editor.foto_inteira()
+        janela.editor.definir_fundo("#000000")
+        janela.estado.favoritar([alvo, novas[2]])
+        gravar(janela, "janela_fundo.png")
+        janela.editor.definir_previa(True)
+        _esperar_ate(app, lambda: janela.editor.previa is not None, 8.0)
+        gravar(janela.editor, "editor_fundo_resultado.png")
+        janela.editor.definir_previa(False)
+        menu = janela.editor.botao_fundo.menu()
+        menu.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        menu.popup(janela.editor.botao_fundo.mapToGlobal(janela.editor.botao_fundo.rect().bottomLeft()))
+        gravar(menu, "menu_fundo.png")
+        menu.hide()
+        from revelador.ui.visualizar import VisualizarDialog, fotos_para_visualizar
+        vis = VisualizarDialog(janela.estado, fotos_para_visualizar(janela.estado, janela.grade.fotos_visiveis()),
+                               0, janela)
+        vis.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        vis.resize(1100, 700)
+        vis.show()
+        _esperar_ate(app, lambda: vis._proxy is not None, 8.0)
+        esperar_workers(app)
+        gravar(vis, "visualizar.png")
+        vis.hide()
     resumo = ResumoDialog(janela.estado, janela)
     resumo.resize(640, 420)
     resumo.atualizar()
