@@ -407,7 +407,7 @@ def renderizar_item(item: Item, dpi: int = 300) -> np.ndarray:
     fonte = receita.carregar_fonte(item.foto.caminho, "original")
     altura, largura = fonte.shape[:2]
     destino_px = receita.tamanho_exportacao(item.impressao, largura, altura, dpi)
-    return receita.para_uint8(receita.renderizar(fonte, item.impressao, item.foto.ajustes, destino_px))
+    return receita.para_uint8(receita.renderizar(fonte, item.impressao, item.foto.ajustes, destino_px, item.foto.fundo))
 
 
 def exportar_item(item: Item, dpi: int = 300, cancelado: Callable[[], bool] | None = None) -> list[Path]:

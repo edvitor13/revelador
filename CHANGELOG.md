@@ -6,6 +6,23 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.2.0] - 2026-11-15
+
+### Adicionado
+- Afastar além da foto (#53): diminuir o zoom depois de encostar na foto aumenta o papel até caber a foto inteira,
+  e a sobra sai na cor de fundo da foto: branco (padrão), preto ou qualquer cor ("Fundo" no editor). A prévia, o
+  Visualizar e a exportação pintam o mesmo fundo; no modo *caber* a borda também usa essa cor.
+- Botão "Foto inteira" (#54, tecla I, e "Foto inteira no papel" no menu da grade para várias fotos): ajusta a foto
+  inteira na proporção do papel num clique.
+- Continuar de onde parou (#55): o trabalho reabre na última foto aberta.
+- Favoritas (#56): estrela na miniatura, no editor e no Visualizar (tecla F), e filtro "Favoritas" na grade.
+- Visualizar (#57): "Tela cheia" (F11; Esc sai) e "Maximizar", lembrado entre as aberturas.
+
+### Compatibilidade
+- O `.revelador` continua no formato 1: os campos novos (`favorita`, `fundo`, `ultima_foto` e zoom abaixo de 1) só
+  são gravados quando usados. Trabalhos antigos abrem e saem iguais; uma versão anterior abre os novos ignorando o
+  que não conhece (a foto com fundo volta a sair cortada, com um aviso).
+
 ## [0.1.1] - 2026-11-03
 
 ### Adicionado

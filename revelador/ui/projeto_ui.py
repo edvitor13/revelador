@@ -42,6 +42,8 @@ log = logging.getLogger(__name__)
 
 EXTENSAO = ".revelador"
 MAX_RECENTES = 10
+PREF_ULTIMAS_FOTOS = "projeto/ultimas_fotos"   # JSON {caminho do .revelador: id da última foto aberta}
+MAX_ULTIMAS_FOTOS = 50
 INTERVALO_RECUPERACAO_MS = 2 * 60 * 1000
 MAX_AVISOS_VISIVEIS = 3
 MAX_ARQUIVOS_BUSCA = 300_000   # teto de arquivos olhados ao procurar fotos movidas
@@ -175,6 +177,7 @@ class ProjetoUi(QObject):
         self.reconstruir_menu()
 
         estado.modificado_mudou.connect(lambda _m: self.atualizar_titulo())
+        estado.atual_mudou.connect(lambda _f: self.lembrar_foto())
         self.atualizar_titulo()
 
         self.timer = QTimer(self)
@@ -300,6 +303,7 @@ class ProjetoUi(QObject):
             foto.caminho = Path(os.path.normpath(foto.caminho))
         if restaurando:
             trabalho.caminho = None
+        ultima = trabalho.ultima_foto          # antes de a interface escolher outra foto
         self._trocar_trabalho(trabalho, avisos)
         if restaurando:
             self.estado.marcar_modificado(True)
@@ -307,6 +311,7 @@ class ProjetoUi(QObject):
         else:
             self.adicionar_recente(caminho)
             self._lembrar_pasta(caminho)
+        self.retomar(ultima)
         return True
 
     def salvar(self) -> bool:
@@ -346,6 +351,7 @@ class ProjetoUi(QObject):
         self.estado.marcar_modificado(False)
         self.adicionar_recente(destino)
         self._lembrar_pasta(destino)
+        self.lembrar_foto()
         self.atualizar_titulo()
         self.salvo.emit(Path(destino))
         return True
@@ -368,6 +374,52 @@ class ProjetoUi(QObject):
                 visiveis.append(_("(e mais {n})").format(n=len(avisos) - len(visiveis)))
             self.faixas.mostrar("avisos", _("Trabalho aberto com ajustes:") + " " + " ".join(visiveis), tema.AVISO)
         self.atualizar_titulo()
+
+    # ------------------------------------------------------------ continuar de onde parou
+    @staticmethod
+    def _ultimas_fotos() -> dict[str, str]:
+        try:
+            tabela = json.loads(str(prefs.settings().value(PREF_ULTIMAS_FOTOS, "{}", str)) or "{}")
+        except ValueError:
+            return {}
+        return {str(k): str(v) for k, v in tabela.items()} if isinstance(tabela, dict) else {}
+
+    @staticmethod
+    def _chave_trabalho(caminho: Path) -> str:
+        return os.path.normcase(str(Path(caminho).absolute()))
+
+    def lembrar_foto(self) -> None:
+        """Guarda nas preferências a foto atual do trabalho salvo (vale mesmo sem salvar de novo o ``.revelador``,
+        que também a grava em ``ultima_foto``). Só o caminho do trabalho e o id da foto; as 50 mais recentes."""
+        caminho, foto = self.estado.trabalho.caminho, self.estado.atual
+        if caminho is None or foto is None:
+            return
+        tabela = self._ultimas_fotos()
+        chave = self._chave_trabalho(caminho)
+        if tabela.get(chave) == foto.id and list(tabela)[-1] == chave:
+            return
+        tabela.pop(chave, None)
+        tabela[chave] = foto.id
+        while len(tabela) > MAX_ULTIMAS_FOTOS:
+            tabela.pop(next(iter(tabela)))
+        prefs.settings().setValue(PREF_ULTIMAS_FOTOS, json.dumps(tabela, ensure_ascii=False))
+
+    def retomar(self, ultima: str | None = None) -> Foto | None:
+        """Abre o trabalho na última foto em que a pessoa parou: a das preferências (a mais recente) ou a gravada no
+        arquivo (``ultima_foto``). Sem nenhuma das duas (ou se a foto saiu do trabalho), não faz nada."""
+        trabalho = self.estado.trabalho
+        ids = []
+        if trabalho.caminho is not None:
+            ids.append(self._ultimas_fotos().get(self._chave_trabalho(trabalho.caminho)))
+        ids.append(ultima or trabalho.ultima_foto)
+        foto = next((f for f in (self.estado.por_id(i) for i in ids if i) if f is not None), None)
+        if foto is None:
+            return None
+        self.estado.definir_atual(foto)
+        if len(trabalho.fotos) > 1:
+            self.janela.statusBar().showMessage(
+                _("Continuando de onde você parou: {nome}").format(nome=foto.caminho.name), 6000)
+        return foto
 
     # ------------------------------------------------------------ mensagens
     def _erro(self, texto: str) -> None:

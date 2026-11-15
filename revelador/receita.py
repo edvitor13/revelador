@@ -12,8 +12,10 @@ Passos de ``renderizar(fonte, impressao, ajustes, destino_px)``
    com ``INTER_LANCZOS4``. Quando a redução é grande, a região que interessa é reduzida antes com ``INTER_AREA``
    (sem serrilhado) até ficar com até ~1 px de fonte por px de destino.
 3. **Ajustes** (``ajustes.aplicar``) já no tamanho de destino, com a escala em px por mm de papel (a nitidez).
-4. **Modo *caber***: a foto inteira (só o giro; o ângulo não vale) centralizada sobre papel branco nos px exatos do
-   destino; os ajustes valem só para a foto, não para a borda.
+4. **Fundo** (``zoom < 1``, afastar além da foto): onde o recorte passa da imagem, a cor de fundo da foto
+   (``Foto.fundo``), com borda suavizada pela cobertura de cada px; os ajustes valem só para a foto.
+5. **Modo *caber***: a foto inteira (só o giro; o ângulo não vale) centralizada sobre o fundo (branco por padrão) nos
+   px exatos do destino; os ajustes valem só para a foto, não para a borda.
 
 Convenção do ângulo: ``angulo > 0`` gira a FOTO no sentido horário no resultado (o retângulo do recorte gira no
 sentido anti-horário sobre a imagem). ``matriz_destino_fonte()`` e ``poligono()`` são a única definição dessa
@@ -40,10 +42,11 @@ import numpy as np
 from . import ajustes as _ajustes
 from . import enquadramento, imagem, tamanhos
 from .enquadramento import Retangulo
-from .projeto import Impressao
+from .projeto import FUNDO_PADRAO, Impressao, cor_valida
 
 FONTES = ("proxy", "original")
 MODO_CABER = "caber"
+LINHAS_FUNDO = 512       # linhas do destino por bloco ao pintar o fundo (memória limitada em papéis grandes)
 REDUCAO_MAXIMA = 1.0     # px de fonte por px de destino acima dos quais a região é reduzida antes (INTER_AREA)
 RAIO_LANCZOS = 4         # px de folga ao redor da região amostrada (Lanczos de 4 lóbulos)
 
@@ -182,14 +185,43 @@ def _recortar(img: np.ndarray, ret: Retangulo, dw: int, dh: int) -> np.ndarray:
     return np.clip(saida, 0.0, 1.0, out=saida)
 
 
+def cor_fundo(fundo: str | None) -> np.ndarray:
+    """``"#rrggbb"`` → float32 RGB 0..1 (None ou inválido: branco)."""
+    cor = cor_valida(fundo) or FUNDO_PADRAO
+    return np.array([int(cor[i:i + 2], 16) / 255.0 for i in (1, 3, 5)], dtype=np.float32)
+
+
+def _pintar_fundo(saida: np.ndarray, ret: Retangulo, W: int, H: int, cor: np.ndarray) -> None:
+    """Põe ``cor`` onde o destino cai fora da imagem girada ``W × H`` (no lugar, em blocos de linhas).
+
+    Cobertura de cada px do destino pela imagem: distância (em px de destino) do centro do px até a borda da imagem,
+    mais meio px, limitada a 0..1, nos dois eixos — borda nítida e sem serrilhado em qualquer escala e ângulo.
+    """
+    dh, dw = saida.shape[:2]
+    a = matriz_destino_fonte(ret, dw, dh)
+    passo = max(ret.w / dw, ret.h / dh, 1e-9)           # px de fonte por px de destino
+    u = np.arange(dw, dtype=np.float64) + 0.5
+    for y0 in range(0, dh, LINHAS_FUNDO):
+        v = np.arange(y0, min(dh, y0 + LINHAS_FUNDO), dtype=np.float64)[:, None] + 0.5
+        x = a[0, 0] * u + a[0, 1] * v + a[0, 2]
+        y = a[1, 0] * u + a[1, 1] * v + a[1, 2]
+        cx = np.clip(np.minimum(x, W - x) / passo + 0.5, 0.0, 1.0)
+        cy = np.clip(np.minimum(y, H - y) / passo + 0.5, 0.0, 1.0)
+        m = (cx * cy).astype(np.float32)[..., None]
+        bloco = saida[y0:y0 + m.shape[0]]
+        bloco *= m
+        bloco += cor * (1.0 - m)
+
+
 def renderizar(fonte: np.ndarray, impressao: Impressao, ajustes: dict | None,
-               destino_px: tuple[int, int]) -> np.ndarray:
+               destino_px: tuple[int, int], fundo: str | None = None) -> np.ndarray:
     """A receita única: ``fonte`` (float32 0..1, H×W×3, sRGB, orientada, SEM giro) → float32 0..1 ``destino_px``.
 
     ``destino_px = (largura, altura)`` exatos da saída: o visor (prévia, ver ``destino_na_caixa``) ou o papel
     (exportação, ver ``tamanho_exportacao``). No modo *preencher* a proporção do destino deve ser a do papel (o
     recorte é esticado para preenchê-lo, então uma diferença de 1 px de arredondamento é invisível). ``ajustes`` são
-    os da foto (``{}``/``None`` = nenhum). Determinística; não modifica ``fonte``.
+    os da foto (``{}``/``None`` = nenhum); ``fundo`` é a cor da foto (``Foto.fundo``, "#rrggbb"; None = branco)
+    para o que o recorte não cobre. Determinística; não modifica ``fonte``.
     """
     dw, dh = int(destino_px[0]), int(destino_px[1])
     if dw < 1 or dh < 1:
@@ -202,21 +234,30 @@ def renderizar(fonte: np.ndarray, impressao: Impressao, ajustes: dict | None,
     escala = escala_mm_px(impressao, largura, altura, dw)
 
     if impressao.modo == MODO_CABER:
-        return _caber(img, ajustes, dw, dh, escala)
+        return _caber(img, ajustes, dw, dh, escala, cor_fundo(fundo))
     ret = retangulo_da_impressao(impressao, largura, altura)
     saida = _recortar(img, ret, dw, dh)
-    return _ajustes.aplicar(saida, ajustes, escala) if _ajustes.sanitizar(ajustes) else saida
+    if _ajustes.sanitizar(ajustes):
+        saida = _ajustes.aplicar(saida, ajustes, escala)
+    W, H = img.shape[1], img.shape[0]
+    if enquadramento.com_fundo(ret, W, H):
+        saida = np.array(saida, dtype=np.float32, copy=True)
+        _pintar_fundo(saida, ret, W, H, cor_fundo(fundo))
+        np.clip(saida, 0.0, 1.0, out=saida)
+    return saida
 
 
-def _caber(img: np.ndarray, ajustes: dict | None, dw: int, dh: int, escala: float) -> np.ndarray:
-    """Modo *caber*: a foto inteira, centralizada sobre branco, nos px exatos do destino."""
+def _caber(img: np.ndarray, ajustes: dict | None, dw: int, dh: int, escala: float,
+           cor: np.ndarray | None = None) -> np.ndarray:
+    """Modo *caber*: a foto inteira, centralizada sobre o fundo (branco por padrão), nos px exatos do destino."""
     H, W = img.shape[:2]
     k = min(dw / W, dh / H)
     pw, ph = min(dw, max(1, round(W * k))), min(dh, max(1, round(H * k)))
     foto = _redimensionar(img, pw, ph)
     if _ajustes.sanitizar(ajustes):
         foto = _ajustes.aplicar(foto, ajustes, escala)
-    saida = np.ones((dh, dw, 3), dtype=np.float32)
+    saida = np.empty((dh, dw, 3), dtype=np.float32)
+    saida[:] = cor if cor is not None else 1.0
     x, y = (dw - pw) // 2, (dh - ph) // 2
     saida[y:y + ph, x:x + pw] = np.clip(foto, 0.0, 1.0)
     return saida

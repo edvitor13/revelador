@@ -13,14 +13,18 @@ import pytest
 from revelador.enquadramento import (
     Retangulo,
     caixa_envolvente,
+    com_fundo,
     girar_rostos,
     recorte_automatico,
     reencaixar,
     retangulo,
+    tamanho_foto_inteira,
     tamanho_maximo,
     zoom_efetivo,
+    zoom_gravado,
+    zoom_minimo,
 )
-from revelador.projeto import Recorte, Rosto
+from revelador.projeto import ZOOM_MINIMO, Recorte, Rosto
 
 RETRATO = 2 / 3     # 10x15 em pé
 PAISAGEM = 3 / 2    # 10x15 deitado
@@ -441,8 +445,69 @@ def test_angulo_fora_da_faixa_e_limitado():
     assert retangulo(Recorte(angulo=-90.0), 4000, 3000, PAISAGEM).angulo == -45.0
 
 
-def test_zoom_menor_que_um_vira_um():
-    assert retangulo(Recorte(zoom=0.3), 4000, 3000, PAISAGEM) == retangulo(Recorte(), 4000, 3000, PAISAGEM)
+# --- afastar além da foto (zoom < 1, fundo) ----------------------------------------------------------------------
+
+@pytest.mark.parametrize("W,H", [(4000, 3000), (3000, 4000), (6000, 2000), (2000, 2000)])
+@pytest.mark.parametrize("proporcao", [RETRATO, PAISAGEM, 1.0])
+@pytest.mark.parametrize("angulo", [0.0, 7.0, -30.0])
+def test_zoom_minimo_e_a_foto_inteira_dentro_do_papel(W, H, proporcao, angulo):
+    """``ZOOM_MINIMO`` = a menor folha na proporção que contém a foto inteira (girada pelo endireitar)."""
+    ret = retangulo(Recorte(zoom=ZOOM_MINIMO, angulo=angulo), W, H, proporcao)
+    assert ret.w / ret.h == pytest.approx(proporcao, rel=1e-12)
+    assert ret.w == pytest.approx(tamanho_foto_inteira(W, H, proporcao, angulo)[0])
+    assert (ret.cx, ret.cy) == pytest.approx((W / 2, H / 2))
+    # os 4 cantos da imagem, levados ao referencial do papel, ficam dentro dele
+    t = math.radians(angulo)
+    for x, y in ((0, 0), (W, 0), (W, H), (0, H)):
+        dx, dy = x - ret.cx, y - ret.cy
+        u, v = math.cos(t) * dx - math.sin(t) * dy, math.sin(t) * dx + math.cos(t) * dy
+        assert abs(u) <= ret.w / 2 + 1e-6 and abs(v) <= ret.h / 2 + 1e-6
+    assert com_fundo(ret, W, H) == (zoom_minimo(W, H, proporcao, angulo) < 1 - 1e-9)
+
+
+def test_afastar_cresce_o_papel_aos_poucos_ate_a_foto_inteira():
+    W, H = 4000, 3000                       # 4:3 num papel 2:3 em pé: sobra em cima e embaixo
+    larguras = [retangulo(Recorte(zoom=z), W, H, RETRATO).w for z in (1.0, 0.9, 0.7, 0.5, 0.3, ZOOM_MINIMO)]
+    assert larguras == sorted(larguras)
+    assert larguras[0] == pytest.approx(2000) and larguras[1] == pytest.approx(2000 / 0.9)
+    assert larguras[-1] == pytest.approx(4000)                    # largura da foto: ela inteira cabe
+    assert retangulo(Recorte(zoom=0.3), W, H, RETRATO).w == pytest.approx(4000)   # não passa da foto inteira
+    assert not com_fundo(retangulo(Recorte(), W, H, RETRATO), W, H)
+    assert com_fundo(retangulo(Recorte(zoom=0.9), W, H, RETRATO), W, H)
+
+
+def test_com_fundo_a_foto_nao_sai_do_papel_ao_mover():
+    """Papel maior que a foto num lado: a foto pode andar dentro dele, mas não sair."""
+    W, H = 4000, 3000
+    for cx, cy in ((-5.0, 0.5), (5.0, 0.5), (0.5, -5.0), (0.5, 5.0)):
+        ret = retangulo(Recorte(cx=cx, cy=cy, zoom=ZOOM_MINIMO), W, H, RETRATO)
+        assert ret.cx - ret.w / 2 <= 1e-6 and ret.cx + ret.w / 2 >= W - 1e-6
+        assert ret.cy - ret.h / 2 <= 1e-6 and ret.cy + ret.h / 2 >= H - 1e-6
+
+
+@pytest.mark.parametrize("angulo", [0.0, 3.0, -20.0, 45.0])
+@pytest.mark.parametrize("efetivo", [0.6, 0.8, 0.99, 1.0, 1.05, 1.5, 4.0])
+def test_zoom_gravado_e_o_inverso_do_efetivo(angulo, efetivo):
+    W, H = 4000, 3000
+    efetivo = max(efetivo, zoom_minimo(W, H, PAISAGEM, angulo))
+    rec = Recorte(zoom=zoom_gravado(efetivo, W, H, PAISAGEM, angulo), angulo=angulo)
+    assert zoom_efetivo(rec, W, H, PAISAGEM) == pytest.approx(efetivo, rel=1e-9)
+
+
+def test_zoom_um_ou_mais_continua_igual_ao_de_antes():
+    """Trabalhos antigos (zoom >= 1) dão exatamente o mesmo retângulo de antes do fundo."""
+    W, H = 4000, 3000
+    for zoom, angulo in ((1.0, 0.0), (1.7, 3.0), (1.0, 20.0), (4.0, -45.0)):
+        w0 = tamanho_maximo(W, H, PAISAGEM)[0]
+        w_ang = tamanho_maximo(W, H, PAISAGEM, angulo)[0]
+        assert retangulo(Recorte(zoom=zoom, angulo=angulo), W, H, PAISAGEM).w == min(w0 / zoom, w_ang)
+
+
+def test_reencaixar_mantem_o_zoom_com_fundo():
+    rec = Recorte(cx=0.5, cy=0.5, zoom=ZOOM_MINIMO, origem="manual")
+    novo = reencaixar(rec, 4000, 3000, RETRATO)
+    assert novo.zoom == ZOOM_MINIMO
+    assert retangulo(novo, 4000, 3000, 1.0).w == pytest.approx(4000)   # outro papel: ainda a foto inteira
 
 
 def test_maior_recorte_sem_rotacao():

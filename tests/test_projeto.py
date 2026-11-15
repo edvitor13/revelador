@@ -135,3 +135,66 @@ def test_recuperacao(tmp_path):
     assert abrir(c1)[0].fotos == t1.fotos
     projeto.apagar_recuperacao(c1)
     assert projeto.listar_recuperacao() == [c2]
+
+
+# ------------------------------------------------------------- campos novos: favorita, fundo, zoom < 1, última foto
+
+def test_campos_novos_ida_e_volta(tmp_path):
+    t = _trabalho(tmp_path)
+    t.fotos[0].favorita = True
+    t.fotos[0].fundo = "#102030"
+    t.fotos[0].impressoes[0].recorte.zoom = 0.4
+    t.ultima_foto = "f2"
+    salvar(t, tmp_path / "x.revelador")
+    lido, avisos = abrir(tmp_path / "x.revelador")
+    assert avisos == []
+    assert lido.fotos == t.fotos and lido.ultima_foto == "f2"
+    assert (lido.fotos[0].favorita, lido.fotos[0].fundo, lido.fotos[0].impressoes[0].recorte.zoom) == (
+        True, "#102030", 0.4)
+
+
+def test_campos_novos_so_gravados_quando_usados(tmp_path):
+    """Sem favorita, fundo branco e sem última foto, o arquivo fica igual ao das versões anteriores."""
+    d = para_dict(_trabalho(tmp_path), tmp_path)
+    assert "ultima_foto" not in d and d["formato"] == 1
+    for f in d["fotos"]:
+        assert "favorita" not in f and "fundo" not in f
+
+
+def test_versao_anterior_abre_igual(tmp_path):
+    """Arquivo de antes (formato 1, sem os campos novos): nada de favorita, fundo branco, sem última foto."""
+    t, avisos = abrir(DADOS / "exemplo_formato_1.revelador")
+    assert avisos == [] and t.ultima_foto is None
+    assert all(not f.favorita and f.fundo == projeto.FUNDO_PADRAO for f in t.fotos)
+
+
+def test_versao_anterior_entende_o_arquivo_novo(tmp_path):
+    """O que uma versão anterior faria com o arquivo novo: ela só lê os campos que conhece e limita o zoom a 1..20
+    (com um aviso). Simulado aqui pelo dict sem os campos novos e com o zoom limitado como ela limitava."""
+    t = _trabalho(tmp_path)
+    t.fotos[0].favorita, t.fotos[0].fundo, t.ultima_foto = True, "#000000", "f1"
+    t.fotos[0].impressoes[0].recorte.zoom = 0.3
+    d = para_dict(t, tmp_path)
+    assert d["formato"] == projeto.FORMATO == 1            # nenhuma versão anterior recusa o arquivo
+    antigo = json.loads(json.dumps(d))
+    for f in antigo["fotos"]:
+        f.pop("favorita", None)
+        f.pop("fundo", None)
+        for i in f.get("impressoes", []):
+            if "zoom" in i.get("recorte", {}):
+                i["recorte"]["zoom"] = max(1.0, i["recorte"]["zoom"])
+    antigo.pop("ultima_foto")
+    lido, _avisos = de_dict(antigo, tmp_path)
+    assert lido.fotos[0].impressoes[0].recorte.zoom == 1.0 and lido.fotos[0].ajustes == {"exposicao": 12.0}
+
+
+def test_campos_novos_invalidos():
+    dados = {"app": "Revelador", "formato": 1, "ultima_foto": "nao_existe", "fotos": [
+        {"id": "a", "caminho": "a.jpg", "favorita": "sim", "fundo": "vermelho",
+         "impressoes": [{"recorte": {"zoom": 0.001}}]},
+        {"id": "b", "caminho": "b.jpg", "fundo": "#ABCDEF"}]}
+    t, avisos = de_dict(dados, Path("."))
+    a, b = t.fotos
+    assert not a.favorita and a.fundo == "#ffffff" and b.fundo == "#abcdef"
+    assert a.impressoes[0].recorte.zoom == projeto.ZOOM_MINIMO
+    assert t.ultima_foto is None and avisos

@@ -580,8 +580,16 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ menu de contexto da grade (#5, #9)
     def _ligar_menu_grade(self) -> None:
-        """O "Procurar…" do menu de contexto da grade usa a mesma busca da faixa de fotos não encontradas."""
+        """O "Procurar…" do menu de contexto da grade usa a mesma busca da faixa de fotos não encontradas. F põe ou
+        tira a estrela de favorita das fotos escolhidas na grade (ou da atual)."""
         self.grade.procurar_pedido.connect(lambda: self.projeto_ui.procurar_faltando())
+        self.acao_favoritar = QAction(_("Favoritar"), self)
+        self.acao_favoritar.setShortcut("F")
+        self.acao_favoritar.triggered.connect(self.grade.favoritar_escolhidas)
+        self.addAction(self.acao_favoritar)
+        self.editor.faixa.botao_favorita.clicked.connect(
+            lambda: self.estado.favoritar([self.estado.atual], not self.estado.atual.favorita)
+            if self.estado.atual is not None else None)
 
     # ------------------------------------------------------------ salvamento automático e configurações (#34)
     def _ligar_autosalvar(self) -> None:

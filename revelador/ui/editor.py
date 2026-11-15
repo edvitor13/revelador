@@ -6,9 +6,11 @@ pessoa marca o recorte como ``"manual"`` (nunca mais refeito sozinho); "Enquadra
 
 Geometria: tudo vem de ``enquadramento.retangulo`` e de ``receita.poligono`` (a moldura desenhada é exatamente o que
 a receita vai amostrar). O recorte só entra no modelo depois de passar por ``enquadramento.reencaixar``, então fica
-sempre dentro da imagem. Os gestos têm métodos públicos (``mover``, ``aproximar``, ``puxar_canto``, ``girar``,
-``endireitar``, ``enquadrar_pelos_rostos``) que o mouse e os atalhos só chamam; os testes chamam direto. As alças nos
-cantos do papel (só na moldura, no modo *preencher*) mudam o zoom com o canto oposto parado.
+sempre dentro da imagem — exceto ao afastar além da foto (zoom abaixo de 1): o papel cresce até a foto inteira e as
+sobras ganham a cor de fundo da foto (``Foto.fundo``, botão "Fundo"); "Foto inteira" (I) vai direto até lá. Os gestos
+têm métodos públicos (``mover``, ``aproximar``, ``puxar_canto``, ``girar``, ``endireitar``, ``enquadrar_pelos_rostos``,
+``foto_inteira``, ``definir_fundo``) que o mouse e os atalhos só chamam; os testes chamam direto. As alças nos cantos
+do papel (só na moldura, no modo *preencher*) mudam o zoom com o canto oposto parado.
 
 Com o foco no editor, ← / → (e Home / End) vão para a foto anterior / seguinte entre as visíveis na grade
 (``Estado.vizinha``; o filtro "Mostrar" vale): ``navegar`` e ``ir_para_ponta``.
@@ -25,15 +27,17 @@ from dataclasses import replace
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QShortcut
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtGui import (QColor, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QPolygonF,
+                           QShortcut)
+from PySide6.QtWidgets import (QColorDialog, QFrame, QHBoxLayout, QLabel, QMenu, QSizePolicy, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from .. import ajustes as ajustes_mod
 from .. import enquadramento, receita, tamanhos
 from ..i18n import N_, _
-from ..projeto import Foto, Impressao, Recorte
-from . import tema
-from .componentes import BarraAdaptavel, Segmented, Slider, botao_plano
+from ..projeto import FUNDO_PADRAO, Foto, Impressao, Recorte, cor_valida
+from . import icones, tema
+from .componentes import BarraAdaptavel, Segmented, Slider, botao_plano, com_menu
 from .estado import Estado
 from .previa import AjustarImagem, CarregarProxy, RenderizarPrevia, Sinais, para_qimage
 
@@ -53,6 +57,8 @@ LARGURA_ALCA = 4.0           # espessura do "L" (o contorno escuro tem 2,5 px a 
 SINAIS_CANTO = ((-1, -1), (1, -1), (1, 1), (-1, 1))
 # Teclas de navegação entre as fotos visíveis na grade, com o foco no editor.
 TECLAS_NAVEGAR = {Qt.Key.Key_Left: -1, Qt.Key.Key_Right: +1}
+# Cores prontas do fundo (onde a foto não cobre o papel); "Outra cor…" abre o seletor.
+FUNDOS = (("#ffffff", N_("Branco")), ("#000000", N_("Preto")))
 
 QUALIDADES = {
     "boa": N_("qualidade boa"),
@@ -81,6 +87,9 @@ class Tela(QWidget):
         self.moldura: enquadramento.Retangulo | None = None  # recorte em px da imagem girada
         self.margem_rel = 0.0                              # margem de corte ÷ largura do papel
         self.rostos: list[tuple[float, float, float, float]] = []   # caixas em px da imagem girada
+        # (x0, y0, x1, y1) em px da imagem girada que cabe no visor: a foto e o papel, quando ele passa dela
+        self.extensao: tuple[float, float, float, float] | None = None
+        self.cor_fundo: QColor | None = None               # o fundo dentro do papel, onde a foto não cobre
         self.mostrar_rostos = False
         self.previa: QImage | None = None
         self.mostrar_previa = False
@@ -104,8 +113,12 @@ class Tela(QWidget):
             dpr = self.previa.devicePixelRatio() or 1.0
             w, h = self.previa.width() / dpr, self.previa.height() / dpr
         elif self.imagem is not None and not self.mostrar_previa:
-            k = min(area.width() / self.imagem.width(), area.height() / self.imagem.height())
-            w, h = self.imagem.width() * k, self.imagem.height() * k
+            ref_w = self.largura_ref or self.imagem.width()
+            ref_h = ref_w * self.imagem.height() / self.imagem.width()
+            x0, y0, x1, y1 = self.extensao or (0.0, 0.0, ref_w, ref_h)
+            k = min(area.width() / max(x1 - x0, 1e-9), area.height() / max(y1 - y0, 1e-9))
+            return QRectF(area.center().x() - (x0 + x1) / 2 * k, area.center().y() - (y0 + y1) / 2 * k,
+                          ref_w * k, ref_h * k)
         else:
             return None
         return QRectF(area.center().x() - w / 2, area.center().y() - h / 2, w, h)
@@ -165,6 +178,11 @@ class Tela(QWidget):
                                     QPointF(quadro.right() - m, quadro.bottom() - m),
                                     QPointF(quadro.left() + m, quadro.bottom() - m)])
         else:
+            if self.moldura is not None and self.cor_fundo is not None:   # o papel além da foto: a cor de fundo
+                cantos = self._para_tela(quadro, receita.poligono(self.moldura))
+                caminho = QPainterPath()
+                caminho.addPolygon(QPolygonF(cantos + [cantos[0]]))
+                p.fillPath(caminho, self.cor_fundo)
             p.drawImage(quadro, self.imagem)
             if self.moldura is not None:
                 self._moldura(p, quadro)
@@ -308,6 +326,24 @@ class Tela(QWidget):
             self.setCursor(self._cursor_parado())
 
 
+def amostra_cor(cor: str, lado: int = 16) -> QIcon:
+    """Quadradinho na cor de fundo da foto (conteúdo da foto, não cor da interface), com contorno do tema."""
+    icone = QIcon()
+    for escala in (1, 2):
+        pm = QPixmap(lado * escala, lado * escala)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(QPen(QColor(tema.BORDA_FORTE), escala))
+        p.setBrush(QColor(cor))
+        m = 2 * escala
+        p.drawRoundedRect(QRectF(m, m, (lado - 4) * escala, (lado - 4) * escala), 3 * escala, 3 * escala)
+        p.end()
+        pm.setDevicePixelRatio(escala)
+        icone.addPixmap(pm)
+    return icone
+
+
 def rotulo_impressao(imp: Impressao) -> str:
     """Texto da impressão na faixa do editor: ``10x15 ×2`` (o personalizado com as medidas)."""
     if imp.tamanho == tamanhos.PERSONALIZADO and imp.papel_mm:
@@ -334,6 +370,7 @@ class FaixaImpressoes(QWidget):
         self.linha.setSpacing(6)
         self.botao_visualizar = botao_plano("comparar", _("Passar pelas fotos vendo como vão sair (F5)"),
                                             _("Visualizar"))
+        self.botao_favorita = botao_plano("estrela", _("Favorita: põe ou tira a estrela desta foto (F)"))
         self.vazio = QLabel(_("Foto não marcada para revelação"))
         self.vazio.setObjectName("Muted")
         self.chips: list[QFrame] = []
@@ -351,6 +388,11 @@ class FaixaImpressoes(QWidget):
     def atualizar(self) -> None:
         foto = self.estado.atual
         imps = foto.impressoes if foto is not None and foto.selecionada else []
+        favorita = foto is not None and foto.favorita
+        if self.botao_favorita.property("favorita") != favorita:   # o ícone mostra o estado: estrela cheia ou vazada
+            self.botao_favorita.setProperty("favorita", favorita)
+            self.botao_favorita.setIcon(icones.icone("estrela_cheia", tema.FAVORITA, 18) if favorita
+                                        else icones.icone("estrela", tema.APAGADO, 18))
         assinatura = (foto is not None, self.estado.indice_impressao,
                       tuple(rotulo_impressao(i) for i in imps))
         if assinatura == self._assinatura:
@@ -358,7 +400,8 @@ class FaixaImpressoes(QWidget):
         self._assinatura = assinatura
         while self.linha.count():
             item = self.linha.takeAt(0)
-            if item.widget() is not None and item.widget() not in (self.vazio, self.botao_visualizar):
+            if item.widget() is not None and item.widget() not in (self.vazio, self.botao_visualizar,
+                                                                   self.botao_favorita):
                 item.widget().deleteLater()
         self.chips = []
         foto = self.estado.atual
@@ -371,6 +414,7 @@ class FaixaImpressoes(QWidget):
         if not imps:
             self.linha.addWidget(self.vazio)
         self.linha.addStretch(1)
+        self.linha.addWidget(self.botao_favorita)
         self.linha.addWidget(self.botao_visualizar)
 
     def _chip(self, n: int, imp: Impressao, ativa: bool) -> QFrame:
@@ -498,6 +542,11 @@ class Editor(QWidget):
         self.botao_centro = botao_plano("centro", _("Enquadramento centralizado, sem olhar os rostos (C)"),
                                         _("Centralizar"))
         self.botao_centro.clicked.connect(self.centralizar)
+        self.botao_inteira = botao_plano("foto_inteira", _("A foto inteira no papel, com fundo nas sobras (I)"),
+                                         _("Foto inteira"))
+        self.botao_inteira.clicked.connect(self.foto_inteira)
+        self.botao_fundo = botao_plano("foto", _("Cor do fundo onde a foto não cobre o papel"), _("Fundo"))
+        com_menu(self.botao_fundo, self._menu_fundo())
         self.caixa_rostos = botao_plano("rosto", _("Mostrar os rostos detectados"), _("Rostos"), marcavel=True,
                                         cor=tema.APAGADO, cor_marcado=tema.DESTAQUE_HI)
         self.caixa_rostos.toggled.connect(self.mostrar_rostos)
@@ -525,9 +574,12 @@ class Editor(QWidget):
         barra.addWidget(self.caixa_rostos)
         barra.addWidget(self.botao_auto)
         barra.addWidget(self.botao_centro)
+        barra.addWidget(self.botao_inteira)
+        barra.addWidget(self.botao_fundo)
         barra.addStretch(1)
         barra.addWidget(self.modo_vista)
-        controles.definir_adaptacao(compactos=[self.caixa_rostos, self.botao_auto, self.botao_centro],
+        controles.definir_adaptacao(compactos=[self.caixa_rostos, self.botao_auto, self.botao_centro,
+                                               self.botao_inteira, self.botao_fundo, self.botao_papel],
                                     opcionais=[self.botao_zoom_menos, self.botao_zoom_mais])
 
         self.rodape = QWidget()
@@ -556,6 +608,7 @@ class Editor(QWidget):
         atalho("A", self.enquadrar_pelos_rostos)
         atalho("C", self.centralizar)
         atalho("O", self.girar_papel)
+        atalho("I", self.foto_inteira)
         atalho(QKeySequence.StandardKey.ZoomIn, lambda: self.aproximar(PASSO_ZOOM))
         atalho(QKeySequence.StandardKey.ZoomOut, lambda: self.aproximar(1 / PASSO_ZOOM))
 
@@ -646,7 +699,8 @@ class Editor(QWidget):
         return self._aplicar(foto, imp, self._limitado(imp, novo))
 
     def aproximar(self, fator: float, ancora: tuple[float, float] | None = None) -> bool:
-        """Multiplica o zoom por ``fator`` (> 1 aproxima, < 1 afasta), de 1 a ``ZOOM_MAXIMO``.
+        """Multiplica o zoom por ``fator`` (> 1 aproxima, < 1 afasta), da foto inteira (abaixo de 1 o papel passa da
+        foto e as sobras ficam com a cor de fundo) até ``ZOOM_MAXIMO``.
 
         ``ancora`` = ponto da imagem girada (frações) que fica parado; sem ela, o centro do recorte.
         """
@@ -659,8 +713,13 @@ class Editor(QWidget):
         W, H = receita.dimensoes_giradas(imp, *self._dims())
         prop = receita.proporcao(imp, *self._dims())
         r = self._retangulo(imp)
-        zoom = min(ZOOM_MAXIMO, max(1.0, enquadramento.zoom_efetivo(imp.recorte, W, H, prop) * fator))
-        rec = replace(imp.recorte, zoom=zoom)
+        angulo = imp.recorte.angulo
+        minimo = enquadramento.zoom_minimo(W, H, prop, angulo)
+        efetivo = enquadramento.zoom_efetivo(imp.recorte, W, H, prop)
+        alvo = min(ZOOM_MAXIMO, max(minimo, efetivo * fator))
+        if abs(alvo - efetivo) < 1e-9:
+            return False      # já no limite: não vira manual
+        rec = replace(imp.recorte, zoom=enquadramento.zoom_gravado(alvo, W, H, prop, angulo))
         novo_w = enquadramento.retangulo(rec, W, H, prop).w
         cx, cy = r.cx / W, r.cy / H
         if ancora is not None:
@@ -672,8 +731,8 @@ class Editor(QWidget):
         """A alça: leva o canto ``canto`` do papel (0..3, horário a partir do superior esquerdo) para ``ponto``
         (frações da imagem girada) com o **canto oposto parado**. Muda só o zoom: a proporção do papel não muda.
 
-        O tamanho novo é a projeção do ponto na diagonal do papel (o canto fica o mais perto possível do mouse), de
-        zoom 1 a ``ZOOM_MAXIMO``. Se o papel maior não cabe com o canto oposto onde está, ele é empurrado para dentro
+        O tamanho novo é a projeção do ponto na diagonal do papel (o canto fica o mais perto possível do mouse), da
+        foto inteira (papel além da foto, com fundo) a ``ZOOM_MAXIMO``. Se o papel maior não cabe com o canto oposto onde está, ele é empurrado para dentro
         da imagem (``reencaixar``), como nos outros gestos.
         """
         ctx = self._editavel()
@@ -691,10 +750,11 @@ class Editor(QWidget):
         sx, sy = SINAIS_CANTO[canto]
         k = (sx * lx * r.w + sy * ly * r.h) / (r.w ** 2 + r.h ** 2)   # tamanho novo ÷ tamanho atual
         w0, _h0 = enquadramento.tamanho_maximo(W, H, prop)
-        zoom = min(ZOOM_MAXIMO, max(1.0, w0 / max(k * r.w, 1e-9)))
+        minimo = enquadramento.zoom_minimo(W, H, prop, r.angulo)
+        zoom = min(ZOOM_MAXIMO, max(minimo, w0 / max(k * r.w, 1e-9)))
         if abs(zoom - enquadramento.zoom_efetivo(imp.recorte, W, H, prop)) < 1e-9:
             return False          # o canto não saiu do lugar (só arredondamento): não vira manual
-        rec = replace(imp.recorte, zoom=zoom)
+        rec = replace(imp.recorte, zoom=enquadramento.zoom_gravado(zoom, W, H, prop, r.angulo))
         novo = enquadramento.retangulo(rec, W, H, prop)
         hx, hy = sx * novo.w / 2, sy * novo.h / 2            # do canto oposto ao centro, no referencial do papel
         cx, cy = ox + c * hx - s * hy, oy + s * hx + c * hy
@@ -764,6 +824,60 @@ class Editor(QWidget):
         self.estado.compartilhar_recorte(foto, imp)
         self.estado.alterar(foto)
         return True
+
+    def foto_inteira(self) -> bool:
+        """A foto inteira no papel, centralizada, com a cor de fundo nas sobras (vale para todas as impressões)."""
+        ctx = self._editavel()
+        if ctx is None:
+            return False
+        foto = ctx[0]
+        antes = [replace(i.recorte) for i in foto.impressoes]
+        self.estado.foto_inteira([foto])
+        return [i.recorte for i in foto.impressoes] != antes
+
+    def definir_fundo(self, cor: str) -> bool:
+        """Cor de fundo da foto atual (``"#rrggbb"``): onde a foto não cobre o papel."""
+        foto = self.estado.atual
+        cor = cor_valida(cor)
+        if foto is None or cor is None or foto.fundo == cor:
+            return False
+        self.estado.definir_fundo([foto], cor)
+        return True
+
+    def escolher_fundo(self) -> None:
+        """"Outra cor…": o seletor de cores, começando na cor atual."""
+        foto = self.estado.atual
+        if foto is None:
+            return
+        cor = QColorDialog.getColor(QColor(foto.fundo), self.window(), _("Cor do fundo"))
+        if cor.isValid():
+            self.definir_fundo(cor.name())
+
+    def _menu_fundo(self) -> QMenu:
+        menu = QMenu(self)
+        menu.setObjectName("menu_fundo")
+        self._acoes_fundo = {}
+        for cor, nome in FUNDOS:
+            acao = menu.addAction(amostra_cor(cor), _(nome))
+            acao.setData(cor)
+            acao.triggered.connect(lambda _c=False, c=cor: self.definir_fundo(c))
+            self._acoes_fundo[cor] = acao
+        menu.addSeparator()
+        self.acao_outra_cor = menu.addAction(_("Outra cor…"))
+        self.acao_outra_cor.triggered.connect(lambda _c=False: self.escolher_fundo())
+        menu.aboutToShow.connect(self._marcar_fundo)
+        return menu
+
+    def _marcar_fundo(self) -> None:
+        """A cor atual da foto em negrito (o ícone de amostra esconderia a marca de seleção)."""
+        foto = self.estado.atual
+        cor = foto.fundo if foto is not None else FUNDO_PADRAO
+        outra = cor not in self._acoes_fundo
+        for acao, atual in [(a, c == cor) for c, a in self._acoes_fundo.items()] + [(self.acao_outra_cor, outra)]:
+            fonte = acao.font()
+            fonte.setBold(atual)
+            acao.setFont(fonte)
+        self.acao_outra_cor.setIcon(amostra_cor(cor) if outra else QIcon())
 
     def girar_papel(self) -> bool:
         """Troca retrato ↔ paisagem da impressão atual (fixa a escolha). Automático refeito; manual reencaixado."""
@@ -995,7 +1109,8 @@ class Editor(QWidget):
         area = self.tela.area_util()
         destino = receita.destino_na_caixa(imp, *self._dims(), int(area.width() * dpr), int(area.height() * dpr))
         self._dpr_previa = dpr
-        self._pool.start(RenderizarPrevia(self._sinais, self.previa_geracao, self.proxy, imp, self._ajustes_da_foto(), destino))
+        self._pool.start(RenderizarPrevia(self._sinais, self.previa_geracao, self.proxy, imp, self._ajustes_da_foto(),
+                                          destino, foto.fundo))
 
     def _previa_pronta(self, geracao: int, imagem: object) -> None:
         if geracao != self.previa_geracao:
@@ -1020,6 +1135,7 @@ class Editor(QWidget):
         t = self.tela
         foto, imp = self.estado.atual, self.estado.impressao_atual
         t.moldura, t.rostos, t.margem_rel, t.dica = None, [], 0.0, ""
+        t.extensao, t.cor_fundo = None, None
         t.imagem, t.mostrar_rostos = None, self.caixa_rostos.isChecked()
         info = ""
         qualidade = None
@@ -1069,6 +1185,11 @@ class Editor(QWidget):
         W, H = receita.dimensoes_giradas(imp, largura, altura)
         r = self._retangulo(imp)
         t.moldura = r
+        if enquadramento.com_fundo(r, W, H):      # o papel passa da foto: o visor mostra tudo, com o fundo
+            xs, ys = zip(*receita.poligono(r))
+            t.extensao = (min(0.0, *xs), min(0.0, *ys), max(float(W), *xs), max(float(H), *ys))
+            t.cor_fundo = QColor(foto.fundo)
+            texto += " · " + _("com fundo")
         if foto.rostos:
             t.rostos = [(c.x * W, c.y * H, c.w * W, c.h * H)
                         for c in enquadramento.girar_rostos(foto.rostos, imp.recorte.giro)]
@@ -1090,6 +1211,13 @@ class Editor(QWidget):
             w.setEnabled(ativo)
         for w in (self.botao_girar_esq, self.botao_girar_dir, self.botao_papel, self.botao_auto, self.modo_vista):
             w.setEnabled(com_foto)
+        self.botao_inteira.setEnabled(ativo)
+        foto = self.estado.atual
+        self.botao_fundo.setEnabled(foto is not None)
+        cor = foto.fundo if foto is not None else FUNDO_PADRAO
+        if self.botao_fundo.property("cor_fundo") != cor:   # o ícone do botão é uma amostra da cor
+            self.botao_fundo.setProperty("cor_fundo", cor)
+            self.botao_fundo.setIcon(amostra_cor(cor))
         angulo = imp.recorte.angulo if imp is not None else 0.0
         self.slider_angulo.definir_valor(round(angulo, 1))
 

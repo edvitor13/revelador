@@ -100,13 +100,17 @@ assert not ed.mover(-9.0, -9.0)                   # já na borda: nada muda
 n = len(avisos)
 assert not ed.mover(0, 0) and len(avisos) == n
 
-# zoom: de 1 a ZOOM_MAXIMO, nunca fora disso
+# zoom: da foto inteira (abaixo de 1, com fundo) a ZOOM_MAXIMO, nunca fora disso
 for _ in range(60):
     ed.aproximar(1.5)
 assert imp.recorte.zoom == 10.0
 for _ in range(60):
     ed.aproximar(1 / 1.5)
-assert imp.recorte.zoom == 1.0 and not ed.aproximar(0.5)
+W, H = receita.dimensoes_giradas(imp, *ed._dims())
+r = receita.retangulo_da_impressao(imp, *ed._dims())
+inteira = enquadramento.tamanho_foto_inteira(W, H, receita.proporcao(imp, *ed._dims()))[0]
+assert imp.recorte.zoom < 1.0 and abs(r.w - inteira) < 1e-6 and not ed.aproximar(0.5)
+assert ed.centralizar() and imp.recorte.zoom == 1.0
 dentro(ed, imp)
 
 # endireitar: -45..45 passo 0,1, o recorte continua dentro da imagem em qualquer combinação

@@ -220,6 +220,33 @@ def desenhar(nome: str, p: QPainter, c: QColor) -> None:
         p.drawRoundedRect(QRectF(3.5, 5, 17, 14), 2.4, 2.4)
         _poli(p, [(4, 17), (9.5, 11.5), (13, 15), (15.5, 12.5), (20, 17)])
         p.drawEllipse(QPointF(15.5, 8.8), 1.4, 1.4)
+    elif nome == "foto_inteira":
+        # O papel (moldura de fora) com a foto inteira dentro e as sobras em cima e embaixo.
+        _pen(p, c)
+        p.drawRoundedRect(QRectF(3.5, 3.5, 17, 17), 2.4, 2.4)
+        p.drawRect(QRectF(6.5, 8, 11, 8))
+        _poli(p, [(7, 15.5), (10.5, 12), (13, 14.2), (14.5, 13), (17, 15.5)])
+    elif nome in ("estrela", "estrela_cheia"):
+        pontos = []
+        for i in range(10):
+            r = 9.0 if i % 2 == 0 else 3.9
+            a = math.radians(-90 + 36 * i)
+            pontos.append((12 + r * math.cos(a), 12.6 + r * math.sin(a)))
+        if nome == "estrela_cheia":
+            _cheio(p, c)
+        else:
+            _pen(p, c, 1.7)
+        _poli(p, pontos, fechar=True)
+    elif nome == "tela_cheia":
+        # Quatro cantoneiras para fora: ocupar a tela inteira.
+        _pen(p, c)
+        for sx, sy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+            x, y = 12 - sx * 8, 12 - sy * 8
+            _poli(p, [(x, y + sy * 5), (x, y), (x + sx * 5, y)])
+    elif nome == "maximizar":
+        _pen(p, c)
+        p.drawRoundedRect(QRectF(4.5, 5.5, 15, 13), 1.6, 1.6)
+        p.drawLine(QPointF(4.5, 8.8), QPointF(19.5, 8.8))
     elif nome == "opcoes":
         # "⋯": três pontos na horizontal (menu de opções de um item, como uma pasta de tamanho).
         _cheio(p, c)
@@ -233,6 +260,7 @@ NOMES = (
     "importar", "pasta", "exportar", "salvar", "abrir", "configuracoes", "check", "mais", "fechar", "lixeira",
     "girar_esquerda", "girar_direita", "endireitar", "zoom_mais", "zoom_menos", "rosto", "recorte", "centro", "grade",
     "filtro", "dinheiro", "info", "aviso", "chevron", "reset", "foto", "copiar", "colar", "comparar", "opcoes",
+    "foto_inteira", "estrela", "estrela_cheia", "tela_cheia", "maximizar",
 )
 
 

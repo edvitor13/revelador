@@ -56,16 +56,17 @@ class RenderizarPrevia(QRunnable):
     """Prévia pela receita única, no tamanho do visor. Recebe cópias do modelo: a thread principal pode seguir mexendo."""
 
     def __init__(self, sinais: Sinais, geracao: int, fonte: np.ndarray, impressao: Impressao,
-                 ajustes: dict | None, destino: tuple[int, int]) -> None:
+                 ajustes: dict | None, destino: tuple[int, int], fundo: str | None = None) -> None:
         super().__init__()
         self.sinais, self.geracao, self.fonte = sinais, geracao, fonte
         self.impressao = copy.deepcopy(impressao)
         self.ajustes = dict(ajustes or {})
         self.destino = (int(destino[0]), int(destino[1]))
+        self.fundo = fundo
 
     def run(self) -> None:
         try:
-            saida = receita.renderizar(self.fonte, self.impressao, self.ajustes, self.destino)
+            saida = receita.renderizar(self.fonte, self.impressao, self.ajustes, self.destino, self.fundo)
             imagem = para_qimage(receita.para_uint8(saida))
         except Exception as e:  # noqa: BLE001 - a prévia falhar não pode derrubar o app
             self.sinais.previa_erro.emit(self.geracao, str(e))

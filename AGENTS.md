@@ -37,8 +37,11 @@ proporção certa e não precisa cortar nada além da margem de corte (sangria).
 
 ## Estado atual
 
-Versão **0.1.0 em construção**. As fases A (núcleo), B (importação, grade, seleção, custo, editor) e C (ajustes,
-exportação, salvar/abrir, atualização) e o **visual novo** estão no `main`. O que cada issue já tem:
+Versão **0.2.0** (0.1.0 e 0.1.1 publicadas em 2026-11-03). As fases A (núcleo), B (importação, grade, seleção,
+custo, editor) e C (ajustes, exportação, salvar/abrir, atualização) e o **visual novo** estão no `main`. Na 0.2.0:
+afastar além da foto com cor de fundo por foto (#53), botão "Foto inteira" (#54), continuar na última foto aberta
+(#55), favoritas com estrela e filtro (#56) e tela cheia e maximizar no Visualizar (#57), tudo compatível com os
+`.revelador` das versões anteriores (formato 1, campos novos opcionais). O que cada issue já tem:
 
 - **#1, #2, #7, #8, #10, #13, #31, #33, #34, #35, #36: feitas** (fechadas). Ajustes com painel e prévia rápida,
   exportação com diálogo, atualização com diálogo e verificação ao abrir, preços e custo do pedido, tamanho das
@@ -78,6 +81,10 @@ vieram pelas issues do marco **0.1.0**, nesta ordem sugerida:
 | #35 | Tela de boas-vindas | `ui/boas_vindas.py`, `novidades/` |
 | #36 | Rostos aos poucos e centro na média dos rostos | `ui/tarefas.py`, `enquadramento.py` |
 | #11 | Roteiro da 0.1.0 (release) | — |
+| #53, #54 | Fundo além da foto e "Foto inteira" | `enquadramento.py`, `receita.py`, `projeto.py`, `ui/editor.py` |
+| #55 | Continuar na última foto | `projeto.py`, `ui/estado.py`, `ui/projeto_ui.py` |
+| #56 | Favoritas | `projeto.py`, `ui/estado.py`, `ui/grade.py`, `ui/editor.py`, `ui/visualizar.py` |
+| #57 | Tela cheia e maximizar no Visualizar | `ui/visualizar.py` |
 
 Ideias para depois da 0.1.0 ficam na issue #12. Antes de começar uma issue, leia a seção correspondente de
 [docs/ARQUITETURA.md](docs/ARQUITETURA.md): ela é o contrato técnico.
@@ -100,9 +107,9 @@ revelador/
   miniaturas.py               cache de miniaturas em disco, chave (caminho, tamanho, mtime)          [existe]
   tamanhos.py                 TAMANHOS: tabela única dos tamanhos de revelação (mm, proporção, px)   [existe]
   rostos.py                   detecção de rostos com YuNet (cv2.FaceDetectorYN), modelo no pacote    [existe]
-  enquadramento.py            geometria do recorte e recorte automático (funções puras)              [existe]
+  enquadramento.py            geometria do recorte (inclusive além da foto) e recorte automático     [existe]
   ajustes.py                  PARAMS (esquema) e aplicar(): ajustes de luz e cor em numpy            [existe]
-  receita.py                  receita única: renderizar(fonte, impressao, ajustes, destino_px) e geometria [existe]
+  receita.py                  receita única: renderizar(fonte, impressao, ajustes, destino_px, fundo) [existe]
   projeto.py                  modelo (Trabalho, Foto, Impressao, Recorte, Rosto) e .revelador         [existe]
   exportar.py                 pastas por tamanho, JPEG, cópias, pedido.txt, execução em paralelo     [existe]
   precos.py                   tabela de preços (centavos por tamanho) e orcamento() do pedido        [existe]
@@ -115,7 +122,7 @@ revelador/
     tema.py                   cores, medidas e folha de estilo (tema escuro neutro, destaque laranja) [existe]
     icones.py                 ícones vetoriais desenhados com QPainter                               [existe]
     componentes.py            Card, Slider, Segmented, ToggleSwitch, Pilula, BarraAdaptavel          [existe]
-    grade.py                  grade de miniaturas, seleção, tamanho e cópias                         [existe]
+    grade.py                  grade de miniaturas, seleção, tamanho, cópias, favoritas e filtros     [existe]
     tarefas.py                importação em segundo plano: metadados, miniaturas e a fila de rostos  [existe]
     painel_impressoes.py      cartão Impressões e seletor de tamanho padrão                          [existe]
     pastas.py                 seção Pastas da grade, diálogo da pasta e passo de importar pasta      [existe]
@@ -159,7 +166,8 @@ tests/ajustes_referencia.py   versão lenta e simples dos ajustes, para comparar
    sufixo ` (2)`), gravando em arquivo temporário e renomeando no fim.
 2. **Prévia e exportação usam o mesmo caminho.** Toda imagem mostrada (editor, antes/depois, miniatura ajustada) e
    toda imagem exportada passa pela **receita única** (`receita.py`): carregar → orientar (EXIF) → sRGB → giro de
-   90°/endireitar → recorte → redimensionar para o tamanho de destino → ajustes → borda (modo *caber*). Quem chama
+   90°/endireitar → recorte → redimensionar para o tamanho de destino → ajustes → fundo (zoom < 1) ou borda (modo
+   *caber*), na cor de fundo da foto. Quem chama
    só escolhe o tamanho de destino (prévia: o tamanho do visor; exportação: os px do papel) e de qual imagem parte
    (proxy ou original). Nunca implemente um ajuste ou um recorte só na interface ou só na exportação.
 3. **Ajustes são funções puras e determinísticas.** `ajustes.aplicar(rgb, valores)` recebe numpy float32 em 0..1
@@ -168,7 +176,8 @@ tests/ajustes_referencia.py   versão lenta e simples dos ajustes, para comparar
    papel** e convertido pelo dpi — assim a prévia pequena e a exportação grande ficam iguais.
 4. **A proporção do papel é lei.** O recorte tem sempre exatamente a proporção do tamanho escolhido, na orientação
    da impressão; a exportação sai com os **px exatos** do papel (`round(mm / 25,4 × dpi)`). O recorte nunca sai
-   da imagem (no modo *preencher*). Tamanhos só em `tamanhos.TAMANHOS`.
+   da imagem com `zoom ≥ 1`; com `zoom < 1` (afastar além da foto, #53) o papel cresce até a foto inteira e a
+   sobra é pintada com a cor de fundo da foto pela receita, nunca só na tela. Tamanhos só em `tamanhos.TAMANHOS`.
 5. **Cor: sRGB na entrada e na saída.** Ao carregar, converta pelo perfil ICC embutido (Display P3 dos iPhones,
    Adobe RGB...) para sRGB com `PIL.ImageCms`; trabalhe em sRGB. Exporte JPEG com o perfil sRGB embutido, dpi
    gravado (300 por padrão), orientação EXIF já aplicada (sem tag de orientação), qualidade 95 e subamostragem

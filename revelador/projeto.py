@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,9 @@ TAMANHO_PADRAO = "10x15"
 COR_PASTA_PADRAO = "azul"       # primeira cor da paleta de pastas (``ui/tema.CORES_PASTA``); reserva ao ler
 DPI_PADRAO = 300
 MARGEM_CORTE_MM_PADRAO = 2.0
+FUNDO_PADRAO = "#ffffff"        # cor do fundo onde a foto não cobre o papel (afastar além da foto, modo caber)
+ZOOM_MINIMO = 0.05              # menor zoom gravado: abaixo de 1 o papel fica maior que a foto e aparece o fundo
+ZOOM_MAXIMO_ARQUIVO = 20.0
 
 ORIGENS_RECORTE = ("auto", "centro", "manual")
 ORIENTACOES = ("auto", "retrato", "paisagem")
@@ -48,6 +52,7 @@ class Recorte:
     cx: float = 0.5          # centro, normalizado à imagem orientada E girada (giro aplicado)
     cy: float = 0.5
     zoom: float = 1.0        # 1 = maior recorte possível na proporção do papel; 2 = metade da largura...
+    #                          abaixo de 1 o papel cresce além da foto (fundo em ``Foto.fundo``), até a foto inteira
     angulo: float = 0.0      # endireitar, graus (-45..45), em torno do centro do recorte
     giro: int = 0            # giros de 90° no sentido horário (0..3), sem perda
     origem: str = "auto"     # "auto" (rostos) | "centro" (sem rosto) | "manual" (a pessoa mexeu)
@@ -95,6 +100,8 @@ class Foto:
     ajustes: dict[str, float] = field(default_factory=dict)     # só as chaves fora do padrão
     rostos: list[Rosto] | None = None                           # None = ainda não detectado; [] = nenhum
     impressoes: list[Impressao] = field(default_factory=list)   # vazia até a foto ser selecionada
+    favorita: bool = False          # estrela da pessoa (filtro "Favoritas"); não muda nada na revelação
+    fundo: str = FUNDO_PADRAO       # "#rrggbb": onde a foto não cobre o papel (zoom < 1 ou modo caber)
 
 
 @dataclass
@@ -107,6 +114,7 @@ class Trabalho:
     margem_corte_mm: float = MARGEM_CORTE_MM_PADRAO
     caminho: Path | None = None     # o .revelador, quando salvo
     pastas: list[Pasta] = field(default_factory=list)   # pastas de tamanho (#32), na ordem da tela
+    ultima_foto: str | None = None  # id da última foto aberta no editor: o trabalho reabre nela
 
     def selecionadas(self) -> list[Foto]:
         return [f for f in self.fotos if f.selecionada]
@@ -157,11 +165,29 @@ def _recorte_de(d: object, avisos: list[str]) -> Recorte:
     return Recorte(
         cx=float(_numero(d.get("cx"), 0.5, 0.0, 1.0, "cx", avisos)),
         cy=float(_numero(d.get("cy"), 0.5, 0.0, 1.0, "cy", avisos)),
-        zoom=float(_numero(d.get("zoom"), 1.0, 1.0, 20.0, "zoom", avisos)),
+        zoom=float(_numero(d.get("zoom"), 1.0, ZOOM_MINIMO, ZOOM_MAXIMO_ARQUIVO, "zoom", avisos)),
         angulo=float(_numero(d.get("angulo"), 0.0, -45.0, 45.0, "angulo", avisos)),
         giro=_inteiro(d.get("giro"), 0, 0, 3, "giro", avisos),
         origem=_escolha(d.get("origem"), ORIGENS_RECORTE, "auto", "origem", avisos),
     )
+
+
+_COR = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def cor_valida(v: object) -> str | None:
+    """``"#rrggbb"`` em minúsculas, ou None se ``v`` não é uma cor assim."""
+    return v.lower() if isinstance(v, str) and _COR.fullmatch(v) else None
+
+
+def _fundo_de(v: object, avisos: list[str]) -> str:
+    if v is None:
+        return FUNDO_PADRAO
+    cor = cor_valida(v)
+    if cor is None:
+        avisos.append(_("Cor de fundo inválida; usei branco."))
+        return FUNDO_PADRAO
+    return cor
 
 
 def _papel_de(v: object, avisos: list[str]) -> tuple[float, float] | None:
@@ -351,7 +377,12 @@ def de_dict(dados: object, base: Path | None, tamanhos_validos: set[str] | list[
             ajustes=_ajustes_de(fd.get("ajustes"), limitar_ajustes, avisos),
             rostos=rostos,
             impressoes=_impressoes_da_foto(imps, tam_pad, validos, avisos, por_id),
+            favorita=fd.get("favorita") is True,
+            fundo=_fundo_de(fd.get("fundo"), avisos),
         ))
+    ultima = dados.get("ultima_foto")
+    if isinstance(ultima, str) and any(f.id == ultima for f in trabalho.fotos):
+        trabalho.ultima_foto = ultima
     return trabalho, list(dict.fromkeys(avisos))
 
 
@@ -435,6 +466,10 @@ def para_dict(trabalho: Trabalho, base: Path | None) -> dict:
             d["rostos"] = [_rosto_para_dict(r) for r in f.rostos]
         if f.impressoes:
             d["impressoes"] = [_impressao_para_dict(i) for i in f.impressoes]
+        if f.favorita:
+            d["favorita"] = True
+        if f.fundo != FUNDO_PADRAO:
+            d["fundo"] = f.fundo
         fotos.append(d)
     saida: dict = {
         "app": "Revelador",
@@ -445,6 +480,8 @@ def para_dict(trabalho: Trabalho, base: Path | None) -> dict:
     }
     if trabalho.pastas:   # campo novo (#32): só gravado quando há pastas de tamanho
         saida["pastas"] = [_pasta_para_dict(p) for p in trabalho.pastas]
+    if trabalho.ultima_foto is not None and any(f.id == trabalho.ultima_foto for f in trabalho.fotos):
+        saida["ultima_foto"] = trabalho.ultima_foto
     saida["fotos"] = fotos
     return saida
 

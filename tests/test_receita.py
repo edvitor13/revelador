@@ -316,3 +316,55 @@ def test_retangulo_e_o_do_enquadramento():
     assert (W, H) == (3000, 4000)
     esperado = enquadramento.retangulo(i.recorte, W, H, receita.proporcao(i, 4000, 3000))
     assert receita.retangulo_da_impressao(i, 4000, 3000) == esperado
+
+
+# ------------------------------------------------------------------------------- fundo (afastar além da foto)
+
+INTEIRA = Recorte(zoom=0.05, origem="manual")   # projeto.ZOOM_MINIMO: a foto inteira no papel
+
+
+def test_foto_inteira_tem_faixas_do_fundo_e_a_foto_no_meio():
+    """Foto 4:3 num 10x15 deitado (3:2): faixas da cor de fundo à esquerda e à direita, a foto inteira no meio."""
+    fonte = fundo(400, 300, 0.5)
+    saida = receita.renderizar(fonte, imp(recorte=INTEIRA), None, (600, 400), "#000000")
+    faixa = round(600 * (450 - 400) / 2 / 450)                  # 50 px de fonte sobrando, em px de destino
+    assert np.all(saida[:, :faixa - 1] == 0.0) and np.all(saida[:, -faixa + 1:] == 0.0)
+    assert np.allclose(saida[:, faixa + 1:-faixa - 1], 0.5, atol=1e-4)
+
+
+@pytest.mark.parametrize("cor,rgb", [(None, (1.0, 1.0, 1.0)), ("#ffffff", (1.0, 1.0, 1.0)), ("#000000", (0, 0, 0)),
+                                     ("#3366CC", (0x33 / 255, 0x66 / 255, 0xCC / 255)), ("xyz", (1.0, 1.0, 1.0))])
+def test_cor_do_fundo(cor, rgb):
+    saida = receita.renderizar(fundo(400, 300), imp(recorte=INTEIRA), None, (600, 400), cor)
+    assert np.allclose(saida[200, 2], rgb, atol=1e-6)
+
+
+def test_zoom_um_nao_pinta_fundo_nenhum():
+    """Sem afastar além da foto, a cor de fundo não muda nada (trabalhos antigos saem idênticos)."""
+    fonte = textura(400, 300)
+    a = receita.renderizar(fonte, imp(), None, (600, 400), "#000000")
+    b = receita.renderizar(fonte, imp(), None, (600, 400))
+    assert np.array_equal(a, b)
+
+
+def test_ajustes_nao_mexem_no_fundo():
+    saida = receita.renderizar(fundo(400, 300), imp(recorte=INTEIRA), {"exposicao": 80.0, "temperatura": 50.0},
+                               (600, 400), "#808080")
+    assert np.allclose(saida[:, :20], 128 / 255, atol=1e-6)
+    assert saida[200, 300].mean() > 0.6
+
+
+@pytest.mark.parametrize("angulo", [0.0, 6.0])
+def test_previa_com_fundo_parecida_com_a_exportacao(angulo):
+    fonte = textura(1600, 1200)
+    i = imp("10x15", orientacao="retrato", recorte=Recorte(cx=0.6, zoom=0.7, angulo=angulo, origem="manual"))
+    grande = receita.renderizar(fonte, i, None, receita.tamanho_exportacao(i, 1600, 1200, 150), "#203040")
+    pequena = receita.renderizar(cv2.resize(fonte, (400, 300), interpolation=cv2.INTER_AREA), i, None,
+                                 (grande.shape[1] // 4, grande.shape[0] // 4), "#203040")
+    reduzida = cv2.resize(grande, (pequena.shape[1], pequena.shape[0]), interpolation=cv2.INTER_AREA)
+    assert float(np.abs(reduzida - pequena).mean()) < 0.02
+
+
+def test_modo_caber_usa_a_cor_de_fundo():
+    saida = receita.renderizar(fundo(400, 300, 0.5), imp(modo="caber"), None, (600, 400), "#000000")
+    assert np.all(saida[:, :5] == 0.0)

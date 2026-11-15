@@ -11,6 +11,12 @@ usar.
 - ``recorte_automatico(W, H, proporcao, rostos)`` é a política do recorte inicial (seção 5.2).
 - ``reencaixar(recorte, W, H, proporcao)`` adapta um recorte à troca de tamanho/orientação do papel mantendo o
   centro, a escala e o ângulo possíveis.
+
+Afastar além da foto (``zoom < 1``): o papel fica maior que a foto e o que sobra é preenchido com a cor de fundo da
+foto (``receita``). O papel cresce até conter a foto inteira (``tamanho_foto_inteira``) e não passa disso; o centro é
+limitado para a foto não sair do papel. ``zoom = ZOOM_MINIMO`` é sempre "a foto inteira", em qualquer papel. Com
+``zoom >= 1`` nada muda: o recorte nunca sai da imagem. ``zoom_efetivo``/``zoom_gravado`` convertem entre o zoom que
+se vê (largura máxima ÷ largura do recorte) e o gravado no ``Recorte``.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ from dataclasses import dataclass, replace
 from typing import Iterable, NamedTuple
 
 from . import tamanhos
-from .projeto import Impressao, Recorte, Rosto
+from .projeto import ZOOM_MINIMO, Impressao, Recorte, Rosto
 
 # --- política (seção 5.2) -------------------------------------------------------------------------------------------
 
@@ -79,38 +85,94 @@ def _limitar(v: float, minimo: float, maximo: float) -> float:
     return min(max(v, minimo), maximo)
 
 
+def _faixa(v: float, lado: float, total: float) -> float:
+    """Centro de um segmento ``lado`` em ``[0, total]``: dentro da imagem se cabe; se é maior (fundo), a imagem
+    fica dentro dele."""
+    if lado <= total + 1e-9:
+        return _limitar(v, lado / 2, total - lado / 2)
+    return _limitar(v, total - lado / 2, lado / 2)
+
+
+def tamanho_foto_inteira(W: float, H: float, proporcao: float, angulo: float = 0.0) -> tuple[float, float]:
+    """Menor ``(w, h)`` com ``w / h = proporcao`` que contém a imagem ``W × H`` inteira (vista girada de ``angulo``
+    no papel): o papel da "foto inteira", com fundo nas sobras."""
+    bw, bh = caixa_envolvente(W, H, angulo)
+    w = max(bw, bh * proporcao)
+    return w, w / proporcao
+
+
 def retangulo(recorte: Recorte, W: float, H: float, proporcao: float) -> Retangulo:
     """Transforma o ``Recorte`` em px na imagem girada ``W × H``, sempre dentro dela e na proporção exata.
 
     ``zoom = 1`` é o maior recorte sem endireitar; o zoom efetivo cresce o necessário para o recorte girado caber
     (endireitar não muda a escala enquanto ainda couber). O centro é limitado para a caixa envolvente ficar dentro da
     imagem: nunca há cantos vazios.
+
+    ``zoom < 1`` (afastar além da foto): o recorte cresce ``1 / zoom`` vezes a partir do maior que cabe nesse ângulo,
+    até conter a foto inteira (nunca mais que isso); onde ele passa da imagem, a receita pinta o fundo. Nesse lado o
+    centro é limitado para a imagem não sair do recorte.
     """
     angulo = max(-45.0, min(45.0, float(recorte.angulo)))
     w0, _ = tamanho_maximo(W, H, proporcao)
     w_ang, _ = tamanho_maximo(W, H, proporcao, angulo)
-    w = min(w0 / max(1.0, float(recorte.zoom)), w_ang)
+    zoom = float(recorte.zoom)
+    if zoom >= 1.0:
+        w = min(w0 / zoom, w_ang)
+    else:
+        w_inteira, _ = tamanho_foto_inteira(W, H, proporcao, angulo)
+        w = max(w_ang, min(w_ang / max(zoom, ZOOM_MINIMO), w_inteira))
     h = w / proporcao
     bw, bh = caixa_envolvente(w, h, angulo)
-    cx = _limitar(float(recorte.cx) * W, bw / 2, W - bw / 2)
-    cy = _limitar(float(recorte.cy) * H, bh / 2, H - bh / 2)
+    cx = _faixa(float(recorte.cx) * W, bw, W)
+    cy = _faixa(float(recorte.cy) * H, bh, H)
     return Retangulo(cx, cy, w, h, angulo)
 
 
+def com_fundo(ret: Retangulo, W: float, H: float) -> bool:
+    """O recorte passa da imagem (há fundo à vista)? Tolerância de 1e-6 px."""
+    t = math.radians(ret.angulo)
+    c, s = math.cos(t), math.sin(t)
+    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        dx, dy = sx * ret.w / 2, sy * ret.h / 2
+        x, y = ret.cx + c * dx + s * dy, ret.cy - s * dx + c * dy
+        if x < -1e-6 or y < -1e-6 or x > W + 1e-6 or y > H + 1e-6:
+            return True
+    return False
+
+
 def zoom_efetivo(recorte: Recorte, W: float, H: float, proporcao: float) -> float:
-    """Zoom de fato aplicado (``>= recorte.zoom`` quando o endireitar obriga a aproximar)."""
+    """Zoom que se vê: largura do maior recorte reto ÷ largura do recorte (``>= recorte.zoom`` quando o endireitar
+    obriga a aproximar; abaixo de 1 com fundo)."""
     w0, _ = tamanho_maximo(W, H, proporcao)
     return w0 / retangulo(recorte, W, H, proporcao).w
+
+
+def zoom_minimo(W: float, H: float, proporcao: float, angulo: float = 0.0) -> float:
+    """Menor zoom efetivo: o da foto inteira no papel (1 quando a foto já tem a proporção do papel)."""
+    w0, _ = tamanho_maximo(W, H, proporcao)
+    return min(1.0, w0 / tamanho_foto_inteira(W, H, proporcao, max(-45.0, min(45.0, angulo)))[0])
+
+
+def zoom_gravado(efetivo: float, W: float, H: float, proporcao: float, angulo: float = 0.0) -> float:
+    """O ``Recorte.zoom`` que dá o zoom efetivo ``efetivo`` neste ângulo (inverso de ``zoom_efetivo``)."""
+    angulo = max(-45.0, min(45.0, float(angulo)))
+    w0, _ = tamanho_maximo(W, H, proporcao)
+    w_ang, _ = tamanho_maximo(W, H, proporcao, angulo)
+    s = w0 / w_ang                   # zoom efetivo do maior recorte que cabe neste ângulo (>= 1)
+    if efetivo >= s - 1e-12:
+        return float(efetivo)
+    return max(ZOOM_MINIMO, float(efetivo) / s)
 
 
 def reencaixar(recorte: Recorte, W: float, H: float, proporcao: float) -> Recorte:
     """Adapta o recorte a outra proporção (troca de tamanho ou orientação do papel).
 
     Mantém o centro, o zoom e o ângulo e só limita o centro para o novo retângulo caber; ``giro`` e ``origem`` ficam
-    como estão (um recorte ``"auto"`` deve ser refeito por ``recorte_automatico()`` por quem chama).
+    como estão (um recorte ``"auto"`` deve ser refeito por ``recorte_automatico()`` por quem chama). Zoom abaixo de 1
+    (com fundo) continua abaixo de 1: ``ZOOM_MINIMO`` segue sendo a foto inteira no papel novo.
     """
     r = retangulo(recorte, W, H, proporcao)
-    return replace(recorte, cx=r.cx / W, cy=r.cy / H, zoom=max(1.0, float(recorte.zoom)), angulo=r.angulo)
+    return replace(recorte, cx=r.cx / W, cy=r.cy / H, zoom=max(ZOOM_MINIMO, float(recorte.zoom)), angulo=r.angulo)
 
 
 def girar_rostos(rostos: Iterable[Rosto], giro: int) -> list[Rosto]:
