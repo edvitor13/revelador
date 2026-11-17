@@ -13,6 +13,8 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
   Agora cada impressão tem o próprio enquadramento: mover, zoom, alças, endireitar, Centralizar, Foto inteira e
   Enquadrar pelos rostos no editor valem só para o tamanho mostrado. Girar 90° e espelhar continuam valendo para a
   foto toda, mas cada tamanho mantém o seu enquadramento; um tamanho novo herda só o giro e o espelho.
+- Ajustes de cor e nitidez numa imagem de 1×1 px falhavam com o OpenCV 5.1 (um plano 1×1 operado com um número
+  virava escalar); agora funcionam com o OpenCV 5.0 e o 5.1.
 
 ### Adicionado
 - 0 cópias: um tamanho pode ficar com 0 cópias (−, atalho, chip da grade e "Cópias ▸ 0 cópias (guardar sem
