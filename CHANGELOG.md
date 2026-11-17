@@ -6,6 +6,26 @@ Todas as mudanças importantes do Revelador ficam aqui. O formato segue o
 
 ## [Não lançado]
 
+## [0.2.2] - 2026-11-17
+
+### Corrigido
+- Mexer na moldura de um tamanho mudava a dos outros tamanhos da mesma foto (ex.: ajustar o 10x15 movia o 15x21).
+  Agora cada impressão tem o próprio enquadramento: mover, zoom, alças, endireitar, Centralizar, Foto inteira e
+  Enquadrar pelos rostos no editor valem só para o tamanho mostrado. Girar 90° e espelhar continuam valendo para a
+  foto toda, mas cada tamanho mantém o seu enquadramento; um tamanho novo herda só o giro e o espelho.
+
+### Adicionado
+- 0 cópias: um tamanho pode ficar com 0 cópias (−, atalho, chip da grade e "Cópias ▸ 0 cópias (guardar sem
+  revelar)") para guardar a configuração sem revelar agora; fica fora da exportação, do custo e do resumo.
+- Remover um tamanho pela lixeira do painel pergunta antes ("Cancelar" é o padrão).
+- Filtro "Repetidas": as fotos parecidas aparecem lado a lado, grupo a grupo (só enquanto o filtro está ligado).
+- Visualizar: embaixo de cada tamanho, as cópias e o detalhe do recorte (orientação, enquadramento e px da
+  exportação); um tamanho com 0 cópias aparece apagado.
+
+### Compatibilidade
+- Formato 1, sem campo novo: trabalhos das versões anteriores abrem com os mesmos recortes. Um trabalho com algum
+  tamanho em 0 cópias, aberto numa versão anterior, mostra esse tamanho com 1 cópia (com aviso).
+
 ## [0.2.1] - 2026-11-15
 
 ### Adicionado

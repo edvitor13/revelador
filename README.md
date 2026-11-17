@@ -25,17 +25,19 @@ fundo que você escolher.
 - **Importar** fotos e pastas (JPEG, PNG, HEIC do iPhone, WebP, TIFF), com a orientação e a cor certas; arrastar
   para a janela também funciona. A foto importada já entra marcada no tamanho padrão.
 - **Tamanho e cópias** para cada foto (10x15, 13x18, 15x20, 15x21, 20x25, 20x30, A4, 30x40, 30x45, 40x60,
-  quadradas e personalizado), com − e + direto na grade; uma foto pode sair em vários tamanhos.
+  quadradas e personalizado), com − e + direto na grade; uma foto pode sair em vários tamanhos, cada um com o
+  seu enquadramento. Um tamanho pode ficar com **0 cópias** para ser guardado sem ir para a revelação.
 - **Pastas de tamanho**: grupos como "Família 15x21" para organizar o pedido e a exportação.
 - **Favoritas** com estrela e **filtros** na grade: por pasta, por tamanho, favoritas, com mais de uma cópia,
-  sem pasta e **repetidas** (fotos muito parecidas em arquivos diferentes, para comparar e unificar).
+  sem pasta e **repetidas** (fotos muito parecidas em arquivos diferentes, lado a lado, para comparar e unificar).
 
 **Enquadrar**
 - **Enquadramento automático centrado nos rostos**, na proporção exata do papel, com aviso de resolução baixa.
 - **Editor**: mover, aproximar e afastar (alças nos cantos), girar 90°, **espelhar** na horizontal e na vertical,
   endireitar, centralizar e a margem de corte do laboratório. Afastar além da foto aumenta o papel com uma **cor de
   fundo** (branco, preto ou qualquer cor), e o botão **Foto inteira** ajusta a foto toda no papel com um clique.
-- **Visualizar**: passa pelas fotos marcadas mostrando o resultado de cada tamanho, em tela cheia se quiser.
+- **Visualizar**: passa pelas fotos marcadas mostrando o resultado de cada tamanho, com as cópias e o recorte de
+  cada um, em tela cheia se quiser.
 
 **Ajustar e enviar**
 - **Ajustes no painel lateral**: exposição, contraste, realces, sombras, brancos, pretos, temperatura, matiz,
@@ -64,6 +66,7 @@ O `SHA256SUMS.txt` da release confere os arquivos. Windows 10 ou 11 (64 bits).
 
 | Versão | Data | Destaques |
 |---|---|---|
+| [0.2.2](https://github.com/edvitor13/revelador/releases/tag/v0.2.2) | 2026-11-17 | Enquadramento próprio de cada tamanho, 0 cópias, repetidas lado a lado |
 | [0.2.1](https://github.com/edvitor13/revelador/releases/tag/v0.2.1) | 2026-11-15 | Espelhar a foto na horizontal e na vertical |
 | [0.2.0](https://github.com/edvitor13/revelador/releases/tag/v0.2.0) | 2026-11-15 | Foto inteira com cor de fundo, favoritas, continuar de onde parou, Visualizar em tela cheia |
 | [0.1.1](https://github.com/edvitor13/revelador/releases/tag/v0.1.1) | 2026-11-03 | Filtros de cópias e repetidas, comparar repetidas na tela grande |

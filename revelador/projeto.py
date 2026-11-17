@@ -62,10 +62,15 @@ class Recorte:
 
 @dataclass
 class Impressao:
-    """Uma foto num tamanho de papel, com a quantidade de cópias e o recorte (o mesmo da foto, reencaixado no papel)."""
+    """Uma foto num tamanho de papel, com a quantidade de cópias e o recorte PRÓPRIO desta impressão.
+
+    Cada impressão tem o seu enquadramento: mexer no 10x15 não muda o 15x21 da mesma foto. Só o giro de 90° e o
+    espelhamento (``Recorte.giro``, ``espelho_h``, ``espelho_v``) são da foto e ficam iguais em todas as impressões.
+    ``copias = 0`` guarda a configuração sem revelar nada (não entra na exportação nem no custo).
+    """
 
     tamanho: str = TAMANHO_PADRAO   # id de tamanhos.TAMANHOS, ou "personalizado"
-    copias: int = 1
+    copias: int = 1                 # 0..999; 0 = configurada, mas não revelada agora
     orientacao: str = "auto"        # "auto" (segue a foto) | "retrato" | "paisagem"
     modo: str = "preencher"         # "preencher" (corta na proporção) | "caber" (foto inteira com borda branca)
     recorte: Recorte = field(default_factory=Recorte)
@@ -92,7 +97,8 @@ class Pasta:
 
 @dataclass
 class Foto:
-    """Uma foto importada. Os ajustes e o recorte valem para todas as impressões dela."""
+    """Uma foto importada. Os ajustes, o fundo, o giro de 90° e o espelho valem para todas as impressões dela; o
+    enquadramento (centro, zoom, ângulo) é de cada impressão."""
 
     id: str
     caminho: Path
@@ -122,6 +128,16 @@ class Trabalho:
         return [f for f in self.fotos if f.selecionada]
 
 
+def nova_impressao(foto: Foto, tamanho: str = TAMANHO_PADRAO, **campos) -> Impressao:
+    """Impressão nova para ``foto`` (ainda fora da lista): o giro de 90° e o espelho vêm das impressões que a foto já
+    tem (são da foto); o enquadramento começa automático e é só dela (quem chama refaz o recorte sugerido)."""
+    imp = Impressao(tamanho=tamanho, **campos)
+    if foto.impressoes:
+        r = foto.impressoes[0].recorte
+        imp.recorte = Recorte(giro=r.giro, espelho_h=r.espelho_h, espelho_v=r.espelho_v)
+    return imp
+
+
 # --------------------------------------------------------------------------------------------------------------------
 # Arquivo .revelador (seção 9 da arquitetura)
 # --------------------------------------------------------------------------------------------------------------------
@@ -129,7 +145,8 @@ class Trabalho:
 FORMATO = 1
 MIGRACOES: dict[int, Callable[[dict], dict]] = {}   # formato n -> passo puro que devolve o dict no formato n+1
 DPI_MIN, DPI_MAX = 100, 600
-COPIAS_MIN, COPIAS_MAX = 1, 999
+COPIAS_MIN, COPIAS_MAX = 1, 999   # cópias padrão de uma pasta de tamanho
+COPIAS_MIN_IMPRESSAO = 0          # uma impressão pode ficar com 0 cópias (configurada, mas não revelada)
 TAMANHO_PERSONALIZADO = "personalizado"
 
 
@@ -236,7 +253,7 @@ def _impressao_de(d: object, padrao_tamanho: str, tamanhos_validos: set[str] | N
             tamanho, papel, preco = pasta.tamanho, pasta.papel_mm, pasta.preco_centavos
     return Impressao(
         tamanho=tamanho,
-        copias=_inteiro(d.get("copias"), 1, COPIAS_MIN, COPIAS_MAX, "copias", avisos),
+        copias=_inteiro(d.get("copias"), 1, COPIAS_MIN_IMPRESSAO, COPIAS_MAX, "copias", avisos),
         orientacao=_escolha(d.get("orientacao"), ORIENTACOES, "auto", "orientacao", avisos),
         modo=_escolha(d.get("modo"), MODOS, "preencher", "modo", avisos),
         recorte=_recorte_de(d.get("recorte"), avisos),

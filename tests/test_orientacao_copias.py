@@ -158,8 +158,13 @@ assert imp.copias == 2
 imp.copias = 999; p.sincronizar()
 l.botao_mais.click(); assert imp.copias == 999
 imp.copias = 1; p.sincronizar()
-l.botao_menos.click(); assert imp.copias == 1
-assert l.spin_copias.minimum() == 1 and l.spin_copias.maximum() == 999
+assert l.rotulo_zero.isHidden()
+l.botao_menos.click(); assert imp.copias == 0          # 0 cópias: guardado, mas não revelado
+assert not l.rotulo_zero.isHidden() and not l.botao_menos.isEnabled()
+l.botao_menos.click(); assert imp.copias == 0
+assert l.spin_copias.minimum() == 0 and l.spin_copias.maximum() == 999
+from revelador import precos
+assert precos.orcamento(estado.trabalho, {"10x15": 150}).linhas == []   # 0 cópias não entram no custo
 print("ok")
 """)
 
@@ -179,7 +184,7 @@ assert imp.copias == 1, imp.copias
 p.mudar_copias_atual(+1)
 assert imp.copias == 2
 p.mudar_copias_atual(-5)
-assert imp.copias == 1
+assert imp.copias == 0
 print("ok")
 """)
 
@@ -208,10 +213,14 @@ assert f.impressoes[0].copias == 2
 QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=menos)
 app.processEvents()
 assert f.impressoes[0].copias == 1
-# uma cópia a menos não passa de 1
+# uma cópia a menos vai até 0 (o chip fica apagado) e não passa disso
 QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=menos)
 app.processEvents()
-assert f.impressoes[0].copias == 1
+assert f.impressoes[0].copias == 0
+assert layout_chips(area, f)[0][3]                 # apagado
+QTest.mouseClick(g.lista.viewport(), Qt.MouseButton.LeftButton, pos=menos)
+app.processEvents()
+assert f.impressoes[0].copias == 0
 print("ok")
 """)
 
@@ -238,25 +247,27 @@ print("ok")
 """)
 
 
-def test_recorte_comum_duplicar_unificar_e_filtro_por_tamanho():
+def test_recorte_por_impressao_duplicar_unificar_e_filtro_por_tamanho():
     rodar("""
 from dataclasses import replace
+from revelador.projeto import nova_impressao
 estado = Estado()
 estado.trabalho = Trabalho()
 f = nova_foto(estado, "a", 4000, 3000)
-f.impressoes[0].recorte = replace(f.impressoes[0].recorte, cx=0.3, zoom=2.0, origem="manual")
-f.impressoes.append(Impressao(tamanho="15x21"))
-estado.refazer_recortes_auto(f)          # a impressão nova herda o recorte escolhido
+f.impressoes[0].recorte = replace(f.impressoes[0].recorte, cx=0.3, zoom=2.0, giro=1, espelho_h=True,
+                                  origem="manual")
+f.impressoes.append(nova_impressao(f, "15x21"))
+estado.refazer_recortes_auto(f)          # a impressão nova tem o próprio recorte (sugerido), com o giro da foto
 r = f.impressoes[1].recorte
-assert r.origem == "manual" and r.zoom == 2.0 and abs(r.cx - 0.3) < 0.05, r
+assert r.origem != "manual" and r.zoom != 2.0 and (r.giro, r.espelho_h) == (1, True), r
 f.impressoes[0].recorte = replace(f.impressoes[0].recorte, cx=0.6)
-estado.compartilhar_recorte(f, f.impressoes[0])
-assert abs(f.impressoes[1].recorte.cx - 0.6) < 0.05
+estado.refazer_recortes_auto(f)
+assert f.impressoes[1].recorte == r and f.impressoes[0].recorte.cx == 0.6   # uma não mexe na outra
 # duplicar: mesmo arquivo, id novo, logo depois
 d = estado.duplicar(f)
 assert d.id != f.id and d.caminho == f.caminho and estado.trabalho.fotos.index(d) == 1
-d.impressoes[1].recorte = replace(d.impressoes[1].recorte, cx=0.4)
-assert abs(f.impressoes[1].recorte.cx - 0.6) < 0.05      # cópia independente
+d.impressoes[0].recorte = replace(d.impressoes[0].recorte, cx=0.4)
+assert f.impressoes[0].recorte.cx == 0.6                 # cópia independente
 # unificar: tamanhos iguais somam cópias, a outra sai do trabalho
 g = nova_foto(estado, "b", 4000, 3000, tamanho="10x15")
 g.impressoes.append(Impressao(tamanho="20x30", copias=2))

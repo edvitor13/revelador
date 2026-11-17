@@ -18,7 +18,8 @@ que ordem está nas issues do marco **0.1.0** no GitHub (`gh issue list --milest
 - **Proporção do papel é lei**: o recorte tem exatamente a proporção do tamanho escolhido e a exportação sai com
   os px exatos do papel (mm → px pelo dpi, 300 por padrão). Tabela única em `tamanhos.py`.
 - **Enquadramento automático é sugestão**: rostos (YuNet, `cv2.FaceDetectorYN`) definem só o recorte inicial;
-  depois que a pessoa mexe, o recorte é manual e nunca é refeito sozinho. Sem rosto: centro.
+  depois que a pessoa mexe, o recorte é manual e nunca é refeito sozinho. Sem rosto: centro. **O recorte é de cada
+  impressão** (o 10x15 não mexe no 15x21); só giro de 90° e espelho valem para a foto toda.
 - **Cor**: converter pelo perfil ICC embutido para sRGB ao carregar; exportar JPEG sRGB com perfil, dpi gravado,
   orientação já aplicada, qualidade 95 e 4:4:4.
 - **Interface fluida**: decodificar, miniaturas, rostos, prévia e exportação fora da thread principal; Qt de

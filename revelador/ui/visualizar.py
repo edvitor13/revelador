@@ -1,7 +1,8 @@
 """Visualizar: passa pelas fotos e mostra como cada uma vai sair no papel, em cada tamanho que vai ser revelado.
 
 Cada impressão é desenhada pela receita única (``RenderizarPrevia``, a mesma da prévia do editor), lado a lado,
-com o rótulo "10x15 ×2" embaixo. ←/→ (ou os botões) passam as fotos; Esc fecha. Só a estrela de favorita (F ou o botão)
+cada uma com o PRÓPRIO recorte, e embaixo o tamanho e as cópias ("10x15 · 2 cópias") e o detalhe do recorte
+(orientação, enquadramento e os px da exportação; ``descrever_impressao``). Impressão com 0 cópias aparece apagada. ←/→ (ou os botões) passam as fotos; Esc fecha. Só a estrela de favorita (F ou o botão)
 muda o trabalho.
 
 A janela tem os botões de maximizar e minimizar do sistema, "Maximizar" e "Tela cheia" (F11; Esc sai da tela cheia
@@ -15,17 +16,44 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .. import receita
-from ..i18n import _
-from ..projeto import Foto
+from ..i18n import N_, _
+from ..projeto import Foto, Impressao
 from . import icones, prefs, tema
 from .componentes import botao_plano
-from .editor import rotulo_impressao
+from .editor import nome_impressao, rotulo_impressao
 from .estado import Estado
 from .previa import CarregarProxy, RenderizarPrevia, Sinais, para_qimage
 
 ESPACO = 16   # px entre as impressões lado a lado
 PREF_MAXIMIZADA = "visualizar/maximizada"
 INTEIRA = -1  # chave da coluna da foto inteira (modo comparar)
+ENQUADRAMENTOS = {"manual": N_("enquadramento manual"), "auto": N_("enquadrada pelos rostos"),
+                  "centro": N_("enquadrada no centro")}
+ORIENTACOES = {"retrato": N_("Retrato"), "paisagem": N_("Paisagem")}
+
+
+def texto_copias(copias: int) -> str:
+    if copias <= 0:
+        return _("0 cópias (não vai para a revelação)")
+    return _("1 cópia") if copias == 1 else _("{n} cópias").format(n=copias)
+
+
+def descrever_impressao(estado: Estado, foto: Foto, imp: Impressao) -> tuple[str, str]:
+    """(título, detalhe) da coluna de uma impressão: ``"10x15 · 2 cópias"`` e
+    ``"Retrato · enquadramento manual · 1800 × 1200 px"`` (sem os metadados da foto, só o enquadramento)."""
+    titulo = f"{nome_impressao(imp)} · {texto_copias(imp.copias)}"
+    partes: list[str] = []
+    info = estado.info.get(foto.id)
+    if info is not None:
+        partes.append(_(ORIENTACOES[receita.orientacao(imp, info.largura, info.altura)]))
+    if imp.modo == receita.MODO_CABER:
+        partes.append(_("foto inteira com borda"))
+    else:
+        partes.append(_(ENQUADRAMENTOS.get(imp.recorte.origem, ENQUADRAMENTOS["manual"])))
+    if info is not None:
+        w, h = receita.tamanho_exportacao(imp, info.largura, info.altura, estado.trabalho.dpi)
+        partes.append(f"{w} × {h} px")
+    return titulo, " · ".join(partes)
 
 
 class VisualizarDialog(QDialog):
@@ -228,14 +256,21 @@ class VisualizarDialog(QDialog):
             imagem.setObjectName("Muted")
             imagem.setAlignment(Qt.AlignmentFlag.AlignCenter)
             imagem.setMinimumSize(80, 80)
-            rotulo = QLabel(rotulo_impressao(imp))
-            rotulo.setObjectName("PanelTitle")
+            titulo, detalhe = descrever_impressao(self.estado, foto, imp)
+            rotulo = QLabel(titulo)
+            rotulo.setObjectName("PanelTitle" if imp.copias > 0 else "Muted")
             rotulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            sub = QLabel(detalhe)
+            sub.setObjectName("Muted" if imp.copias > 0 else "Faint")
+            sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            sub.setWordWrap(True)
             caixa = QWidget()
             caixa.setLayout(coluna)
             coluna.setContentsMargins(0, 0, 0, 0)
+            coluna.setSpacing(4)
             coluna.addWidget(imagem, 1)
             coluna.addWidget(rotulo)
+            coluna.addWidget(sub)
             self.linha.addWidget(caixa, 1)
             self._imagens[n] = imagem
         QThreadPool.globalInstance().start(CarregarProxy(self.sinais, self._geracao, foto.caminho))

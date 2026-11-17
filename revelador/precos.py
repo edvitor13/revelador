@@ -96,6 +96,8 @@ def orcamento(trabalho: Trabalho, tabela: Mapping[str, int]) -> Orcamento:
     grupos: dict[tuple[str, int | None], _Grupo] = {}
     for foto in trabalho.selecionadas():
         for imp in foto.impressoes:
+            if imp.copias <= 0:     # guardada com 0 cópias: não vai para a revelação nem entra no custo
+                continue
             if imp.tamanho == tamanhos.PERSONALIZADO:
                 menor, maior = tamanhos.papel_mm(imp.tamanho, imp.papel_mm)
                 chave = (chave_preco(imp), imp.preco_centavos)

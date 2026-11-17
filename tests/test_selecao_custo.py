@@ -90,6 +90,11 @@ assert f.impressoes[1].tamanho != f.impressoes[0].tamanho
 e.definir_impressao(0)
 p.linhas[0].spin_copias.setValue(3)
 assert f.impressoes[0].copias == 3
+perguntas = []
+p.confirmar_remover = lambda foto, imp: perguntas.append(imp.tamanho) or False   # "Cancelar"
+p.linhas[1].botao_remover.click()
+assert len(f.impressoes) == 2 and perguntas == [f.impressoes[1].tamanho]          # perguntou e não removeu
+p.confirmar_remover = lambda foto, imp: True                                      # "Remover"
 p.linhas[1].botao_remover.click()
 assert len(f.impressoes) == 1 and len(p.linhas) == 1 and not p.linhas[0].botao_remover.isEnabled()
 p.remover_impressao(0)

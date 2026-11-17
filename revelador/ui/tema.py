@@ -237,6 +237,7 @@ QPushButton#Pilula:hover, QToolButton#Pilula:hover {{ background: {PAINEL3}; bor
 QFrame#ChipImp {{ background: {PAINEL2}; border: 1px solid {BORDA}; border-radius: 13px; }}
 QFrame#ChipImp[ativa="true"] {{ border-color: {DESTAQUE}; }}
 QToolButton#ChipTexto {{ background: transparent; border: none; padding: 3px 4px; color: {TEXTO}; font-weight: 600; }}
+QToolButton#ChipTexto[zero="true"] {{ color: {APAGADO}; font-weight: 400; }}
 QToolButton#ChipMais {{ background: transparent; border: none; border-radius: 10px; padding: 0px;
     color: {APAGADO}; font-weight: 700; min-width: 20px; min-height: 20px; }}
 QToolButton#ChipMais:hover {{ background: {PAINEL3}; color: {TEXTO}; }}

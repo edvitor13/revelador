@@ -3,6 +3,9 @@
 Conversa só pelo ``Estado`` (``docs/ARQUITETURA.md``, seções 5.1, 6 e 10): lê a foto atual e a impressão atual
 (``estado.impressao_atual``), altera o ``Recorte`` dela e avisa com ``estado.alterar(foto)``. Qualquer gesto da
 pessoa marca o recorte como ``"manual"`` (nunca mais refeito sozinho); "Enquadrar pelos rostos" volta a ``"auto"``.
+Cada impressão tem o seu enquadramento: mover, zoom, alças, endireitar, centralizar, foto inteira e rostos mudam só a
+impressão mostrada (o 10x15 não mexe no 15x21). Girar 90° e espelhar são da foto: valem para todas as impressões,
+cada uma transformando o próprio enquadramento.
 
 Geometria: tudo vem de ``enquadramento.retangulo`` e de ``receita.poligono`` (a moldura desenhada é exatamente o que
 a receita vai amostrar). O recorte só entra no modelo depois de passar por ``enquadramento.reencaixar``, então fica
@@ -35,7 +38,8 @@ from PySide6.QtWidgets import (QBoxLayout, QColorDialog, QFrame, QHBoxLayout, QL
 from .. import ajustes as ajustes_mod
 from .. import enquadramento, receita, tamanhos
 from ..i18n import N_, _
-from ..projeto import FUNDO_PADRAO, Foto, Impressao, Recorte, cor_valida
+from ..projeto import (COPIAS_MAX, COPIAS_MIN_IMPRESSAO, FUNDO_PADRAO, ZOOM_MINIMO, Foto, Impressao, Recorte,
+                       cor_valida)
 from . import icones, tema
 from .componentes import BarraAdaptavel, Segmented, Slider, botao_plano, com_menu
 from .estado import Estado
@@ -344,21 +348,24 @@ def amostra_cor(cor: str, lado: int = 16) -> QIcon:
     return icone
 
 
+def nome_impressao(imp: Impressao) -> str:
+    """Nome do tamanho da impressão: ``10x15`` (o personalizado com as medidas, ``100x150 mm``)."""
+    if imp.tamanho == tamanhos.PERSONALIZADO and imp.papel_mm:
+        return _("{menor}x{maior} mm").format(menor=f"{imp.papel_mm[0]:g}", maior=f"{imp.papel_mm[1]:g}")
+    try:
+        return _(tamanhos.obter(imp.tamanho).nome)
+    except KeyError:
+        return _("Personalizado")
+
+
 def rotulo_impressao(imp: Impressao) -> str:
     """Texto da impressão na faixa do editor: ``10x15 ×2`` (o personalizado com as medidas)."""
-    if imp.tamanho == tamanhos.PERSONALIZADO and imp.papel_mm:
-        nome = _("{menor}x{maior} mm").format(menor=f"{imp.papel_mm[0]:g}", maior=f"{imp.papel_mm[1]:g}")
-    else:
-        try:
-            nome = _(tamanhos.obter(imp.tamanho).nome)
-        except KeyError:
-            nome = _("Personalizado")
-    return f"{nome} ×{imp.copias}"
+    return f"{nome_impressao(imp)} ×{imp.copias}"
 
 
 class FaixaImpressoes(QWidget):
     """Faixa no topo do editor com os tamanhos da foto ("10x15 ×2"), bem à vista: clicar no texto escolhe a impressão
-    mostrada no editor; − e + tiram e põem uma cópia (de 1 a 999)."""
+    mostrada no editor; − e + tiram e põem uma cópia (de 0 a 999; com 0 o tamanho fica guardado, sem revelar)."""
 
     def __init__(self, estado: Estado, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -428,7 +435,9 @@ class FaixaImpressoes(QWidget):
         texto = QToolButton()
         texto.setObjectName("ChipTexto")
         texto.setText(rotulo_impressao(imp))
-        texto.setToolTip(_("Mostrar esta impressão no editor"))
+        texto.setProperty("zero", imp.copias == 0)
+        texto.setToolTip(_("Mostrar esta impressão no editor") if imp.copias else
+                         _("0 cópias: o tamanho fica guardado, mas não vai para a revelação"))
         texto.setCursor(Qt.CursorShape.PointingHandCursor)
         texto.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         texto.clicked.connect(lambda: self.estado.definir_impressao(n))
@@ -453,7 +462,7 @@ class FaixaImpressoes(QWidget):
         if foto is None or not 0 <= n < len(foto.impressoes):
             return
         imp = foto.impressoes[n]
-        copias = max(1, min(999, imp.copias + delta))
+        copias = max(COPIAS_MIN_IMPRESSAO, min(COPIAS_MAX, imp.copias + delta))
         if copias != imp.copias:
             imp.copias = copias
             self.estado.alterar(foto, pedido=True, juntar=f"copias:{n}")
@@ -706,8 +715,7 @@ class Editor(QWidget):
             juntar = f"endireitar:{self.estado.indice_impressao}"
         else:
             juntar = f"recorte:{self.estado.indice_impressao}"
-        imp.recorte = replace(novo, origem="manual")
-        self.estado.compartilhar_recorte(foto, imp)   # o recorte vale para todas as impressões da foto
+        imp.recorte = replace(novo, origem="manual")   # só desta impressão: as outras da foto não mudam
         self.estado.alterar(foto, juntar=juntar)
         return True
 
@@ -790,47 +798,59 @@ class Editor(QWidget):
         cx, cy = ox + c * hx - s * hy, oy + s * hx + c * hy
         return self._aplicar(foto, imp, self._limitado(imp, replace(rec, cx=cx / W, cy=cy / H)))
 
+    def _centro(self, imp: Impressao) -> tuple[float, float]:
+        """Centro do recorte de ``imp`` em frações da imagem girada (o limitado à imagem, fora do modo *caber*)."""
+        if imp.modo == receita.MODO_CABER:
+            return imp.recorte.cx, imp.recorte.cy
+        W, H = receita.dimensoes_giradas(imp, *self._dims())
+        r = self._retangulo(imp)
+        return r.cx / W, r.cy / H
+
     def girar(self, sentido: int) -> bool:
-        """Gira 90° (``+1`` horário, ``-1`` anti-horário), sem perda. A proporção acompanha a imagem girada."""
+        """Gira 90° (``+1`` horário, ``-1`` anti-horário), sem perda. A proporção acompanha a imagem girada.
+
+        O giro é da foto (foto deitada): vale para todas as impressões dela, mas cada uma gira o PRÓPRIO
+        enquadramento (o centro de cada recorte gira junto com a imagem); todas viram manuais. Um passo próprio.
+        """
         ctx = self._contexto()
         if ctx is None or sentido == 0:
             return False
-        foto, imp = ctx
-        W, H = receita.dimensoes_giradas(imp, *self._dims())
-        r = self._retangulo(imp) if imp.modo != receita.MODO_CABER else None
-        cx, cy = (r.cx / W, r.cy / H) if r else (imp.recorte.cx, imp.recorte.cy)
-        if sentido > 0:
-            cx, cy = 1.0 - cy, cx
-        else:
-            cx, cy = cy, 1.0 - cx
-        giro = (imp.recorte.giro + (1 if sentido > 0 else -1)) % 4
-        novo = replace(imp.recorte, cx=cx, cy=cy, giro=giro)
-        return self._aplicar(foto, imp, self._limitado(imp, novo))
+        foto, _imp = ctx
+        for outra in foto.impressoes:
+            cx, cy = self._centro(outra)
+            if sentido > 0:
+                cx, cy = 1.0 - cy, cx
+            else:
+                cx, cy = cy, 1.0 - cx
+            giro = (outra.recorte.giro + (1 if sentido > 0 else -1)) % 4
+            novo = replace(outra.recorte, cx=cx, cy=cy, giro=giro)
+            outra.recorte = replace(self._limitado(outra, novo), origem="manual")
+        self.estado.alterar(foto)
+        return True
 
     def espelhar(self, horizontal: bool = True) -> bool:
         """Espelha a foto como ela aparece: ``horizontal`` troca esquerda ↔ direita; senão, cima ↔ baixo.
 
         O resultado é o espelho exato do anterior: o centro do recorte e o ângulo de endireitar também espelham, e a
         origem do recorte (automático ou manual) fica como estava. Com um giro ímpar, o espelho que a pessoa vê é o
-        outro eixo da imagem sem giro. Vale para todas as impressões da foto; um passo próprio do desfazer.
+        outro eixo da imagem sem giro. O espelho é da foto: vale para todas as impressões dela, cada uma espelhando
+        o PRÓPRIO enquadramento. Um passo próprio do desfazer.
         """
         ctx = self._contexto()
         if ctx is None:
             return False
-        foto, imp = ctx
-        a = imp.recorte
-        W, H = receita.dimensoes_giradas(imp, *self._dims())
-        r = self._retangulo(imp) if imp.modo != receita.MODO_CABER else None
-        cx, cy = (r.cx / W, r.cy / H) if r else (a.cx, a.cy)
-        if horizontal:
-            cx = 1.0 - cx
-        else:
-            cy = 1.0 - cy
-        eixo_h = horizontal == (a.giro % 2 == 0)     # o eixo da imagem sem giro que corresponde ao que se vê
-        novo = replace(a, cx=cx, cy=cy, angulo=0.0 - a.angulo,
-                       espelho_h=a.espelho_h != eixo_h, espelho_v=a.espelho_v != (not eixo_h))
-        imp.recorte = self._limitado(imp, novo)
-        self.estado.compartilhar_recorte(foto, imp)
+        foto, _imp = ctx
+        for outra in foto.impressoes:
+            a = outra.recorte
+            cx, cy = self._centro(outra)
+            if horizontal:
+                cx = 1.0 - cx
+            else:
+                cy = 1.0 - cy
+            eixo_h = horizontal == (a.giro % 2 == 0)     # o eixo da imagem sem giro que corresponde ao que se vê
+            novo = replace(a, cx=cx, cy=cy, angulo=0.0 - a.angulo,
+                           espelho_h=a.espelho_h != eixo_h, espelho_v=a.espelho_v != (not eixo_h))
+            outra.recorte = self._limitado(outra, novo)
         self.estado.alterar(foto)
         return True
 
@@ -855,8 +875,7 @@ class Editor(QWidget):
         foto, imp = ctx
         if foto.rostos is None:
             self.estado.pedir_rostos(foto)
-        for outra in foto.impressoes:     # o recorte é da foto: todas voltam ao automático
-            outra.recorte = replace(outra.recorte, origem="auto")
+        imp.recorte = replace(imp.recorte, origem="auto")   # só esta impressão: as outras ficam como estão
         if foto.id in self.estado.info:
             self.estado.refazer_recortes_auto(foto)
         else:    # metadados ainda não chegaram: as proporções do proxy bastam (o recorte é normalizado)
@@ -868,7 +887,7 @@ class Editor(QWidget):
 
     def centralizar(self) -> bool:
         """Enquadramento centralizado (sem olhar os rostos): o maior recorte no centro da foto, mantendo o giro de
-        90°. Vira manual (não é refeito sozinho) e vale para todas as impressões da foto."""
+        90°. Vira manual (não é refeito sozinho) e vale só para a impressão mostrada."""
         ctx = self._contexto()
         if ctx is None:
             return False
@@ -879,19 +898,24 @@ class Editor(QWidget):
         if (novo.cx, novo.cy, novo.zoom, novo.angulo, a.origem) == (a.cx, a.cy, a.zoom, a.angulo, "manual"):
             return False
         imp.recorte = novo
-        self.estado.compartilhar_recorte(foto, imp)
         self.estado.alterar(foto)
         return True
 
     def foto_inteira(self) -> bool:
-        """A foto inteira no papel, centralizada, com a cor de fundo nas sobras (vale para todas as impressões)."""
+        """A foto inteira no papel, centralizada, com a cor de fundo nas sobras (só na impressão mostrada; para
+        várias fotos de uma vez, "Foto inteira no papel" no menu da grade, ``Estado.foto_inteira``)."""
         ctx = self._editavel()
         if ctx is None:
             return False
-        foto = ctx[0]
-        antes = [replace(i.recorte) for i in foto.impressoes]
-        self.estado.foto_inteira([foto])
-        return [i.recorte for i in foto.impressoes] != antes
+        foto, imp = ctx
+        a = imp.recorte
+        novo = Recorte(cx=0.5, cy=0.5, zoom=ZOOM_MINIMO, angulo=a.angulo, giro=a.giro, espelho_h=a.espelho_h,
+                       espelho_v=a.espelho_v, origem="manual")
+        if novo == a:
+            return False
+        imp.recorte = novo
+        self.estado.alterar(foto)
+        return True
 
     def definir_fundo(self, cor: str) -> bool:
         """Cor de fundo da foto atual (``"#rrggbb"``): onde a foto não cobre o papel."""

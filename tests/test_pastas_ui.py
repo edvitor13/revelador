@@ -288,6 +288,7 @@ e.adicionar_a_pasta([b], p)
 e.definir_atual(b)
 app.processEvents()
 assert painel.linhas[0].botao_remover.isEnabled()
+painel.confirmar_remover = lambda foto, imp: True    # a lixeira pergunta antes (aqui: "Remover")
 painel.linhas[0].botao_remover.click()
 assert not b.selecionada and e.fotos_da_pasta(p) == []
 print("ok")
