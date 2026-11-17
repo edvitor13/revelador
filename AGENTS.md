@@ -37,7 +37,9 @@ proporção certa e não precisa cortar nada além da margem de corte (sangria).
 
 ## Estado atual
 
-Versão **0.2.1** (0.1.0 e 0.1.1 em 2026-11-03; 0.2.0 e 0.2.1 em 2026-11-15; a 0.2.1 trouxe espelhar a foto, #59). As fases A (núcleo), B (importação, grade, seleção,
+Versão **0.2.2** (0.1.0 e 0.1.1 em 2026-11-03; 0.2.0 e 0.2.1 em 2026-11-15; a 0.2.1 trouxe espelhar a foto, #59;
+a 0.2.2, em 2026-11-17, o recorte próprio de cada tamanho, 0 cópias, confirmação ao remover um tamanho, repetidas
+lado a lado no filtro e o Visualizar com o tamanho e o recorte de cada impressão). As fases A (núcleo), B (importação, grade, seleção,
 custo, editor) e C (ajustes, exportação, salvar/abrir, atualização) e o **visual novo** estão no `main`. Na 0.2.0:
 afastar além da foto com cor de fundo por foto (#53), botão "Foto inteira" (#54), continuar na última foto aberta
 (#55), favoritas com estrela e filtro (#56) e tela cheia e maximizar no Visualizar (#57), tudo compatível com os
@@ -186,8 +188,9 @@ tests/ajustes_referencia.py   versão lenta e simples dos ajustes, para comparar
 6. **O enquadramento automático é sugestão.** A detecção de rostos roda uma vez por foto (resultado guardado no
    trabalho) e só define o recorte inicial (`origem = "auto"`). Depois que a pessoa mexe, o recorte vira
    `"manual"` e nunca é refeito sozinho; trocar o tamanho reencaixa o recorte mantendo o centro e a escala
-   possível. Sem rosto: centro (`"centro"`). Falha da detecção nunca impede importar nem exportar. O recorte é
-   da foto: mexer nele vale para todas as impressões dela (outro recorte = "Duplicar foto").
+   possível. Sem rosto: centro (`"centro"`). Falha da detecção nunca impede importar nem exportar. **O recorte é
+   da impressão**: mexer na moldura do 10x15 nunca muda a do 15x21 da mesma foto; só o giro de 90° e o espelho são
+   da foto (valem para todas as impressões, cada uma com o próprio enquadramento; `projeto.nova_impressao`).
 7. **Interface fluida.** Decodificar, gerar miniaturas, detectar rostos, calcular a prévia e exportar rodam fora da
    thread principal (`QThreadPool` ou threads com sinais); widgets do Qt só na thread principal. A prévia parte de
    uma cópia reduzida (proxy) e é recalculada com *debounce*; nunca decodifique o original inteiro a cada mexida

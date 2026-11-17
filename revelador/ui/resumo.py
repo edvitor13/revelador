@@ -30,7 +30,7 @@ def texto_barra(trabalho: Trabalho, orc: Orcamento) -> str:
     """"12 fotos · 18 cópias · R$ 45,60"; parcial: "… · R$ 30,00 (sem preço: 15x21)"; nada marcado: aviso curto."""
     if not orc.linhas:
         return _("Nenhuma foto selecionada para revelação")
-    fotos = len([f for f in trabalho.selecionadas() if f.impressoes])
+    fotos = len([f for f in trabalho.selecionadas() if any(i.copias > 0 for i in f.impressoes)])
     copias = sum(linha.copias for linha in orc.linhas)
     partes = [_plural(fotos, _("{n} foto"), _("{n} fotos")), _plural(copias, _("{n} cópia"), _("{n} cópias"))]
     faltam = nomes_sem_preco(orc)

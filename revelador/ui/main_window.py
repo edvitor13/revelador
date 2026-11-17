@@ -508,7 +508,8 @@ class MainWindow(QMainWindow):
         self.atualizar_acao_exportar()
 
     def atualizar_acao_exportar(self) -> None:
-        self.acao_exportar.setEnabled(any(f.impressoes for f in self.estado.trabalho.selecionadas()))
+        self.acao_exportar.setEnabled(any(i.copias > 0 for f in self.estado.trabalho.selecionadas()
+                                          for i in f.impressoes))
 
     def criar_dialogo_exportacao(self):
         from .exportar_dialog import ExportarDialog   # importação tardia: puxa a receita (numpy/cv2)

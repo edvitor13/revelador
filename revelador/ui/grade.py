@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QListV
 
 from .. import tamanhos
 from ..i18n import _
-from ..projeto import Foto, Impressao, Pasta
+from ..projeto import Foto, Impressao, Pasta, nova_impressao
 from . import icones, prefs, tema
 from .componentes import Slider
 from .estado import Estado
@@ -190,7 +190,8 @@ def layout_chips(area: QRect, foto: Foto, compacto: bool = False,
         retangulo = QRect(x, area.top(), min(largura, area.right() - x + 1), ALTURA_CHIP)
         saida.append(Chip(retangulo, n, medidas.elidedText(texto, Qt.TextElideMode.ElideRight,
                                                            area.right() - x - 14 - 2 * LARGURA_MAIS),
-                          False, _cor_da_impressao(foto.impressoes[n], por_id)))
+                          foto.impressoes[n].copias == 0,          # 0 cópias: guardada, mas não revelada
+                          _cor_da_impressao(foto.impressoes[n], por_id)))
         x += largura + 4
     return saida
 
@@ -229,6 +230,7 @@ class ModeloGrade(QAbstractListModel):
         self.pasta: str | None = None   # id da pasta de tamanho filtrada (None = sem filtro de pasta)
         self.tamanho: str | None = None  # id do tamanho filtrado, um de FILTROS_ESPECIAIS, ou None (sem filtro)
         self.repetidas: set[str] | None = None   # ids das fotos repetidas (None = ainda não procurado)
+        self.grupo_repetida: dict[str, int] = {}  # id da foto -> número do grupo de parecidas (ordem do filtro)
         self._fotos: list[Foto] = []
         self._linha: dict[str, int] = {}
         self._pixmaps: OrderedDict[str, QPixmap] = OrderedDict()
@@ -247,8 +249,9 @@ class ModeloGrade(QAbstractListModel):
         elif self.tamanho == COM_COPIAS:
             if not (foto.selecionada and any(i.copias > 1 for i in foto.impressoes)):
                 return False
-        elif self.tamanho == UMA_COPIA:
-            if not (foto.selecionada and foto.impressoes and all(i.copias == 1 for i in foto.impressoes)):
+        elif self.tamanho == UMA_COPIA:   # as de 0 cópias (guardadas, sem revelar) não contam
+            reveladas = [i for i in foto.impressoes if i.copias > 0]
+            if not (foto.selecionada and reveladas and all(i.copias == 1 for i in reveladas)):
                 return False
         elif self.tamanho == REPETIDAS:
             if foto.id not in (self.repetidas or ()):
@@ -262,8 +265,16 @@ class ModeloGrade(QAbstractListModel):
         return self.pasta is None or any(i.pasta == self.pasta for i in foto.impressoes)
 
     def _visiveis(self) -> list[Foto]:
+        """As fotos que passam nos filtros, na ordem de importação. Com o filtro "Repetidas", as parecidas ficam
+        juntas (grupo a grupo, na ordem da primeira foto de cada grupo): só a ordem da tela muda, o trabalho não."""
         fotos = self.estado.trabalho.fotos
-        return [f for f in fotos if self.passa(f)] if self.filtrando() else list(fotos)
+        if not self.filtrando():
+            return list(fotos)
+        visiveis = [f for f in fotos if self.passa(f)]
+        if self.tamanho == REPETIDAS and self.grupo_repetida:
+            fim = len(fotos)
+            visiveis.sort(key=lambda f: self.grupo_repetida.get(f.id, fim))   # sort estável: dentro do grupo, a ordem
+        return visiveis
 
     def recarregar(self) -> None:
         self.beginResetModel()
@@ -695,6 +706,7 @@ class Grade(QWidget):
     def _repetidas_velhas(self) -> None:
         """A lista de fotos mudou: as repetidas são procuradas de novo (já, se o filtro estiver ligado)."""
         self.modelo.repetidas = None
+        self.modelo.grupo_repetida = {}
         if self.modelo.tamanho == REPETIDAS:
             self.procurar_repetidas()
 
@@ -705,6 +717,7 @@ class Grade(QWidget):
         def pronto(grupos) -> None:
             self._busca = None
             self.modelo.repetidas = {i for g in grupos for i in g}
+            self.modelo.grupo_repetida = {i: n for n, g in enumerate(grupos) for i in g}
             if self.modelo.tamanho == REPETIDAS:
                 self._ao_mudar_fotos()
             self._atualizar_tamanhos()
@@ -817,14 +830,14 @@ class Grade(QWidget):
 
     def clicar_chip(self, indice: QModelIndex, n: int, zona: int = 0) -> None:
         """Clique no chip "− 10x15 ×2 +": o "+" soma uma cópia à impressão n, o "−" tira uma (de 1 a 999) e o texto
-        só escolhe a foto e a impressão (a que o editor mostra)."""
+        só escolhe a foto e a impressão (a que o editor mostra). O "−" para em 0 (o tamanho fica guardado)."""
         foto = self.modelo.foto(indice.row())
         if foto is None or not 0 <= n < len(foto.impressoes):
             return
         self.lista.setCurrentIndex(indice)   # a foto clicada vira a atual (e a impressão, a do editor)
         self.estado.definir_impressao(n)
         imp = foto.impressoes[n]
-        copias = max(1, min(999, imp.copias + zona))
+        copias = max(LIMITE_COPIAS[0], min(LIMITE_COPIAS[1], imp.copias + zona))
         if copias != imp.copias:
             imp.copias = copias
             self.estado.alterar(foto, pedido=True)
@@ -899,6 +912,11 @@ class Grade(QWidget):
             acao.setCheckable(True)
             acao.setChecked(marcadas and todas == {c})
             acao.setData(c)
+        acao = self._item(copias, "copias_0", _("0 cópias (guardar sem revelar)"),
+                          lambda: self.aplicar_copias(fotos, 0))
+        acao.setCheckable(True)
+        acao.setChecked(marcadas and todas == {0})
+        acao.setData(0)
         copias.addSeparator()
         self._item(copias, "copias_mais", _("Uma cópia a mais"), lambda: self.somar_copias(fotos, +1))
         self._item(copias, "copias_menos", _("Uma cópia a menos"), lambda: self.somar_copias(fotos, -1))
@@ -1004,7 +1022,7 @@ class Grade(QWidget):
                     self.estado.selecionar(foto)
                 avulsas = [i for i in foto.impressoes if i.pasta is None]
                 if not avulsas:
-                    foto.impressoes.append(Impressao(tamanho=tamanho_id))
+                    foto.impressoes.append(nova_impressao(foto, tamanho_id))
                     self.estado.refazer_recortes_auto(foto)
                 elif all(i.tamanho != tamanho_id for i in avulsas):
                     imp = avulsas[0]
@@ -1013,12 +1031,12 @@ class Grade(QWidget):
                 self.estado.alterar(foto, pedido=True)
 
     def aplicar_copias(self, fotos: list[Foto], copias: int) -> None:
-        """Todas as impressões das fotos com ``copias`` cópias (1 a 999); marca as não marcadas. Um passo só."""
+        """Todas as impressões das fotos com ``copias`` cópias (0 a 999); marca as não marcadas. Um passo só."""
         copias = max(LIMITE_COPIAS[0], min(LIMITE_COPIAS[1], int(copias)))
         self._mudar_copias(fotos, lambda _atual: copias)
 
     def somar_copias(self, fotos: list[Foto], delta: int) -> None:
-        """Soma ``delta`` às cópias de todas as impressões das fotos (limitado a 1 e 999). Um passo só."""
+        """Soma ``delta`` às cópias de todas as impressões das fotos (limitado a 0 e 999). Um passo só."""
         self._mudar_copias(fotos, lambda atual: max(LIMITE_COPIAS[0], min(LIMITE_COPIAS[1], atual + delta)))
 
     def _mudar_copias(self, fotos: list[Foto], nova) -> None:

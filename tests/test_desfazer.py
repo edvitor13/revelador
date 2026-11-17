@@ -295,8 +295,12 @@ acoes(j.grade.menu_contexto([a, b]))["copias_mais"].trigger()
 assert a.impressoes[0].copias == 4 and b.impressoes[0].copias == 4 and c.impressoes[0].copias == 3
 acoes(j.grade.menu_contexto([c]))["copias_1"].trigger()
 acoes(j.grade.menu_contexto([c]))["copias_menos"].trigger()
-assert c.impressoes[0].copias == 1                 # nunca abaixo de 1
-assert e.pilha.count() == n + 4                    # o "−1" sem efeito não vira passo
+assert c.impressoes[0].copias == 0                 # 0 cópias: o tamanho fica guardado, sem revelar
+assert acoes(j.grade.menu_contexto([c]))["copias_0"].isChecked()
+acoes(j.grade.menu_contexto([c]))["copias_menos"].trigger()
+assert c.impressoes[0].copias == 0                 # nunca abaixo de 0
+assert e.pilha.count() == n + 5                    # o "−1" sem efeito não vira passo
+e.desfazer()
 
 for _ in range(4):
     e.desfazer()

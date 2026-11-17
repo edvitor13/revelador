@@ -282,7 +282,8 @@ def planejar(trabalho: Trabalho, destino: str | os.PathLike, modo_copias: str = 
     pasta = pasta_livre(Path(destino), nome_principal(nome, dia))
     congelado = copy.deepcopy(trabalho)
 
-    brutos = [(foto, imp) for foto in congelado.selecionadas() for imp in foto.impressoes]
+    # impressão com 0 cópias: guardada no trabalho, mas não revelada agora
+    brutos = [(foto, imp) for foto in congelado.selecionadas() for imp in foto.impressoes if imp.copias > 0]
     acabamentos = {k: v for k, v in (acabamentos or {}).items() if v.partes}
     grupos = _grupos(congelado, brutos, organizar, acabamentos)
     ids_pastas = {p.id for p in congelado.pastas}
@@ -338,7 +339,7 @@ def conferir(trabalho: Trabalho, infos: Mapping[str, InfoFoto] | None = None) ->
         if info is None:
             continue
         for imp in foto.impressoes:
-            if imp.modo == receita.MODO_CABER:
+            if imp.modo == receita.MODO_CABER or imp.copias <= 0:
                 continue
             ret = receita.retangulo_da_impressao(imp, info.largura, info.altura)
             orient = receita.orientacao(imp, info.largura, info.altura)

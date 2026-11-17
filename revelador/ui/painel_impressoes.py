@@ -8,6 +8,10 @@ chamam, então dá para testar sem clicar.
 Impressão de uma pasta de tamanho (#32): a linha mostra a bolinha da cor e o nome da pasta; o tamanho é o da pasta
 (o combo fica desligado; muda-se pelo menu da pasta, para todas as fotos dela) e remover a impressão é tirar a foto
 da pasta (``estado.tirar_da_pasta``), mesmo que seja a última impressão (a foto deixa de estar marcada).
+
+O botão da lixeira sempre pergunta antes (``confirmar_remover``, trocável nos testes); ``remover_impressao`` é a ação
+sem pergunta. Para guardar um tamanho sem revelá-lo agora, a impressão pode ficar com **0 cópias** (não entra na
+exportação nem no custo, e a configuração continua lá).
 """
 
 from __future__ import annotations
@@ -15,13 +19,15 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame, QGridLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QSpinBox, QToolButton, QVBoxLayout, QWidget)
+                               QHBoxLayout, QLabel, QLineEdit, QMessageBox, QSpinBox, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from .. import enquadramento, precos, tamanhos
 from ..i18n import N_, _
-from ..projeto import Foto, Impressao
+from ..projeto import COPIAS_MAX, COPIAS_MIN_IMPRESSAO, Foto, Impressao, nova_impressao
 from . import icones, prefs, tema
 from .componentes import Card, Segmented, ToggleSwitch, botao_plano
+from .editor import nome_impressao
 from .estado import Estado
 
 NOMES_GRUPOS = {
@@ -30,7 +36,7 @@ NOMES_GRUPOS = {
     tamanhos.QUADRADO: N_("Quadrados"),
 }
 ORIENTACOES_FIXAS = (("retrato", N_("Retrato")), ("paisagem", N_("Paisagem")))   # "auto" é só o padrão do modelo
-LIMITE_COPIAS = (1, 999)
+LIMITE_COPIAS = (COPIAS_MIN_IMPRESSAO, COPIAS_MAX)   # 0 = guarda o tamanho sem revelar agora
 MODOS = (("preencher", N_("Preencher")), ("caber", N_("Caber")))
 NOMES_QUALIDADE = {"boa": N_("Boa"), "aceitavel": N_("Aceitável"), "baixa": N_("Baixa")}
 COR_QUALIDADE = {"boa": tema.OK, "aceitavel": tema.AVISO, "baixa": tema.PERIGO}   # cores de estado
@@ -231,6 +237,10 @@ class LinhaImpressao(QFrame):
         self.ponto_qualidade.setFixedSize(8, 8)
         self.rotulo_qualidade = QLabel()
         self.botao_remover = botao_plano("lixeira", _("Remover este tamanho"), tamanho=16, cor=tema.APAGADO)
+        self.rotulo_zero = QLabel(_("0 cópias: o tamanho fica guardado, mas não vai para a revelação"))
+        self.rotulo_zero.setObjectName("Faint")
+        self.rotulo_zero.setWordWrap(True)
+        self.rotulo_zero.hide()
         # pasta de tamanho (#32): bolinha da cor e nome, só nas impressões de pasta
         self.caixa_pasta = QWidget()
         linha_pasta = QHBoxLayout(self.caixa_pasta)
@@ -264,8 +274,9 @@ class LinhaImpressao(QFrame):
         qualidade.addWidget(self.ponto_qualidade)
         qualidade.addWidget(self.rotulo_qualidade, 1)
         grade.addLayout(qualidade, 4, 0, 1, 3)
-        grade.addLayout(acao_orientacao, 5, 0, 1, 3)
-        grade.addWidget(self.botao_voltar, 6, 0, 1, 3, Qt.AlignmentFlag.AlignLeft)
+        grade.addWidget(self.rotulo_zero, 5, 0, 1, 3)
+        grade.addLayout(acao_orientacao, 6, 0, 1, 3)
+        grade.addWidget(self.botao_voltar, 7, 0, 1, 3, Qt.AlignmentFlag.AlignLeft)
         grade.setColumnStretch(1, 1)
         self.combo_tamanho.currentIndexChanged.connect(self._ao_tamanho)
         self.botao_menos.clicked.connect(lambda: self.spin_copias.setValue(self.spin_copias.value() - 1))
@@ -276,7 +287,7 @@ class LinhaImpressao(QFrame):
         self.botao_girar.clicked.connect(lambda: self._agir(lambda i, _v: self.painel.girar_papel(i), None))
         self.combo_modo.currentIndexChanged.connect(
             lambda _i: self._agir(self.painel.definir_modo, self.combo_modo.currentData()))
-        self.botao_remover.clicked.connect(lambda: self.painel.remover_impressao(self.indice))
+        self.botao_remover.clicked.connect(lambda: self.painel.pedir_remover(self.indice))
 
     def _agir(self, funcao, valor) -> None:
         self.painel.estado.definir_impressao(self.indice)
@@ -311,6 +322,8 @@ class LinhaImpressao(QFrame):
         escolher_no_combo(self.combo_tamanho, imp.tamanho)
         self.spin_copias.setValue(imp.copias)
         self.rotulo_copias.setText(f"× {imp.copias}")
+        self.rotulo_zero.setVisible(imp.copias == 0)
+        self.botao_menos.setEnabled(imp.copias > LIMITE_COPIAS[0])
         self.combo_modo.setCurrentIndex(max(0, self.combo_modo.findData(imp.modo)))
         for w in (self.combo_tamanho, self.spin_copias, self.combo_modo):
             w.blockSignals(False)
@@ -367,6 +380,7 @@ class PainelImpressoes(Card):
         super().__init__(_("Impressões"), _("Tamanho e cópias da foto escolhida"), parent=parent)
         self.estado = estado
         self.linhas: list[LinhaImpressao] = []
+        self.confirmar_remover = self._confirmar_remover   # (foto, impressão) -> bool; os testes trocam
         raiz = self.corpo_layout
         self.rotulo_vazio = QLabel(_("Escolha uma foto na grade"))
         self.rotulo_vazio.setObjectName("Faint")
@@ -434,6 +448,7 @@ class PainelImpressoes(Card):
     def _reconstruir(self, quantidade: int) -> None:
         for linha in self.linhas:
             self.layout_linhas.removeWidget(linha)
+            linha.hide()            # some já: o deleteLater só apaga quando o laço de eventos voltar
             linha.deleteLater()
         self.linhas = [LinhaImpressao(self, i) for i in range(quantidade)]
         for linha in self.linhas:
@@ -490,7 +505,7 @@ class PainelImpressoes(Card):
             self.estado.alterar(alvo[0], pedido=True)
 
     def mudar_copias_atual(self, delta: int) -> None:
-        """Atalho + / −: soma ``delta`` às cópias da impressão que o editor mostra (limitado a 1 e 999)."""
+        """Atalho + / −: soma ``delta`` às cópias da impressão que o editor mostra (limitado a 0 e 999)."""
         imp = self.estado.impressao_atual
         if imp is not None:
             self.definir_copias(self.estado.indice_impressao, imp.copias + delta)
@@ -534,13 +549,45 @@ class PainelImpressoes(Card):
             ordem = ids[ids.index(padrao):] + ids[:ids.index(padrao)] if padrao in ids else ids
             tamanho_id = next((t for t in ordem if t not in usados), padrao)
         foto.selecionada = True
-        foto.impressoes.append(Impressao(tamanho=tamanho_id))
+        foto.impressoes.append(nova_impressao(foto, tamanho_id))   # recorte próprio; giro e espelho da foto
         self.estado.refazer_recortes_auto(foto)
         self.estado.alterar(foto, pedido=True)
         self.estado.definir_impressao(len(foto.impressoes) - 1)
 
+    def pedir_remover(self, indice: int) -> bool:
+        """Lixeira da linha: pergunta antes de remover o tamanho (ou tirar a foto da pasta). True se removeu."""
+        alvo = self._imp(indice)
+        if alvo is None:
+            return False
+        if alvo[1].pasta is None and len(alvo[0].impressoes) <= 1:
+            return False
+        if not self.confirmar_remover(*alvo):
+            return False
+        self.remover_impressao(indice)
+        return True
+
+    def _confirmar_remover(self, foto: Foto, imp: Impressao) -> bool:
+        """"Remover o 10x15 desta foto?" com "Remover" e "Cancelar" (padrão). Lembra que dá para pôr 0 cópias."""
+        pasta = self.estado.pasta_por_id(imp.pasta)
+        caixa = QMessageBox(self.window())
+        caixa.setIcon(QMessageBox.Icon.Question)
+        caixa.setWindowTitle(_("Remover tamanho"))
+        if pasta is not None:
+            caixa.setText(_("Tirar {foto} da pasta “{pasta}”?").format(foto=foto.caminho.name, pasta=pasta.nome))
+        else:
+            caixa.setText(_("Remover o {tamanho} de {foto}?").format(tamanho=nome_impressao(imp),
+                                                                     foto=foto.caminho.name))
+        caixa.setInformativeText(_("O enquadramento e as cópias deste tamanho serão perdidos (dá para desfazer com "
+                                   "Ctrl+Z). Para guardar o tamanho sem revelar agora, deixe com 0 cópias."))
+        remover = caixa.addButton(_("Remover"), QMessageBox.ButtonRole.DestructiveRole)
+        cancelar = caixa.addButton(_("Cancelar"), QMessageBox.ButtonRole.RejectRole)
+        caixa.setDefaultButton(cancelar)
+        caixa.exec()
+        return caixa.clickedButton() is remover
+
     def remover_impressao(self, indice: int) -> None:
-        """Remove a impressão avulsa (nunca a última) ou, se for de uma pasta de tamanho, tira a foto da pasta."""
+        """Remove a impressão avulsa (nunca a última) ou, se for de uma pasta de tamanho, tira a foto da pasta. Sem
+        pergunta (a lixeira passa por ``pedir_remover``)."""
         alvo = self._imp(indice)
         if alvo is not None and alvo[1].pasta is not None:
             pasta = self.estado.pasta_por_id(alvo[1].pasta)

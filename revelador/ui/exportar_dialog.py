@@ -240,7 +240,7 @@ class ExportarDialog(QDialog):
     def tamanhos_exportados(self) -> list[str]:
         """Nomes dos tamanhos que vão sair ("10x15", "15x21"...), na ordem em que aparecem no trabalho."""
         return list(dict.fromkeys(exportar.nome_tamanho(imp) for foto in self.estado.trabalho.selecionadas()
-                                  for imp in foto.impressoes))
+                                  for imp in foto.impressoes if imp.copias > 0))
 
     def _montar_acabamentos(self) -> QWidget:
         """Uma linha por tamanho: borda e papel, só para o nome da pasta e o pedido.txt (a foto sai sem borda)."""

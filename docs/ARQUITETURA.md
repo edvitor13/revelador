@@ -60,7 +60,7 @@ class Recorte:
 @dataclass
 class Impressao:
     tamanho: str = "10x15"   # id de tamanhos.TAMANHOS
-    copias: int = 1
+    copias: int = 1          # 0..999; 0 = tamanho guardado, sem revelar (fora da exportação e do custo)
     orientacao: str = "auto" # "auto" (segue a foto) | "retrato" | "paisagem"
     modo: str = "preencher"  # "preencher" (corta na proporção) | "caber" (foto inteira sobre o fundo da foto)
     recorte: Recorte = field(default_factory=Recorte)
@@ -101,8 +101,11 @@ class Trabalho:
     ultima_foto: str | None = None  # id da última foto aberta (#55): o trabalho reabre nela
 ```
 
-- Os **ajustes são da foto** (valem para todas as impressões dela); o **recorte é da impressão** (cada papel tem
-  a sua proporção). Selecionar uma foto cria uma impressão no tamanho padrão com o recorte automático.
+- Os **ajustes são da foto** (valem para todas as impressões dela); o **recorte é da impressão**: cada papel tem a
+  sua proporção e o seu enquadramento (mexer no 10x15 nunca muda o 15x21). Só o giro de 90° e o espelho são da foto
+  e ficam iguais em todas as impressões (`projeto.nova_impressao` os herda). Selecionar uma foto cria uma impressão
+  no tamanho padrão com o recorte automático. Uma impressão com **0 cópias** guarda a configuração (tamanho,
+  recorte, orientação) sem revelar: fica fora da exportação, do custo e do resumo.
 - **Pastas de tamanho** (#32): estar numa pasta = ter **uma** impressão com `pasta = <id>`, no tamanho (e no papel e
   preço do personalizado) da pasta; a foto pode estar em várias pastas e ainda ter impressões avulsas. Cópias,
   orientação, modo e recorte continuam por foto. Mudar o tamanho da pasta muda as impressões dela (recorte automático
@@ -207,11 +210,14 @@ Imagem orientada e girada com `W × H` px; proporção do papel `r = largura/alt
 - `retangulo(recorte, W, H, r) → (cx, cy, w, h, θ)` em px é a única função que transforma o `Recorte` em
   geometria; o editor, a receita e os testes usam ela.
 - **Trocar tamanho/orientação**: mantém `cx, cy, zoom, θ` e recalcula; recorte `"auto"` é refeito pelos rostos.
-- **O recorte é da foto**: cada `Impressao` guarda o seu `Recorte` (o arquivo não muda), mas mexer no recorte de uma
-  copia `cx, cy, zoom, θ, giro` para todas as impressões da foto, cada uma reencaixada na proporção do próprio papel
-  (`Estado.compartilhar_recorte`); uma impressão nova herda o recorte manual (`refazer_recortes_auto`). Para ter
-  outro recorte, a pessoa duplica a foto ("Duplicar foto", mesmo arquivo, id novo). "Centralizar" grava o maior
-  recorte no centro como `"manual"`.
+- **O recorte é da impressão** (0.2.2): cada `Impressao` guarda e usa o seu `Recorte`. Mover, zoom, alças,
+  endireitar, "Centralizar", "Foto inteira" e "Enquadrar pelos rostos" no editor mudam só a impressão mostrada; o
+  recorte manual de uma nunca é copiado para outra (`refazer_recortes_auto` só refaz as não manuais, cada uma pela
+  própria sugestão). **Girar 90° e espelhar são da foto**: valem para todas as impressões, cada uma transformando o
+  próprio enquadramento (o centro gira/espelha junto), e a impressão nova herda `giro`/`espelho_*`
+  (`projeto.nova_impressao`). Até a 0.2.1 o recorte manual era copiado para as outras impressões; esses arquivos
+  abrem iguais (as cópias foram gravadas como `"manual"` e não são refeitas). "Centralizar" grava o maior recorte no
+  centro como `"manual"`.
 - **Giro de 90°** muda `W × H` e a orientação automática; rostos são transformados para o espaço girado na hora
   de usar (ficam gravados no espaço sem giro).
 
@@ -552,7 +558,12 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
   cache em disco): cartão por foto com marca de seleção (clique na marca ou Espaço), etiqueta de tamanho(s) e
   cópias, aviso de resolução baixa e de erro; Delete tira do trabalho (nunca do disco). Seleção múltipla
   (`fotos_escolhidas`) vale para Espaço, Delete e para colar ajustes. Clicar no chip "10x15 ×2" soma uma cópia
-  àquela impressão e Shift+clique tira uma (limites 1 e 999); a foto clicada vira a atual e a impressão, a do editor.
+  àquela impressão e Shift+clique tira uma (limites 0 e 999; com 0 o chip fica cinza); a foto clicada vira a atual e
+  a impressão, a do editor.
+  - **Filtro "Repetidas"**: as fotos parecidas aparecem **lado a lado**, grupo a grupo (na ordem da primeira foto de
+    cada grupo; `ModeloGrade.grupo_repetida`, montado com os grupos de `repetidas.agrupar`). Só a ordem da tela muda
+    (e a navegação ←/→ do editor, que segue a grade); o trabalho continua na ordem de importação e, sem o filtro, a
+    grade volta a ela.
   - **Tamanho das miniaturas** (#31): controle "Miniaturas" no rodapé da grade e Ctrl + roda do mouse sobre ela, de
     80 a 320 px em passos de 10 (`MINIATURA_MINIMA`, `MINIATURA_MAXIMA`, `PASSO_MINIATURA`), padrão 150
     (`MINIATURA_PADRAO`), lembrado em `grade/miniatura`. Célula, marca, chips e nome acompanham o tamanho; abaixo de
@@ -569,7 +580,7 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
     ação é **um passo só** do desfazer (`estado.lote`), como Espaço em várias fotos. Tamanho: marca a foto se preciso
     e troca a **primeira impressão avulsa** (recorte automático refeito, manual reencaixado), sem mexer nas outras
     avulsas nem nas de pastas; se alguma avulsa já está nesse tamanho, nada muda; foto só com impressões de pastas
-    ganha uma avulsa. Cópias: todas as impressões da foto, limitadas a 1..999. **Adicionar à pasta ▸** (as pastas
+    ganha uma avulsa. Cópias: todas as impressões da foto, limitadas a 0..999 ("0 cópias (guardar sem revelar)"). **Adicionar à pasta ▸** (as pastas
     + "Nova pasta…"; a pasta em que todas as escolhidas já estão aparece desligada, com um anel na bolinha) e **Tirar
     da pasta ▸** (quando alguma escolhida está numa pasta) vêm logo depois de "Cópias ▸".
   - **Pastas de tamanho** (#32, `ui/pastas.py`, `SecaoPastas`, ligada em `_ligar_pastas()`): seção no topo da grade,
@@ -602,14 +613,15 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
     papel cresce até a foto inteira e as sobras mostram a cor de fundo da foto ("· com fundo" na informação); o visor
     passa a caber o papel inteiro (`Tela.extensao`) e pinta o fundo dentro dele (`Tela.cor_fundo`). **Foto inteira**
     (`I`, `Editor.foto_inteira`, também "Foto inteira no papel" no menu da grade para várias fotos:
-    `Estado.foto_inteira`) grava `zoom = ZOOM_MINIMO` centralizado em todas as impressões. **Fundo** (botão com a
+    `Estado.foto_inteira`) grava `zoom = ZOOM_MINIMO` centralizado: no editor, só na impressão mostrada; no menu da
+    grade, em todas as impressões das fotos escolhidas. **Fundo** (botão com a
     amostra da cor): Branco, Preto ou "Outra cor…" (`QColorDialog`), por foto (`Estado.definir_fundo`, desfazer).
   - **Favorita** (#56): estrela na faixa do topo do editor (e `F` na janela).
   - **Espelhar** (#59, `Editor.espelhar(horizontal)`, botão "Espelhar" com menu, H / Shift+H): espelha a foto como
     ela aparece; com giro ímpar, o espelho visto na horizontal é o `espelho_v` da imagem sem giro. O resultado é o
     espelho exato do anterior: `cx` (ou `cy`) vira `1 − cx` e o ângulo de endireitar troca de sinal; a `origem` do
-    recorte fica como estava; vale para todas as impressões (`compartilhar_recorte`) e é um passo próprio do
-    desfazer ("Desfazer espelhar").
+    recorte fica como estava; vale para todas as impressões, cada uma espelhando o próprio enquadramento, e é um
+    passo próprio do desfazer ("Desfazer espelhar").
   - **Rodapé**: a barra de botões é uma `BarraAdaptavel` (textos viram ícones; estreita, somem zoom −/+,
     Centralizar e Mostrar rostos, que têm atalho ou são pouco usados). "Moldura | Resultado" fica na linha do
     Endireitar e, com o editor abaixo de `LARGURA_VISTA_AO_LADO` (560 px), desce para baixo dele.
@@ -638,8 +650,15 @@ app **não** segue o claro/escuro do Windows. Não há barra de menus nem barra 
     retrato ↔ paisagem fixando a escolha; o recorte automático é refeito e o manual é reencaixado na nova proporção,
     mantendo a `origem`.
   - **Cópias rápidas** (#33): botões − e + bem visíveis ao lado da quantidade ("× n"), os atalhos `+` (ou `=`) e `−`
-    na impressão atual e o clique no chip da grade; limites 1 e 999 (`LIMITE_COPIAS`). Custo, chip e resumo
-    atualizam na hora (`estado.alterar(foto, pedido=True)`).
+    na impressão atual e o clique no chip da grade; limites 0 e 999 (`LIMITE_COPIAS`; com 0 a linha avisa que o
+    tamanho fica guardado sem ir para a revelação). Custo, chip e resumo atualizam na hora
+    (`estado.alterar(foto, pedido=True)`). A **lixeira** da linha pergunta antes de remover o tamanho ou tirar a foto
+    da pasta (`PainelImpressoes.pedir_remover` → `confirmar_remover`, trocável em teste; "Cancelar" é o padrão e a
+    pergunta lembra do 0 cópias); `remover_impressao` é a ação sem pergunta.
+  - **Visualizar** (`ui/visualizar.py`, F5): uma coluna por impressão, cada uma pela receita com o **próprio
+    recorte**, e embaixo o tamanho e as cópias ("10x15 · 2 cópias") e o detalhe (`descrever_impressao`: orientação,
+    enquadramento manual/pelos rostos/no centro ou foto inteira com borda, e os px da exportação). Impressão com 0
+    cópias aparece com o texto apagado ("0 cópias (não vai para a revelação)").
 - **Atalhos** (os que existem hoje): Ctrl+I importar fotos · Ctrl+Shift+I importar pasta · Ctrl+E exportar · Ctrl+N
   novo · Ctrl+O abrir · Ctrl+S salvar · Ctrl+Shift+S salvar como · Ctrl+Q sair · Espaço marca/desmarca ·
   Delete remove da grade · Ctrl+Z desfazer · Ctrl+Y / Ctrl+Shift+Z refazer · ← / → foto anterior / seguinte e

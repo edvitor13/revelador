@@ -49,7 +49,7 @@ from ..enquadramento import recorte_sugerido
 from ..i18n import _
 from ..imagem import InfoFoto
 from ..projeto import (COPIAS_MAX, COPIAS_MIN, FUNDO_PADRAO, ZOOM_MINIMO, Foto, Impressao, Pasta, Recorte, Rosto,
-                       Trabalho, cor_valida)
+                       Trabalho, cor_valida, nova_impressao)
 from . import tema
 from .desfazer import (Fotografia, Mudanca, MudancaFoto, MudancaPastas, MudancaRemocao, Passo, descrever, fotografar,
                        restaurar)
@@ -251,27 +251,18 @@ class Estado(QObject):
         """Recalcula o recorte das impressões não manuais (precisa dos metadados; sem eles, não faz nada).
 
         Chame depois de mudar tamanho, orientação ou giro de uma impressão não manual.
+
+        Cada impressão tem o seu enquadramento: o recorte manual de uma nunca é copiado para outra (mexer no 10x15
+        não muda o 15x21). A sugestão mantém o giro e o espelho da própria impressão (``nova_impressao`` já os
+        herda da foto).
         """
         info = self.info.get(foto.id)
         if info is None:
             return
-        manual = next((i for i in foto.impressoes if i.recorte.origem == "manual"), None)
         for imp in foto.impressoes:
             if imp.recorte.origem != "manual":
-                if manual is not None:   # o recorte é da foto: a impressão nova herda o que a pessoa escolheu
-                    imp.recorte = self._encaixar(imp, copy.copy(manual.recorte), info)
-                else:
-                    imp.recorte = recorte_sugerido(imp, info.largura, info.altura, foto.rostos,
-                                                   self.trabalho.margem_corte_mm)
-
-    def compartilhar_recorte(self, foto: Foto, base: Impressao) -> None:
-        """O recorte vale para todas as impressões da foto: copia o de ``base`` para as outras, cada uma reencaixada
-        na proporção do próprio papel (mesmo centro, zoom, giro e ângulo). Sem sinais: quem chama faz ``alterar``."""
-        info = self.info.get(foto.id)
-        for imp in foto.impressoes:
-            if imp is not base:
-                novo = copy.copy(base.recorte)
-                imp.recorte = self._encaixar(imp, novo, info) if info is not None else novo
+                imp.recorte = recorte_sugerido(imp, info.largura, info.altura, foto.rostos,
+                                               self.trabalho.margem_corte_mm)
 
     @staticmethod
     def _encaixar(imp: Impressao, recorte, info: InfoFoto):
@@ -586,9 +577,9 @@ class Estado(QObject):
                         igual.pasta, igual.papel_mm = pasta.id, pasta.papel_mm
                         igual.preco_centavos = pasta.preco_centavos
                     else:
-                        foto.impressoes.append(Impressao(tamanho=pasta.tamanho, copias=pasta.copias,
-                                                         papel_mm=pasta.papel_mm,
-                                                         preco_centavos=pasta.preco_centavos, pasta=pasta.id))
+                        foto.impressoes.append(nova_impressao(foto, pasta.tamanho, copias=pasta.copias,
+                                                              papel_mm=pasta.papel_mm,
+                                                              preco_centavos=pasta.preco_centavos, pasta=pasta.id))
                         self.refazer_recortes_auto(foto)
                     mudou = True
                 if mudou:
