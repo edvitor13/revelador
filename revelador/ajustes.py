@@ -405,13 +405,15 @@ def _fator_croma(a: np.ndarray, b: np.ndarray, saturacao: float, vibracao: float
     c = cv2.magnitude(a, b, m.pegar("croma", a.shape))
     # pele = ((1 + cos(h - 55°))/2)^8, com cos = (a·cos55 + b·sen55)/C
     pele = cv2.addWeighted(a, _PELE_COS, b, _PELE_SEN, 0.0, dst=a)
-    pele = cv2.divide(pele, cv2.max(c, 1e-6, dst=b), dst=pele)
+    # np.maximum/np.minimum (e np.add na nitidez) em vez de cv2: no OpenCV 5.1 um plano 1×1 operado com um
+    # número é lido como escalar e volta como um vetor 4×1 em float64
+    pele = cv2.divide(pele, np.maximum(c, 1e-6, out=b), dst=pele)
     pele = cv2.addWeighted(pele, 0.5, pele, 0.0, 0.5, dst=pele)
     for _ in range(3):
         pele = cv2.multiply(pele, pele, dst=pele)
     # peso = (1 - min(C/0,3; 1))² = min(C/0,3 - 1; 0)²
     peso = cv2.addWeighted(c, 1.0 / _C_VIBRACAO, c, 0.0, -1.0, dst=b)
-    peso = cv2.multiply(cv2.min(peso, 0.0, dst=peso), peso, dst=peso)
+    peso = cv2.multiply(np.minimum(peso, 0.0, out=peso), peso, dst=peso)
     if t <= 0:  # negativo: 0,3 + 0,7·(1 - peso)
         peso = cv2.addWeighted(peso, -0.7, peso, 0.0, 1.0, dst=peso)
     pele = cv2.addWeighted(pele, -0.75, pele, 0.0, 1.0, dst=pele)
@@ -452,7 +454,7 @@ def _cor_e_nitidez(lin: np.ndarray, v: dict[str, float], escala_mm_px: float | N
                              borderType=cv2.BORDER_REFLECT)
         d = cv2.subtract(luz, d, dst=d)
         d2 = cv2.multiply(d, d, dst=luz)
-        d2 = cv2.divide(d2, cv2.add(d2, _LIMIAR_NITIDEZ ** 2, dst=m.pegar("croma", plano)), dst=d2)
+        d2 = cv2.divide(d2, np.add(d2, np.float32(_LIMIAR_NITIDEZ ** 2), out=m.pegar("croma", plano)), dst=d2)
         d2 = cv2.multiply(d2, d, scale=_QUANTIDADE_NITIDEZ * nitidez / 100.0, dst=d2)
         novo = cv2.add(novo, cv2.cvtColor(d2, cv2.COLOR_GRAY2RGB, dst=extra), dst=novo)
     cubo = cv2.pow(novo, 3.0, dst=novo)
